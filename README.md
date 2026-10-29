@@ -145,8 +145,8 @@ and the pipeline details are in [AGENTS.md](AGENTS.md).
 ## Known limits
 
 - **Global shortcuts under Wayland** go through the GlobalShortcuts portal, which GNOME
-  implements from version 48. On older versions Redline will rely on the desktop's custom
-  shortcuts.
+  implements from version 48. Where it exists Redline registers its shortcuts through it; on
+  older versions Redline relies on the desktop's custom shortcuts.
 - **Screen capture under Wayland**: the first time, the desktop asks which screen to share;
   the choice is remembered afterwards.
 - **Tuning**: every change must be confirmed, otherwise LACT reverts to the previous values

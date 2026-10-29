@@ -2,6 +2,7 @@ mod actions;
 mod autostart;
 mod desktop;
 mod gallery;
+mod global_shortcuts;
 mod recorder;
 mod sampler;
 mod settings;
@@ -53,6 +54,9 @@ pub fn run() {
                 }
             });
             tray::create(app.handle());
+            // In the background: the portal may be missing (GNOME before 48), and its first
+            // binding may wait on a desktop dialog.
+            global_shortcuts::start(app.handle());
             autostart::show_main_window_unless_hidden_start(app.handle());
             Ok(())
         })
@@ -79,6 +83,8 @@ pub fn run() {
             gallery::show_in_folder,
             thumbnails::recording_thumbnail,
             thumbnails::thumbnail_support,
+            global_shortcuts::global_shortcuts_status,
+            global_shortcuts::global_shortcuts_configure,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

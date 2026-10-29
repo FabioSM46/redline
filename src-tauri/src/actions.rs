@@ -9,6 +9,8 @@
 //!   instance the new launch's arguments ([`on_second_launch`]). With an action it performs it
 //!   without showing or focusing the window; without one it brings the window to the front, as
 //!   before.
+//! - **Global shortcut** (#65): where the GlobalShortcuts portal exists, the desktop reports a
+//!   key press and `global_shortcuts` calls [`dispatch`], as a second launch does.
 //! - **First launch** with an action: the app starts hidden in the tray when there is one
 //!   (`autostart::start_hidden`) and performs the action once GPU Screen Recorder has been
 //!   detected and `replay_on_start` has run (`recorder::init`).

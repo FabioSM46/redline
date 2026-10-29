@@ -35,6 +35,7 @@
 | `sources` | What the recording settings can choose from, as `{ available, unavailable_reason, items: [{ id, label }] }`: audio sources (`default_output`, `default_input`, `device:<name>`, then running applications as `app:<name>`) and capture targets (`portal` first, then monitors by name). Without GPU Screen Recorder: `available: false` and what to install | `list_audio_sources`, `list_capture_targets` |
 | `gallery` | The saved clips of the replay and recording folders (read through `gallery::folders`, from the recording settings at every call): `Recording { id, kind: "replay" \| "recording", file_name, saved_at_ms, size_bytes, duration_s }`, newest first, only regular video files directly inside the folders. `id` is opaque: the backend maps it back to a path only by listing the folders again, so it never names a file outside them. Also the desktop notification ("Replay saved" / "Recording saved" with the file name) for every `file-saved` | `list_recordings`, `open_recording`, `show_in_folder` |
 | `thumbnails` | Previews of saved clips by gallery id: `recording_thumbnail(id)` is a `data:image/png` or `data:image/jpeg` base64 URL, or `null`; `thumbnail_support()` is `{ generator: "ffmpegthumbnailer" \| "ffmpeg" \| null, hint }`, the hint saying what to install. Desktop cache in `cache_dir()/thumbnails` (read only), Redline's in `app_cache_dir()/thumbnails`, pruned by `list_recordings` | `recording_thumbnail`, `thumbnail_support` |
+| `global_shortcuts` | The GlobalShortcuts portal (D10), through `ashpd`, in a task started in `setup`. `ShortcutsStatus` is `{ state: "checking" }`, `{ state: "unavailable" }` (no portal: the commands of D5 stay), `{ state: "ready", version, can_configure, bindings: [{ arg, trigger }] }` (one entry per `ACTION_ARGS` argument, `trigger` the desktop's description of the keys or `null`) or `{ state: "failed", error }`, sent again as the `global-shortcuts` event on every change. `Activated` calls `actions::dispatch`; `global_shortcuts_configure` opens the desktop's dialog (portal version 2) | `global_shortcuts_status`, `global_shortcuts_configure` |
 | `desktop` | Two session bus calls through GIO (`extern "C"`, as `tray`): `org.freedesktop.Notifications.Notify` and `org.freedesktop.FileManager1.ShowItems`. A missing service is `false`, never an error | — |
 
 ## Flows
@@ -95,6 +96,8 @@ one) and performs the action once GPU Screen Recorder has been detected and `rep
 has run. The actions call the same `Recorder` methods as the commands (`--toggle-replay` stops a
 replay that is `starting` or `on` and starts it otherwise); a failure is a desktop notification
 with the same sentence. Unknown arguments are ignored, and one launch performs one action.
+Where the GlobalShortcuts portal exists, the same actions are also registered as the desktop's
+global shortcuts (D10), and a key press calls the same `actions::dispatch` a second launch does.
 
 **Saved clips**: every `file-saved` also sends a desktop notification over D-Bus with the file
 name only; without a notification server nothing is shown and nothing fails. `list_recordings`
