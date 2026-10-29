@@ -13,9 +13,10 @@ export type PowerLimit = {
 
 /**
  * What a pending change touches. Mirrors `tuning::TuningChange`; `fan` is the fan setter of #55,
- * named ahead so the panel already has a label for it.
+ * named ahead so the panel already has a label for it. `profile` is a LACT profile switch (#57),
+ * which applies to every GPU.
  */
-export const TUNING_CHANGES = ["power_limit", "fan"] as const;
+export const TUNING_CHANGES = ["power_limit", "fan", "profile"] as const;
 export type TuningChange = (typeof TUNING_CHANGES)[number];
 
 /** Mirrors `tuning::PendingChange`: the payload of `tuning-pending` and `TuningStatus.pending`. */
@@ -112,6 +113,7 @@ export function formatCountdown(seconds: number): string {
 const CHANGE_LABELS: { [What in TuningChange]: string } = {
   power_limit: "Power limit",
   fan: "Fan",
+  profile: "Profile",
 };
 
 /** The name of a change, as the confirmation panel says it. A kind a newer backend adds is generic. */

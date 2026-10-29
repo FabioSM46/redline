@@ -29,10 +29,15 @@
 //! Redline ever confirms on its own; quitting the app with a change pending sends `revert`.
 //! Because lactd's pending change is global, a second setter is refused while any GPU has one.
 //!
+//! A profile switch is pending too, but lactd 0.10.1 does not hold it ([`profiles`]): Redline
+//! keeps the previous profile and, on `revert`, at the deadline or when the app quits, switches
+//! back to it itself.
+//!
 //! Overdrive is not a pending change: it is a kernel parameter, set by lactd for the next boot
 //! after a confirmation handshake of its own ([`overdrive`]).
 
 pub mod overdrive;
+pub mod profiles;
 
 use redline_core::lact::{
     self, DeviceFlag, DeviceStats, FanControlMode, FanInfo, LactClient, LactError, PmfwInfo,
@@ -105,6 +110,8 @@ pub struct TuningStatus {
 pub enum TuningChange {
     PowerLimit,
     Fan,
+    /// Every GPU: the active LACT profile ([`profiles`]).
+    Profile,
 }
 
 /// A change lactd has applied and will revert unless the user confirms it: the payload of
@@ -478,6 +485,8 @@ fn nothing_pending_in_lactd(message: &str) -> bool {
 pub trait Events: Send + Sync + 'static {
     fn pending(&self, change: &PendingChange);
     fn settled(&self, settled: &Settled);
+    /// The profiles changed (one was created, activated, restored or deleted).
+    fn profiles(&self, _profiles: &profiles::Profiles) {}
 }
 
 struct AppEvents<R: Runtime>(AppHandle<R>);
@@ -492,6 +501,15 @@ impl<R: Runtime> Events for AppEvents<R> {
     fn settled(&self, settled: &Settled) {
         if let Err(error) = self.0.emit(SETTLED_EVENT, settled) {
             eprintln!("redline: could not send {SETTLED_EVENT} ({error})");
+        }
+    }
+
+    fn profiles(&self, profiles: &profiles::Profiles) {
+        if let Err(error) = self.0.emit(profiles::PROFILE_EVENT, profiles) {
+            eprintln!(
+                "redline: could not send {} ({error})",
+                profiles::PROFILE_EVENT
+            );
         }
     }
 }
@@ -530,6 +548,9 @@ struct Pending {
     change: PendingChange,
     /// Tells this change's deadline timer apart from a later change's.
     serial: u64,
+    /// How Redline undoes a change lactd does not hold as pending (a profile switch); `None`
+    /// for lactd's own pending changes.
+    undo: Option<profiles::Undo>,
 }
 
 #[derive(Default)]
@@ -609,19 +630,32 @@ impl Tuning {
         send: impl FnOnce(&Lact, &str) -> Result<u64, String>,
     ) -> Result<PendingChange, String> {
         let _control = lock(&self.inner.control);
-        self.expire_overdue();
-        if let Some(pending) = &lock(&self.inner.state).pending {
-            return Err(if pending.change.gpu_id == gpu_id {
-                PENDING_HERE
-            } else {
-                PENDING_ELSEWHERE
-            }
-            .to_owned());
-        }
-
+        self.refuse_if_pending(gpu_id)?;
         let lact = &self.inner.lact;
         let seconds = send(lact, &lact.device_id(gpu_id)?)?;
-        let delay_ms = seconds.saturating_mul(1000);
+        Ok(self.begin_pending(gpu_id, what, seconds.saturating_mul(1000), None))
+    }
+
+    /// The sentence that refuses a change while one is pending (on any GPU). Called with the
+    /// control lock held.
+    fn refuse_if_pending(&self, gpu_id: &str) -> Result<(), String> {
+        self.expire_overdue();
+        match &lock(&self.inner.state).pending {
+            Some(pending) if pending.change.gpu_id == gpu_id => Err(PENDING_HERE.to_owned()),
+            Some(_) => Err(PENDING_ELSEWHERE.to_owned()),
+            None => Ok(()),
+        }
+    }
+
+    /// Records an applied change as pending for `delay_ms`, reports it and starts its deadline
+    /// timer. Called with the control lock held.
+    fn begin_pending(
+        &self,
+        gpu_id: &str,
+        what: TuningChange,
+        delay_ms: u64,
+        undo: Option<profiles::Undo>,
+    ) -> PendingChange {
         let change = PendingChange {
             gpu_id: gpu_id.to_owned(),
             what,
@@ -633,12 +667,13 @@ impl Tuning {
             state.pending = Some(Pending {
                 change: change.clone(),
                 serial: state.serial,
+                undo,
             });
             state.serial
         };
         self.inner.events.pending(&change);
         self.schedule_expiry(serial, delay_ms);
-        Ok(change)
+        change
     }
 
     /// The power limit of `gpu_id` in watts (`None` = the GPU's default), checked against the
@@ -662,10 +697,26 @@ impl Tuning {
         if self.expire_overdue().as_deref() == Some(gpu_id) {
             return Ok(Outcome::Expired);
         }
-        let serial = match &lock(&self.inner.state).pending {
-            Some(pending) if pending.change.gpu_id == gpu_id => pending.serial,
+        let (serial, undo) = match &lock(&self.inner.state).pending {
+            Some(pending) if pending.change.gpu_id == gpu_id => {
+                (pending.serial, pending.undo.clone())
+            }
             _ => return Err(NOTHING_PENDING.to_owned()),
         };
+        if let Some(undo) = undo {
+            // lactd holds nothing: confirming keeps what it already applied, reverting is
+            // Redline's own request. A failed revert keeps the change pending.
+            if !confirm {
+                undo.run(self)?;
+            }
+            let outcome = if confirm {
+                Outcome::Confirmed
+            } else {
+                Outcome::Reverted
+            };
+            self.finish(serial, outcome);
+            return Ok(outcome);
+        }
         let outcome = match self.inner.lact.client.confirm_pending(confirm) {
             Ok(()) if confirm => Outcome::Confirmed,
             Ok(()) => Outcome::Reverted,
@@ -685,10 +736,24 @@ impl Tuning {
     pub fn shutdown(&self) {
         let _control = lock(&self.inner.control);
         self.expire_overdue();
-        let Some(serial) = lock(&self.inner.state).pending.as_ref().map(|p| p.serial) else {
+        let Some((serial, undo)) = lock(&self.inner.state)
+            .pending
+            .as_ref()
+            .map(|p| (p.serial, p.undo.clone()))
+        else {
             return;
         };
-        if let Err(error) = self.inner.lact.client.confirm_pending(false) {
+        let reverted = match undo {
+            // No window is left for `tuning-profile`: one request, not two.
+            Some(undo) => undo.restore(self),
+            None => self
+                .inner
+                .lact
+                .client
+                .confirm_pending(false)
+                .map_err(|error| error.to_string()),
+        };
+        if let Err(error) = reverted {
             eprintln!("redline: could not revert the pending tuning change ({error})");
         }
         self.finish(serial, Outcome::Reverted);
@@ -709,8 +774,9 @@ impl Tuning {
         self.inner.events.settled(&settled);
     }
 
-    /// A pending change past its deadline is `expired`: lactd has already reverted it.
-    /// Returns the GPU whose change it settled, if any.
+    /// A pending change past its deadline is `expired`: lactd has already reverted it (or
+    /// Redline undoes it now, for a change lactd does not hold). Returns the GPU whose change it
+    /// settled, if any.
     fn expire_overdue(&self) -> Option<String> {
         let now = self.inner.clock.now_ms();
         let (serial, gpu_id) = lock(&self.inner.state)
@@ -718,8 +784,24 @@ impl Tuning {
             .as_ref()
             .filter(|pending| now >= pending.change.deadline_ms)
             .map(|pending| (pending.serial, pending.change.gpu_id.clone()))?;
-        self.finish(serial, Outcome::Expired);
+        self.expire(serial);
         Some(gpu_id)
+    }
+
+    /// Settles the pending change `serial` as `expired`, first undoing it when lactd does not
+    /// hold it. Called with the control lock held.
+    fn expire(&self, serial: u64) {
+        let undo = lock(&self.inner.state)
+            .pending
+            .as_ref()
+            .filter(|pending| pending.serial == serial)
+            .and_then(|pending| pending.undo.clone());
+        if let Some(undo) = undo
+            && let Err(error) = undo.run(self)
+        {
+            eprintln!("redline: could not undo the expired tuning change ({error})");
+        }
+        self.finish(serial, Outcome::Expired);
     }
 
     fn schedule_expiry(&self, serial: u64, delay_ms: u64) {
@@ -737,7 +819,7 @@ impl Tuning {
                 let Some(deadline) = deadline else { return };
                 let now = tuning.inner.clock.now_ms();
                 if now >= deadline {
-                    tuning.finish(serial, Outcome::Expired);
+                    tuning.expire(serial);
                 } else {
                     // Woken early (the wall clock moved): wait for the rest.
                     tuning.schedule_expiry(serial, deadline - now);
@@ -1207,6 +1289,11 @@ mod tests {
         fn settled(&self, settled: &Settled) {
             let mut event = serde_json::to_value(settled).unwrap();
             event["event"] = json!(SETTLED_EVENT);
+            self.0.lock().unwrap().push(event);
+        }
+        fn profiles(&self, profiles: &profiles::Profiles) {
+            let mut event = serde_json::to_value(profiles).unwrap();
+            event["event"] = json!(profiles::PROFILE_EVENT);
             self.0.lock().unwrap().push(event);
         }
     }

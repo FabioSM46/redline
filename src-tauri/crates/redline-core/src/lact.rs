@@ -24,6 +24,9 @@
 //! | `set_power_cap` | `{ id, cap }` (`cap: null` = default) | seconds until lactd reverts |
 //! | `set_fan_control` | [`FanOptions`] | seconds until lactd reverts |
 //! | `confirm_pending_config` | `{ command: "confirm" \| "revert" }` | — |
+//! | `set_profile` | `{ name, auto_switch: false }` (`name: null` = default profile) | — |
+//! | `create_profile` | `{ name, base }` ([`ProfileBase`]) | — |
+//! | `delete_profile` | `{ name }` | — |
 //! | `enable_overdrive` | — | — (an empty string) |
 //! | `disable_overdrive` | — | — (an empty string) |
 
@@ -375,9 +378,32 @@ pub struct GpuConfig {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProfilesInfo {
+    /// The names of the stored profiles, sorted. LACT sends them as the keys of a map
+    /// (`profiles: { name: rule }`); the rules are not read.
+    #[serde(deserialize_with = "profile_names")]
+    pub profiles: Vec<String>,
     /// The active profile; `None` = LACT's default profile.
     pub current_profile: Option<String>,
     pub auto_switch: bool,
+}
+
+/// The keys of LACT's `profiles` map, sorted by name.
+fn profile_names<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let map = BTreeMap::<String, serde::de::IgnoredAny>::deserialize(deserializer)?;
+    Ok(map.into_keys().collect())
+}
+
+/// What a new profile starts from (`ProfileBase` in lact-schema 0.10.1, without `Empty` and
+/// `Provided`, which Redline never sends).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileBase {
+    /// A copy of LACT's default profile (the configuration used when no profile is active).
+    Default,
+    /// A copy of the named profile.
+    Profile(String),
 }
 
 // ---- Requests ----
@@ -564,6 +590,39 @@ impl LactClient {
     /// restores the previous configuration on its own.
     pub fn set_power_cap(&self, id: &str, watts: Option<f64>) -> LactResult<u64> {
         self.call("set_power_cap", Some(json!({ "id": id, "cap": watts })))
+    }
+
+    /// Activates the profile `name` (`None` = the default profile), with LACT's automatic
+    /// switching off.
+    ///
+    /// In 0.10.1 this is **not** a pending change: `set_profile` stops the profile watcher,
+    /// applies the profile's configuration to every GPU at once and saves it, with no timer and
+    /// no `confirm_pending_config`. It does not check lactd's pending change either. The caller
+    /// owns the confirmation. It refuses with "Cannot change profile while a hold is active".
+    pub fn set_profile(&self, name: Option<&str>) -> LactResult<()> {
+        self.request(
+            "set_profile",
+            Some(json!({ "name": name, "auto_switch": false })),
+        )
+        .map(|_| ())
+    }
+
+    /// Stores a new profile copied from `base` and saves LACT's configuration; nothing is
+    /// applied to the GPU. Refuses an existing name ("Profile <name> already exists").
+    pub fn create_profile(&self, name: &str, base: &ProfileBase) -> LactResult<()> {
+        self.request(
+            "create_profile",
+            Some(json!({ "name": name, "base": base })),
+        )
+        .map(|_| ())
+    }
+
+    /// Removes a profile and saves LACT's configuration. In 0.10.1, deleting the **active**
+    /// profile first switches to the default one (applied at once, unconfirmed); a name that
+    /// does not exist is not an error.
+    pub fn delete_profile(&self, name: &str) -> LactResult<()> {
+        self.request("delete_profile", Some(json!({ "name": name })))
+            .map(|_| ())
     }
 
     /// Sets the fan control and returns how many seconds LACT waits for
@@ -878,6 +937,72 @@ mod tests {
         assert_eq!(
             server.join().unwrap(),
             json!({ "command": "confirm_pending_config", "args": { "command": "revert" } })
+        );
+    }
+
+    #[test]
+    fn the_profile_list_is_the_sorted_names_without_the_rules() {
+        let info: ProfilesInfo = serde_json::from_str(
+            r#"{"profiles":{"Quiet":null,"Gaming":{"type":"process","filter":{"name":"game"}}},"profile_hooks":{},"current_profile":"Quiet","auto_switch":false,"watcher_state":null}"#,
+        )
+        .unwrap();
+        assert_eq!(info.profiles, vec!["Gaming", "Quiet"]);
+        assert_eq!(info.current_profile.as_deref(), Some("Quiet"));
+        assert!(!info.auto_switch);
+        let none: ProfilesInfo =
+            serde_json::from_value(json!({ "current_profile": null })).unwrap();
+        assert_eq!(none, ProfilesInfo::default());
+    }
+
+    #[test]
+    fn the_profile_requests_use_the_0_10_1_shapes() {
+        let dir = temp("profiles");
+        let socket = dir.0.join("lactd.sock");
+        let client = LactClient::new(&socket).with_timeout(Duration::from_secs(2));
+        let null = r#"{"status":"ok","data":null}"#;
+
+        let server = answer_once(UnixListener::bind(&socket).unwrap(), null);
+        client.set_profile(Some("Quiet")).unwrap();
+        assert_eq!(
+            server.join().unwrap(),
+            json!({ "command": "set_profile", "args": { "name": "Quiet", "auto_switch": false } })
+        );
+        std::fs::remove_file(&socket).unwrap();
+
+        let server = answer_once(UnixListener::bind(&socket).unwrap(), null);
+        client.set_profile(None).unwrap();
+        assert_eq!(
+            server.join().unwrap(),
+            json!({ "command": "set_profile", "args": { "name": null, "auto_switch": false } })
+        );
+        std::fs::remove_file(&socket).unwrap();
+
+        let server = answer_once(UnixListener::bind(&socket).unwrap(), null);
+        client
+            .create_profile("Loud", &ProfileBase::Profile("Quiet".into()))
+            .unwrap();
+        assert_eq!(
+            server.join().unwrap(),
+            json!({ "command": "create_profile", "args": { "name": "Loud", "base": { "profile": "Quiet" } } })
+        );
+        std::fs::remove_file(&socket).unwrap();
+
+        let server = answer_once(UnixListener::bind(&socket).unwrap(), null);
+        client
+            .create_profile("Loud", &ProfileBase::Default)
+            .unwrap();
+        assert_eq!(server.join().unwrap()["args"]["base"], json!("default"));
+        std::fs::remove_file(&socket).unwrap();
+
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"error","data":{"description":"Cannot delete profile 'Loud' while it is held","source":null}}"#,
+        );
+        let error = client.delete_profile("Loud").unwrap_err();
+        assert!(matches!(&error, LactError::Daemon(m) if m.contains("while it is held")));
+        assert_eq!(
+            server.join().unwrap(),
+            json!({ "command": "delete_profile", "args": { "name": "Loud" } })
         );
     }
 
