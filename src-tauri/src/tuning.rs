@@ -254,8 +254,14 @@ impl Lact {
         )
     }
 
-    fn installed(&self) -> bool {
+    /// The `lact` binary is on the search path.
+    pub fn installed(&self) -> bool {
         find_program(LACT_BINARY, &self.search_path).is_some()
+    }
+
+    /// `lactd`'s `system_info`: answers only when the daemon runs and the user may use it.
+    pub fn system_info(&self) -> lact::LactResult<lact::SystemInfo> {
+        self.client.system_info()
     }
 
     /// The sentence for a failed request.
@@ -547,6 +553,11 @@ impl Tuning {
                 overdrive: overdrive::Overdrive::default(),
             }),
         }
+    }
+
+    /// Where LACT is reached and looked for (the dependency status reads it too).
+    pub fn lact(&self) -> &Lact {
+        &self.inner.lact
     }
 
     /// `Lact::status` plus the change pending on this GPU. Blocking.
