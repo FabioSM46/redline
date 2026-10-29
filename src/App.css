@@ -237,3 +237,87 @@ body {
 .figure-high {
   color: var(--high);
 }
+
+/* Performance → Metrics charts (D9). The canvas cannot use CSS variables: the chart tokens are
+   read with getComputedStyle (src/charts/useChartPalette.ts) and follow the theme because they
+   point at the base tokens. Series colours do not signal state, so they are not --high. */
+:root {
+  --chart-primary: var(--accent);
+  --chart-secondary: var(--muted);
+  --chart-grid: var(--border);
+  --chart-height: 180px;
+  --chart-min-width: 360px;
+}
+
+.window-select {
+  display: inline-flex;
+  margin-bottom: var(--space);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.window-option {
+  padding: calc(var(--space-sm) / 2) var(--space);
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.window-option + .window-option {
+  border-left: var(--border-width) solid var(--border);
+}
+
+.window-option:hover {
+  color: var(--fg);
+}
+
+.window-option[aria-pressed="true"] {
+  color: var(--fg);
+  box-shadow: inset 0 calc(var(--indicator) * -1) 0 var(--accent);
+}
+
+.window-option:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--chart-min-width)), 1fr));
+  gap: var(--space);
+}
+
+.chart {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.chart-title {
+  margin-bottom: var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* The plot follows its card's width; uPlot's own width would otherwise hold the grid open. */
+.chart-plot {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chart-plot .u-legend {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.chart-plot .u-hz .u-cursor-x {
+  border-right-color: var(--muted);
+}
