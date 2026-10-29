@@ -1004,6 +1004,152 @@ body {
   margin: 0;
 }
 
+/* Performance → Tuning → Fan: the curve editor is SVG, so its colours are these tokens and follow
+ * light and dark through the base ones. The accent is the curve the user edits; the current
+ * temperature is muted, and speeds the GPU refuses are shaded. */
+:root {
+  --fan-curve-max-width: 600px;
+  --fan-curve-point: 7px;
+}
+
+.fan-controls {
+  min-width: 0;
+}
+
+.fan-curve-editor {
+  display: grid;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: var(--fan-curve-max-width);
+}
+
+.fan-curve-editor > p {
+  margin: 0;
+}
+
+.fan-curve {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  margin: 0;
+}
+
+.fan-curve-plot {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.fan-curve-out {
+  fill: var(--bg);
+}
+
+.fan-curve-grid {
+  stroke: var(--border);
+  stroke-width: var(--border-width);
+}
+
+.fan-curve-axis {
+  fill: var(--muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.fan-curve-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: var(--indicator);
+  stroke-linejoin: round;
+}
+
+.fan-curve-now line {
+  stroke: var(--muted);
+  stroke-width: var(--border-width);
+  stroke-dasharray: 4 4;
+}
+
+.fan-curve-now circle {
+  fill: var(--muted);
+}
+
+.fan-curve-point {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: var(--indicator);
+  cursor: grab;
+}
+
+.fan-curve-point[data-dragging] {
+  cursor: grabbing;
+  fill: var(--accent);
+}
+
+.fan-curve-point:focus {
+  outline: none;
+}
+
+.fan-curve-point:focus-visible {
+  fill: var(--accent);
+  stroke: var(--fg);
+}
+
+.fan-curve-point[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.fan-curve-caption {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.fan-points {
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.fan-points th {
+  padding: 0 var(--space-sm) calc(var(--space-sm) / 2) 0;
+  font-weight: 400;
+  color: var(--muted);
+  text-align: left;
+}
+
+.fan-points td {
+  padding: calc(var(--space-sm) / 4) var(--space-sm) calc(var(--space-sm) / 4) 0;
+}
+
+.fan-advanced {
+  width: 100%;
+}
+
+.fan-options {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.fan-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space);
+}
+
+.fan-option-text {
+  display: grid;
+  gap: calc(var(--space-sm) / 4);
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+#tuning-overdrive:focus {
+  outline: none;
+}
+
 /* Settings → Dependencies: a tool's state and its Install button, then what to do about it. */
 .dependency {
   display: flex;
