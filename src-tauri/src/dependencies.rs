@@ -25,6 +25,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::State;
 
+use crate::installer::Installer;
 use crate::recorder::MISSING as GSR_MISSING;
 use crate::tuning::{self, Lact, Tuning};
 
@@ -71,6 +72,9 @@ pub struct Dependency {
     pub hint: Option<String>,
     /// LACT only: its daemon. `null` for the other tools.
     pub daemon: Option<DaemonStatus>,
+    /// `install_dependency` can run here: the packaged helper and pkexec are both present. The
+    /// same for every tool; the helper itself says when a tool is not supported on the system.
+    pub can_install: bool,
 }
 
 /// `lactd`, as seen from Redline.
@@ -84,12 +88,21 @@ pub struct DaemonStatus {
 
 /// Every dependency: LACT, GPU Screen Recorder, ffmpeg. Blocking: one request to `lactd` and up to
 /// three tool runs, each bounded by `timeout` (or the LACT client's own).
-pub fn status(lact: &Lact, search_path: &OsStr, timeout: Duration) -> Vec<Dependency> {
-    vec![
+pub fn status(
+    lact: &Lact,
+    search_path: &OsStr,
+    timeout: Duration,
+    can_install: bool,
+) -> Vec<Dependency> {
+    let mut deps = vec![
         lact_status(lact),
         gpu_screen_recorder_status(search_path, timeout),
         ffmpeg_status(search_path, timeout),
-    ]
+    ];
+    for dep in &mut deps {
+        dep.can_install = can_install;
+    }
+    deps
 }
 
 fn missing(id: DependencyId, verified_version: Option<&'static str>, hint: &str) -> Dependency {
@@ -102,6 +115,7 @@ fn missing(id: DependencyId, verified_version: Option<&'static str>, hint: &str)
         warning: None,
         hint: Some(hint.to_owned()),
         daemon: None,
+        can_install: false,
     }
 }
 
@@ -119,6 +133,7 @@ fn found(
         warning: None,
         hint: None,
         daemon: None,
+        can_install: false,
     }
 }
 
@@ -251,10 +266,14 @@ fn process_path() -> OsString {
 /// LACT, GPU Screen Recorder and ffmpeg, in that order. Never an error for a missing tool:
 /// that is `installed: false` with a hint.
 #[tauri::command]
-pub async fn dependency_status(tuning: State<'_, Tuning>) -> Result<Vec<Dependency>, String> {
+pub async fn dependency_status(
+    tuning: State<'_, Tuning>,
+    installer: State<'_, Installer>,
+) -> Result<Vec<Dependency>, String> {
     let tuning = tuning.inner().clone();
+    let can_install = installer.available();
     tauri::async_runtime::spawn_blocking(move || {
-        status(tuning.lact(), &process_path(), TOOL_TIMEOUT)
+        status(tuning.lact(), &process_path(), TOOL_TIMEOUT, can_install)
     })
     .await
     .map_err(|error| format!("The dependency check did not answer: {error}"))
@@ -325,7 +344,7 @@ mod tests {
         }
 
         fn status(&self) -> Vec<Dependency> {
-            status(&self.lact(), self.bin().as_os_str(), TIMEOUT)
+            status(&self.lact(), self.bin().as_os_str(), TIMEOUT, true)
         }
 
         fn get(&self, id: DependencyId) -> Dependency {
@@ -363,7 +382,7 @@ mod tests {
         );
         assert!(
             deps.iter()
-                .all(|dep| !dep.installed && dep.version.is_none())
+                .all(|dep| !dep.installed && dep.version.is_none() && dep.can_install)
         );
 
         assert_eq!(deps[0].hint.as_deref(), Some(NOT_INSTALLED));
@@ -538,6 +557,7 @@ mod tests {
             &setup.lact(),
             setup.bin().as_os_str(),
             Duration::from_millis(200),
+            false,
         )
         .remove(2);
         assert!(started.elapsed() < Duration::from_secs(10));
@@ -566,6 +586,7 @@ mod tests {
             serde_json::to_value(missing(DependencyId::GpuScreenRecorder, None, "x")).unwrap();
         assert_eq!(json["id"], "gpu_screen_recorder");
         assert_eq!(json["name"], "GPU Screen Recorder");
+        assert_eq!(json["can_install"], false);
         for key in ["version", "verified_version", "warning", "daemon"] {
             assert_eq!(json[key], Value::Null, "{key}");
         }

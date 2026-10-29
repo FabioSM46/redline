@@ -1,0 +1,187 @@
+#!/bin/bash
+# Installs one of Redline's external tools. Run as root: by Redline through
+# `pkexec /usr/share/redline/install-dependency <component>` (polkit action
+# com.fabiosm46.redline.install), or by scripts/install-deps.sh under sudo.
+#
+# Usage: install-dependency [--dry-run] lact|gpu-screen-recorder|ffmpeg
+#
+# The component is the only input: a fixed name, never a URL, a path or a command. Everything
+# else (versions, checksums, URLs) is pinned below. This file is the single place the pinned
+# versions live; scripts/install-deps.sh runs it.
+#
+#   lact                 the official LACT .deb of the pinned version from GitHub, checked
+#                        against its pinned SHA256 before apt installs it, then `lactd` enabled
+#   gpu-screen-recorder  the Flatpak from Flathub, system-wide (flatpak itself from the
+#                        distribution's package manager when missing)
+#   ffmpeg               from the distribution's package manager (apt, dnf or pacman)
+#
+# Output protocol (stdout, one line each), read by Redline:
+#   progress <sentence>   a step starts
+#   error <sentence>      why the install failed, as the last word before a non-zero exit
+# Everything the package managers print goes to stderr.
+#
+# Exit codes: 0 installed, 1 failed, 2 bad usage, 3 not supported on this system. Never 126 or
+# 127: pkexec uses those for a cancelled or failed authentication.
+#
+# --dry-run prints every command that would change the system (`run <command>` on stdout)
+# instead of running it, and does not require root. The tests use it, with REDLINE_OS_RELEASE
+# pointing to a fake os-release; that variable is honoured only in a dry run.
+set -euo pipefail
+
+# ---- Pinned versions (keep LACT_VERSION equal to VERIFIED_VERSION in redline-core's lact.rs;
+# scripts/test/install-dependency.test.sh fails when they differ) ----
+LACT_VERSION="0.10.1"
+LACT_RELEASES="https://github.com/ilya-zlobintsev/LACT/releases/download/v${LACT_VERSION}"
+# <os-release key> <.deb> <sha256>, from the release assets of the tag.
+LACT_DEBS="
+ubuntu-24.04 lact-${LACT_VERSION}-0.amd64.ubuntu-2404.deb 7c743c4ea49807a66f3a0b02f7b803fa7f98fda1e1c2f7270b2460b84021d97d
+ubuntu-26.04 lact-${LACT_VERSION}-0.amd64.ubuntu-2604.deb b8006a0d7e414de08f193760a82d346c7308675747ae928501941ac714b59fd3
+debian-13 lact-${LACT_VERSION}-0.amd64.debian-13.deb 44f25c6e95ad6d0fb869b36ae10c593bb22b7d021cd3f1f282cc677ed883248d
+"
+GSR_ID="com.dec05eba.gpu_screen_recorder"
+FLATHUB_REPO="https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+DRY_RUN=0
+OS_RELEASE=/etc/os-release
+DOWNLOADS=
+
+say() { printf '%s %s\n' "$1" "$2"; }
+fail() {
+  say error "$1"
+  exit "${2:-1}"
+}
+
+# Runs a command that changes the system, with its output on stderr; prints it in a dry run.
+run() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say run "$*"
+  else
+    "$@" >&2
+  fi
+}
+
+# The distribution's package manager, detected at runtime.
+package_manager() {
+  local pm
+  for pm in apt-get dnf pacman; do
+    if command -v "$pm" >/dev/null 2>&1; then
+      echo "$pm"
+      return
+    fi
+  done
+  echo none
+}
+
+install_packages() {
+  case "$(package_manager)" in
+    apt-get)
+      run apt-get update
+      run env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+      ;;
+    dnf) run dnf install -y "$@" ;;
+    pacman) run pacman -S --needed --noconfirm "$@" ;;
+    *) fail "No supported package manager (apt, dnf or pacman) was found." 3 ;;
+  esac
+}
+
+# One value of os-release, without quotes.
+os_value() {
+  local key=$1 line
+  [ -r "$OS_RELEASE" ] || return 0
+  line=$(grep -E "^${key}=" "$OS_RELEASE" | head -n 1 || true)
+  line=${line#*=}
+  line=${line#\"}
+  line=${line%\"}
+  printf '%s' "$line"
+}
+
+# The key of the LACT .deb built for this system, empty when there is none.
+lact_target() {
+  local id version codename
+  id=$(os_value ID)
+  version=$(os_value VERSION_ID)
+  codename=$(os_value UBUNTU_CODENAME)
+  case "$id" in
+    ubuntu | debian) printf '%s-%s' "$id" "$version" ;;
+    *)
+      # Derivatives of Ubuntu (Linux Mint, Pop!_OS, ...) name the release they are built on.
+      case "$codename" in
+        noble) printf 'ubuntu-24.04' ;;
+      esac
+      ;;
+  esac
+}
+
+install_lact() {
+  local target deb sha
+  [ "$(package_manager)" = apt-get ] ||
+    fail "The guided install of LACT needs apt; install LACT ${LACT_VERSION} from its releases on GitHub or your distribution's packages." 3
+  target=$(lact_target)
+  read -r deb sha < <(awk -v t="$target" '$1 == t { print $2, $3 }' <<<"$LACT_DEBS") || true
+  [ -n "${deb:-}" ] ||
+    fail "There is no LACT ${LACT_VERSION} package for this system; install it from its releases on GitHub." 3
+  command -v curl >/dev/null 2>&1 || install_packages curl
+
+  say progress "Downloading LACT ${LACT_VERSION}"
+  DOWNLOADS=$(mktemp -d)
+  trap 'rm -rf "$DOWNLOADS"' EXIT
+  run curl -fsSL --proto '=https' -o "$DOWNLOADS/$deb" "$LACT_RELEASES/$deb" ||
+    fail "Could not download LACT ${LACT_VERSION}."
+  say progress "Checking the LACT package"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say run "sha256sum -c ($sha $deb)"
+  else
+    printf '%s  %s\n' "$sha" "$DOWNLOADS/$deb" | sha256sum -c --status ||
+      fail "The downloaded LACT package does not match its pinned checksum: nothing was installed."
+  fi
+  say progress "Installing LACT ${LACT_VERSION}"
+  run apt-get install -y "$DOWNLOADS/$deb" || fail "apt could not install LACT."
+  say progress "Starting the LACT daemon"
+  run systemctl enable --now lactd || fail "LACT is installed, but its daemon did not start."
+}
+
+install_gpu_screen_recorder() {
+  if ! command -v flatpak >/dev/null 2>&1; then
+    say progress "Installing Flatpak"
+    install_packages flatpak || fail "Could not install Flatpak."
+  fi
+  say progress "Adding Flathub"
+  run flatpak remote-add --if-not-exists --system flathub "$FLATHUB_REPO" ||
+    fail "Could not add the Flathub repository."
+  say progress "Installing GPU Screen Recorder"
+  run flatpak install -y --noninteractive --system flathub "$GSR_ID" ||
+    fail "Flatpak could not install GPU Screen Recorder."
+}
+
+install_ffmpeg() {
+  local package=ffmpeg
+  # Fedora's own repositories ship it as ffmpeg-free (the full build is in RPM Fusion).
+  [ "$(package_manager)" = dnf ] && package=ffmpeg-free
+  say progress "Installing ffmpeg"
+  install_packages "$package" || fail "The package manager could not install ffmpeg."
+}
+
+main() {
+  if [ "${1:-}" = --dry-run ]; then
+    DRY_RUN=1
+    OS_RELEASE=${REDLINE_OS_RELEASE:-$OS_RELEASE}
+    shift
+  fi
+  [ $# -eq 1 ] || fail "Usage: install-dependency [--dry-run] lact|gpu-screen-recorder|ffmpeg" 2
+  local component=$1
+  case "$component" in
+    lact | gpu-screen-recorder | ffmpeg) ;;
+    *) fail "Unknown component; expected lact, gpu-screen-recorder or ffmpeg." 2 ;;
+  esac
+  if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
+    fail "Run this as root (Redline runs it through pkexec)." 2
+  fi
+  case "$component" in
+    lact) install_lact ;;
+    gpu-screen-recorder) install_gpu_screen_recorder ;;
+    ffmpeg) install_ffmpeg ;;
+  esac
+  say progress "Done"
+}
+
+main "$@"

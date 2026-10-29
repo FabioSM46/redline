@@ -4,6 +4,7 @@ mod dependencies;
 mod desktop;
 mod gallery;
 mod global_shortcuts;
+mod installer;
 mod recorder;
 mod sampler;
 mod settings;
@@ -48,6 +49,7 @@ pub fn run() {
             settings::init(app.handle());
             sampler::start(app)?;
             tuning::init(app);
+            installer::init(app);
             // A first launch with an action performs it once GPU Screen Recorder has been
             // detected and `replay_on_start` has run.
             let launch_action = actions::requested(std::env::args_os().skip(1));
@@ -90,6 +92,7 @@ pub fn run() {
             global_shortcuts::global_shortcuts_configure,
             tuning::tuning_status,
             dependencies::dependency_status,
+            installer::install_dependency,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

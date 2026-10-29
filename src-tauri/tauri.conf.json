@@ -33,7 +33,9 @@
         "section": "utils",
         "desktopTemplate": "linux/redline.desktop",
         "files": {
-          "/usr/share/doc/redline/copyright": "../LICENSE"
+          "/usr/share/doc/redline/copyright": "../LICENSE",
+          "/usr/share/redline/install-dependency": "linux/install-dependency",
+          "/usr/share/polkit-1/actions/com.fabiosm46.redline.install.policy": "linux/com.fabiosm46.redline.install.policy"
         }
       }
     },

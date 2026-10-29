@@ -1,33 +1,26 @@
 #!/bin/bash
-# Installs Redline's system dependencies on Ubuntu 24.04:
-#   - LACT (the lactd daemon) from the official .deb
+# Installs Redline's system dependencies from a source checkout:
+#   - LACT (the lactd daemon) from the official .deb of the pinned version, checksum verified
 #   - GPU Screen Recorder via Flatpak, system-wide (needed to capture a monitor on AMD)
-# Usage: sudo bash scripts/install-deps.sh
-set -e
+#   - ffmpeg from the distribution's package manager (previews of clips)
+# It runs the same helper the .deb ships at /usr/share/redline/install-dependency, which the
+# app starts through pkexec: the pinned versions and checksums live only in that helper.
+# Usage: sudo bash scripts/install-deps.sh [--dry-run] [lact] [gpu-screen-recorder] [ffmpeg]
+# (all three when none is named).
+set -euo pipefail
 
-LACT_VERSION="0.10.1"
-LACT_DEB="lact-${LACT_VERSION}-0.amd64.ubuntu-2404.deb"
-LACT_URL="https://github.com/ilya-zlobintsev/LACT/releases/download/v${LACT_VERSION}/${LACT_DEB}"
-GSR_ID="com.dec05eba.gpu_screen_recorder"
+HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src-tauri/linux/install-dependency"
 
-if [ "$(id -u)" -ne 0 ]; then
-  echo "Run this script with sudo" >&2
-  exit 1
+options=()
+if [ "${1:-}" = --dry-run ]; then
+  options+=(--dry-run)
+  shift
 fi
+[ $# -gt 0 ] || set -- lact gpu-screen-recorder ffmpeg
 
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-
-echo "==> LACT ${LACT_VERSION}" >&2
-curl -fsSL -o "$TMP/$LACT_DEB" "$LACT_URL"
-apt-get install -y "$TMP/$LACT_DEB"
-systemctl enable --now lactd
-
-echo "==> Flatpak + Flathub" >&2
-apt-get install -y flatpak
-flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-
-echo "==> GPU Screen Recorder" >&2
-flatpak install -y --system flathub "$GSR_ID"
+for component in "$@"; do
+  echo "==> $component" >&2
+  bash "$HELPER" "${options[@]}" "$component"
+done
 
 echo "Done. If this is the first Flatpak install, log out and back in to see the apps in the menu." >&2
