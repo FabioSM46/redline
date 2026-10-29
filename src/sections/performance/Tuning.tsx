@@ -1,11 +1,14 @@
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import { useGpu } from "../../GpuContext.tsx";
+import { PROFILE_EVENT } from "../../profiles.ts";
 import type { Navigate } from "../../tabs.ts";
 import { changeLabel, lactUnreachable, outcomeSentence, type TuningStatus } from "../../tuning.ts";
 import type { TuningBlockProps } from "./tuning/block.ts";
 import { ConfirmationPanel } from "./tuning/ConfirmationPanel.tsx";
 import { OverdriveBlock } from "./tuning/Overdrive.tsx";
 import { PowerLimitBlock } from "./tuning/PowerLimit.tsx";
+import { ProfilesBlock } from "./tuning/Profiles.tsx";
 import { usePendingChange, useTuningStatus } from "./tuning/useTuning.ts";
 
 /** What this page asked for, kept next to the change it became, for the confirmation panel. */
@@ -34,6 +37,21 @@ export function Tuning({ navigate }: { navigate: Navigate }) {
     if (statusPending !== null) dispatch({ type: "status", change: statusPending, nowMs: Date.now() });
   }, [statusPending, dispatch]);
 
+  // A profile switch (and its switch back) changes every setting: read them again.
+  useEffect(() => {
+    let active = true;
+    let stop: (() => void) | null = null;
+    listen(PROFILE_EVENT, reload).then(
+      (unlisten) => (active ? (stop = unlisten) : unlisten()),
+      // The profiles block shows a failed subscription to this same event.
+      () => {},
+    );
+    return () => {
+      active = false;
+      stop?.();
+    };
+  }, [reload]);
+
   const locked = pending.pending !== null || sending || overdriveBusy;
 
   const apply = useCallback<TuningBlockProps["apply"]>(
@@ -58,7 +76,10 @@ export function Tuning({ navigate }: { navigate: Navigate }) {
     change !== null && detail?.gpuId === change.gpu_id && detail.deadlineMs === change.deadline_ms ? detail.text : null;
   const settled = pending.settled;
   const settledName =
-    settled !== null && gpus.length > 1 ? (gpus.find((g) => g.id === settled.change.gpu_id)?.name ?? null) : null;
+    // A profile applies to every GPU: naming one would mislead.
+    settled !== null && gpus.length > 1 && settled.change.what !== "profile"
+      ? (gpus.find((g) => g.id === settled.change.gpu_id)?.name ?? null)
+      : null;
 
   return (
     <div className="tuning">
@@ -138,6 +159,7 @@ function Blocks(block: TuningBlockProps) {
   const { power } = block.status;
   return (
     <>
+      <ProfilesBlock {...block} />
       {power !== null && <PowerLimitBlock key={`${block.gpuId}:${power.current_w}`} {...block} power={power} />}
     </>
   );

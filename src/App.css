@@ -1036,3 +1036,21 @@ body {
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
+
+/* Performance → Tuning → Profile: the switch row, then the inline "Save as new" and "Delete"
+ * confirmations below it, never a browser dialog. */
+.tuning-profiles {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-profiles > .record-title,
+.tuning-profiles > p {
+  margin: 0;
+}
+
+.profile-name {
+  flex: none;
+  width: calc(var(--space) * 16);
+  max-width: 100%;
+}
