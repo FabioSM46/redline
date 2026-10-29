@@ -4,11 +4,12 @@
 //!
 //! Same approach as the tray (`tray.rs`): GIO/GLib through `extern "C"`, libraries GTK already
 //! loads, no extra crate. Every call is blocking and bounded by a D-Bus timeout, so callers run
-//! it off the main thread. Every failure (no session bus, no service, timeout) is `false`, never
-//! an error: the caller decides what that means.
+//! it off the main thread. Every failure (no session bus, no service, timeout) is `false` or
+//! `None`, never an error: the caller decides what that means.
 //!
 //! A [`NotificationSlot`] is one notification that replaces itself: each new one takes the place
-//! of the previous one (`replaces_id`) instead of piling up next to it (#64).
+//! of the previous one (`replaces_id`) instead of piling up next to it (#64). The app's two slots
+//! are [`SHORTCUT_NOTIFICATION`] and [`REPLAY_SAVED_NOTIFICATION`].
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
@@ -70,11 +71,13 @@ unsafe extern "C" {
     fn g_free(memory: *mut c_void);
 }
 
-/// Shows a desktop notification. `false` when nothing showed it (no session bus, no
-/// notification server, timeout).
-pub fn notify(app_name: &str, summary: &str, body: &str) -> bool {
-    notify_replacing(app_name, summary, body, 0).is_some()
-}
+/// The notification of the actions started outside the window (command line, shortcuts),
+/// success or failure, shared with "Recording saved": each replaces the previous one (#64).
+pub static SHORTCUT_NOTIFICATION: NotificationSlot = NotificationSlot::new();
+
+/// "Replay saved": each save replaces the previous one, without taking the place of a
+/// [`SHORTCUT_NOTIFICATION`] such as "Replay off" or a failure.
+pub static REPLAY_SAVED_NOTIFICATION: NotificationSlot = NotificationSlot::new();
 
 /// One notification that replaces itself: [`NotificationSlot::show`] passes the id the server
 /// gave the previous one as `replaces_id`, so a new one takes its place. When the previous one
@@ -104,8 +107,9 @@ impl NotificationSlot {
     }
 }
 
-/// [`notify`] in place of the notification `replaces_id` (0: a new one). The id the server gave
-/// the notification; `None` when nothing showed it.
+/// Shows a desktop notification in place of the notification `replaces_id` (0: a new one). The
+/// id the server gave the notification; `None` when nothing showed it (no session bus, no
+/// notification server, timeout). The app calls it through a [`NotificationSlot`].
 pub fn notify_replacing(
     app_name: &str,
     summary: &str,
@@ -165,8 +169,8 @@ pub fn show_items(path: &Path) -> bool {
     let Some(uri) = file_uri(path).and_then(|uri| CString::new(uri).ok()) else {
         return false;
     };
-    // SAFETY: as in `notify`; `uri` outlives the calls and the one-element array sinks its
-    // floating child.
+    // SAFETY: as in `notify_replacing`; `uri` outlives the calls and the one-element array
+    // sinks its floating child.
     unsafe {
         let uris = [g_variant_new_string(uri.as_ptr())];
         let children = [
@@ -262,8 +266,8 @@ unsafe fn call<T>(
 mod tests {
     use super::*;
 
-    // `notify` and `show_items` are not called here: on a developer's desktop they would show
-    // a real notification or open a file manager window.
+    // `notify_replacing` and `show_items` are not called here: on a developer's desktop they
+    // would show a real notification or open a file manager window.
 
     #[test]
     fn file_uris_are_escaped_by_glib() {
@@ -282,7 +286,6 @@ mod tests {
 
     #[test]
     fn strings_with_a_nul_are_refused_before_any_call() {
-        assert!(!notify("Redline", "Replay saved", "a\0b"));
         assert_eq!(notify_replacing("Redline", "Replay on", "a\0b", 7), None);
     }
 

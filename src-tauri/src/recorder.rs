@@ -526,7 +526,9 @@ impl Recorder {
     }
 
     /// Stops the recording process (SIGINT): gsr closes the file and prints its path. Returns
-    /// the name of that file, the one the process was started with.
+    /// the name the process was started with (`-o`), not the printed one: in recording mode gsr
+    /// writes exactly the file `-o` names, and `recording_file` already chose a name that is not
+    /// taken, so the two are the same (the recording tests check it against `file-saved`).
     fn stop_recording_process(&self) -> Result<(RecorderStatus, Option<String>), String> {
         let mut state = self.state();
         state.generation += 1;

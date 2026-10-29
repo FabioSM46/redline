@@ -33,7 +33,7 @@ use std::thread;
 
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::desktop::{self, NotificationSlot};
+use crate::desktop;
 use crate::recorder::{Recorder, ReplayState};
 use crate::tray;
 
@@ -72,8 +72,9 @@ pub const ACTION_ARGS: [ActionArg; 3] = [
 const NOT_READY: &str = "Redline is still starting: try again in a moment.";
 
 /// The one notification every action shows, success or failure, and "Recording saved": each
-/// replaces the previous one.
-pub static SHORTCUT_NOTIFICATION: NotificationSlot = NotificationSlot::new();
+/// replaces the previous one. It lives in `desktop`, next to the other slot; re-exported here
+/// because the actions are its main user.
+pub use crate::desktop::SHORTCUT_NOTIFICATION;
 
 /// What an action's notification says. `body` is plain text: it is escaped when shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,8 +99,11 @@ impl Done {
     fn notice(self) -> Option<Notice> {
         let (summary, body) = match self {
             Done::Saved => return None,
-            Done::Replay(ReplayState::Off) => ("Replay off", String::new()),
-            Done::Replay(_) => ("Replay on", String::new()),
+            // Exhaustive on purpose: a new state must decide what the user is told.
+            Done::Replay(ReplayState::Starting | ReplayState::On) => ("Replay on", String::new()),
+            // A successful toggle never ends in `error` (a failed start is an `Err`); were it
+            // to, the replay is not running.
+            Done::Replay(ReplayState::Off | ReplayState::Error) => ("Replay off", String::new()),
             Done::Recording { on: true, .. } => ("Recording started", String::new()),
             Done::Recording { on: false, file } => ("Recording stopped", file.unwrap_or_default()),
         };
@@ -405,6 +409,10 @@ mod tests {
         );
         assert_eq!(
             Done::Replay(ReplayState::Off).notice(),
+            notice("Replay off", "")
+        );
+        assert_eq!(
+            Done::Replay(ReplayState::Error).notice(),
             notice("Replay off", "")
         );
     }

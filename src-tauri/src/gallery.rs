@@ -29,7 +29,7 @@ use tauri::{AppHandle, Manager, Runtime};
 
 use crate::recorder::{FileKind, FileSaved};
 use crate::settings::{self, RecordingSettings};
-use crate::{actions, desktop, thumbnails};
+use crate::{desktop, thumbnails};
 
 /// The extensions of the containers GPU Screen Recorder can write.
 const VIDEO_EXTENSIONS: [&str; 5] = ["mkv", "mp4", "webm", "flv", "mov"];
@@ -256,8 +256,10 @@ pub fn notification_text(file: &FileSaved) -> (&'static str, String) {
 /// thread reading GPU Screen Recorder's output, and the D-Bus call may wait. Without a
 /// notification server nothing happens.
 ///
-/// "Recording saved" takes the place of the shortcut notification (#64): a shortcut that stops
-/// a recording also says "Recording stopped" with the file name, and the two are one.
+/// Neither piles up (#64). "Recording saved" takes the place of the shortcut notification: a
+/// shortcut that stops a recording also says "Recording stopped" with the file name, and the
+/// two are one. "Replay saved" has its own slot: a save replaces the previous save, not a
+/// "Replay off" or a failure.
 pub fn notify_saved(file: &FileSaved) {
     let (summary, body) = notification_text(file);
     let kind = file.kind;
@@ -265,10 +267,10 @@ pub fn notify_saved(file: &FileSaved) {
         .name("redline-notify".into())
         .spawn(move || match kind {
             FileKind::Recording => {
-                actions::SHORTCUT_NOTIFICATION.show(summary, &body);
+                desktop::SHORTCUT_NOTIFICATION.show(summary, &body);
             }
             FileKind::Replay => {
-                desktop::notify(desktop::APP_NAME, summary, &body);
+                desktop::REPLAY_SAVED_NOTIFICATION.show(summary, &body);
             }
         });
     if let Err(error) = spawned {
