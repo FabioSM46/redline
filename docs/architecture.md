@@ -19,7 +19,7 @@
 |---|---|---|
 | `sensors` | Finds AMD GPUs in `/sys/class/drm`, reads temperatures, power, fan, clocks, voltage, usage and VRAM | prototype, tested on RDNA4 |
 | `lact` | Client of the `lactd` socket: devices, statistics, power cap, confirming or reverting changes | prototype, verified on real hardware |
-| `recorder` | Starts GPU Screen Recorder in replay mode, saves the replay, starts and stops recording, one audio track per source | prototype |
+| `recorder` | Starts GPU Screen Recorder in replay mode, saves the replay, starts and stops recording, one audio track per source | prototype, replay verified on real hardware |
 
 ## Flows
 
