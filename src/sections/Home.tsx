@@ -15,15 +15,15 @@ export function Home() {
   const { primary, secondary } = homeFigures(reading.snapshot);
   return (
     <section className="section">
-      <Figures figures={primary} className="figures figures-primary" />
-      <Figures figures={secondary} className="figures figures-secondary" />
+      <Figures figures={primary} className="figures figures-primary" label="Main figures" />
+      <Figures figures={secondary} className="figures figures-secondary" label="Secondary figures" />
     </section>
   );
 }
 
-function Figures({ figures, className }: { figures: Figure[]; className: string }) {
+function Figures({ figures, className, label }: { figures: Figure[]; className: string; label: string }) {
   return (
-    <dl className={className}>
+    <dl className={className} aria-label={label}>
       {figures.map((f) => (
         <div className="figure" key={f.label}>
           <dt>{f.label}</dt>
