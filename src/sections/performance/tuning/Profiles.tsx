@@ -41,11 +41,20 @@ export function ProfilesBlock(block: TuningBlockProps) {
   useEffect(() => {
     let active = true;
     let stop: (() => void) | null = null;
+    // The first read starts once the subscription is in place: an event that lands between the
+    // two then counts, and the older reply is dropped. Without events the list is still read.
     listen<Profiles>(PROFILE_EVENT, (event) => dispatch({ type: "event", profiles: event.payload })).then(
-      (unlisten) => (active ? (stop = unlisten) : unlisten()),
-      (e) => active && setListenError(String(e)),
+      (unlisten) => {
+        if (!active) return unlisten();
+        stop = unlisten;
+        load();
+      },
+      (e) => {
+        if (!active) return;
+        setListenError(String(e));
+        load();
+      },
     );
-    load();
     return () => {
       active = false;
       stop?.();
@@ -72,9 +81,7 @@ export function ProfilesBlock(block: TuningBlockProps) {
         </div>
       )}
       {profiles !== null && (
-        // Remounted when the active profile changes, so the selection starts from it again.
         <ProfilesControls
-          key={profileValue(profiles.active)}
           {...block}
           profiles={profiles}
           onProfiles={(next, since) => dispatch({ type: "reply", profiles: next, since })}
@@ -106,8 +113,18 @@ function ProfilesControls({
   onProfiles: (profiles: Profiles, since: number) => void;
   events: { current: number };
 }) {
-  const [selected, setSelected] = useState<string | null>(profiles.active);
-  const [mode, setMode] = useState<Mode>({ kind: "idle" });
+  // The selection is made against one active profile: once another becomes active (a switch,
+  // its switch back, LACT or another program), the selector follows it again. An open form or
+  // confirmation is kept.
+  const [pick, setPick] = useState<{ base: string | null; value: string | null } | null>(null);
+  const selected = pick !== null && pick.base === profiles.active ? pick.value : profiles.active;
+  const [requested, setMode] = useState<Mode>({ kind: "idle" });
+  // A delete confirmation for a profile that became active or was deleted elsewhere closes.
+  const mode: Mode =
+    requested.kind === "delete" &&
+    (!profiles.profiles.includes(requested.name) || deleteBlocker(profiles, requested.name) !== null)
+      ? { kind: "idle" }
+      : requested;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -170,7 +187,7 @@ function ProfilesControls({
               aria-label="Profile"
               value={profileValue(target)}
               disabled={disabled || profiles.auto_switch || mode.kind !== "idle"}
-              onChange={(e) => setSelected(profileFromValue(e.target.value))}
+              onChange={(e) => setPick({ base: profiles.active, value: profileFromValue(e.target.value) })}
             >
               <option value={profileValue(null)}>{profileLabel(null)}</option>
               {profiles.profiles.map((name) => (
