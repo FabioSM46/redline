@@ -27,40 +27,54 @@ export function General() {
   const trayAvailable = useTrayAvailable();
 
   useEffect(() => {
-    invoke<Settings>("get_settings")
-      .then((raw) => setSettings({ status: "ready", value: toSettings(raw) }))
-      .catch((e) => setSettings({ status: "error", message: String(e) }));
+    // The theme is applied here too: if the startup read in main.tsx failed and fell back to
+    // System, the page must not show a saved Dark while the app stays light.
+    invoke<Settings>("get_settings").then(
+      (raw) => {
+        const loaded = toSettings(raw);
+        setSettings({ status: "ready", value: loaded });
+        applyTheme(loaded.theme);
+      },
+      (e) => setSettings({ status: "error", message: String(e) }),
+    );
     invoke<boolean>("get_autostart")
       .then((value) => setAutostart({ status: "ready", value }))
       .catch((e) => setAutostart({ status: "error", message: String(e) }));
   }, []);
 
   // Theme and start minimised travel together in one `set_settings` call, so both controls are
-  // disabled while either saves: a second change never overwrites the first with stale values.
-  // On failure the shown value stays the previous one and the error sits next to the control.
+  // busy while either saves: a second change never overwrites the first with stale values.
+  // Busy is `aria-disabled` plus an early return, not `disabled`, so keyboard focus stays on the
+  // control. On failure the shown value stays the previous one and the error sits next to it.
   const settingsBusy = themeSave.status === "saving" || minimisedSave.status === "saving";
 
+  // The error handler is the second argument of `then`, not a `.catch`: only a failed
+  // `set_settings` means "Not saved", never a problem after the backend accepted the save.
   function saveSettings(next: Settings, setSave: (state: SaveState) => void) {
+    if (settingsBusy) return;
     setSave({ status: "saving" });
-    invoke<Settings>("set_settings", { settings: next })
-      .then((raw) => {
+    invoke<Settings>("set_settings", { settings: next }).then(
+      (raw) => {
         const saved = toSettings(raw);
         setSettings({ status: "ready", value: saved });
-        applyTheme(saved.theme);
         setSave(IDLE);
-      })
-      .catch((e) => setSave({ status: "error", message: String(e) }));
+        applyTheme(saved.theme);
+      },
+      (e) => setSave({ status: "error", message: String(e) }),
+    );
   }
 
   // The shown state is the one the operating system reports back, not the requested one.
   function saveAutostart(enabled: boolean) {
+    if (autostartSave.status === "saving") return;
     setAutostartSave({ status: "saving" });
-    invoke<boolean>("set_autostart", { enabled })
-      .then((value) => {
+    invoke<boolean>("set_autostart", { enabled }).then(
+      (value) => {
         setAutostart({ status: "ready", value });
         setAutostartSave(IDLE);
-      })
-      .catch((e) => setAutostartSave({ status: "error", message: String(e) }));
+      },
+      (e) => setAutostartSave({ status: "error", message: String(e) }),
+    );
   }
 
   return (
@@ -76,7 +90,7 @@ export function General() {
                     name="theme"
                     value={option.value}
                     checked={current.theme === option.value}
-                    disabled={settingsBusy}
+                    aria-disabled={settingsBusy}
                     onChange={() => saveSettings({ ...current, theme: option.value }, setThemeSave)}
                   />
                   <span>{option.label}</span>
@@ -93,7 +107,7 @@ export function General() {
             <Toggle
               label="Start with the system"
               checked={enabled}
-              disabled={autostartSave.status === "saving"}
+              busy={autostartSave.status === "saving"}
               onChange={saveAutostart}
             />
           )}
@@ -110,7 +124,7 @@ export function General() {
             <Toggle
               label="Start minimised to the tray"
               checked={current.start_minimised}
-              disabled={settingsBusy}
+              busy={settingsBusy}
               onChange={(start_minimised) => saveSettings({ ...current, start_minimised }, setMinimisedSave)}
             />
           )}
@@ -131,16 +145,24 @@ export function General() {
 /**
  * `app_status().tray_available`, read when the page opens and again whenever the window comes
  * back to the front: the tray host can appear or go away while Redline runs. `null` until the
- * first answer, and when the answer cannot be read: no notice is better than a wrong one.
+ * first answer; a later unreadable answer keeps the last known one.
  */
 function useTrayAvailable(): boolean | null {
   const [available, setAvailable] = useState<boolean | null>(null);
   useEffect(() => {
     let current = true;
+    // Only the newest request may set the value: an older answer arriving late is dropped. A
+    // failed read keeps the last known answer, so a confirmed "unavailable" never disappears
+    // because of one unreadable call.
+    let latest = 0;
     const read = () => {
-      invoke<{ tray_available: boolean }>("app_status")
-        .then((status) => current && setAvailable(status.tray_available === true))
-        .catch(() => current && setAvailable(null));
+      const request = ++latest;
+      invoke<{ tray_available: boolean }>("app_status").then(
+        (status) => {
+          if (current && request === latest) setAvailable(status.tray_available === true);
+        },
+        () => {},
+      );
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") read();
@@ -200,12 +222,13 @@ function Value<T>({ state, what, children }: { state: Loaded<T>; what: string; c
 function Toggle({
   label,
   checked,
-  disabled,
+  busy,
   onChange,
 }: {
   label: string;
   checked: boolean;
-  disabled: boolean;
+  /** A save is running: the switch keeps focus but ignores changes. */
+  busy: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
@@ -215,8 +238,10 @@ function Toggle({
       className="switch"
       aria-label={label}
       checked={checked}
-      disabled={disabled}
-      onChange={(event) => onChange(event.target.checked)}
+      aria-disabled={busy}
+      onChange={(event) => {
+        if (!busy) onChange(event.target.checked);
+      }}
     />
   );
 }

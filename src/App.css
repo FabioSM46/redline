@@ -287,8 +287,8 @@ body {
   outline-offset: calc(var(--indicator) * -1);
 }
 
-.segment input:disabled + span,
-.switch:disabled {
+.segment input[aria-disabled="true"] + span,
+.switch[aria-disabled="true"] {
   cursor: progress;
   opacity: 0.6;
 }
