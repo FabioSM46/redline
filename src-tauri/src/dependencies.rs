@@ -21,6 +21,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::State;
@@ -32,6 +33,9 @@ use crate::tuning::{self, Lact, Tuning};
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 const FLATPAK: &str = "flatpak";
 const FFMPEG: &str = "ffmpeg";
+/// ffmpeg is on PATH but `ffmpeg -version` failed, hung or printed something unexpected.
+pub const FFMPEG_UNREADABLE: &str =
+    "Could not read the ffmpeg version: previews of clips may not work.";
 
 /// The tools Redline depends on, in the order `dependency_status` lists them. The same ids name
 /// them for the guided install.
@@ -78,18 +82,25 @@ pub struct Dependency {
 pub struct DaemonStatus {
     /// Something listens on the socket (it may still refuse this user).
     pub running: bool,
-    /// Redline can open the socket: the user is in lactd's admin group.
+    /// Redline can open the socket and `lactd` answered. False with `running` true: the user is
+    /// not in lactd's admin group, or the daemon did not answer in time; `hint` says which.
     pub socket_accessible: bool,
 }
 
-/// Every dependency: LACT, GPU Screen Recorder, ffmpeg. Blocking: one request to `lactd` and up to
-/// three tool runs, each bounded by `timeout` (or the LACT client's own).
+/// Every dependency: LACT, GPU Screen Recorder, ffmpeg. Blocking: the three checks run side by
+/// side (one request to `lactd`, bounded by the LACT client's own timeout, and up to three tool
+/// runs, each bounded by `timeout`), so the worst case is about one timeout, not their sum.
 pub fn status(lact: &Lact, search_path: &OsStr, timeout: Duration) -> Vec<Dependency> {
-    vec![
-        lact_status(lact),
-        gpu_screen_recorder_status(search_path, timeout),
-        ffmpeg_status(search_path, timeout),
-    ]
+    thread::scope(|scope| {
+        let recorder = scope.spawn(|| gpu_screen_recorder_status(search_path, timeout));
+        let ffmpeg = scope.spawn(|| ffmpeg_status(search_path, timeout));
+        let lact = lact_status(lact);
+        vec![
+            lact,
+            recorder.join().expect("the recorder check panicked"),
+            ffmpeg.join().expect("the ffmpeg check panicked"),
+        ]
+    })
 }
 
 fn missing(id: DependencyId, verified_version: Option<&'static str>, hint: &str) -> Dependency {
@@ -136,8 +147,14 @@ fn lact_status(lact: &Lact) -> Dependency {
             ..found(id, Some(system.version), verified)
         },
         Err(error) => {
-            let running = !matches!(error, LactError::SocketMissing | LactError::NotRunning);
-            let socket_accessible = matches!(error, LactError::Protocol(_) | LactError::Daemon(_));
+            // Every variant named, so a new one has to be placed here on purpose. `hint` always
+            // says which case it is: `running` with no access is either a denied socket or a
+            // daemon that did not answer in time (`Io`).
+            let (running, socket_accessible) = match &error {
+                LactError::SocketMissing | LactError::NotRunning => (false, false),
+                LactError::PermissionDenied | LactError::Io(_) => (true, false),
+                LactError::Protocol(_) | LactError::Daemon(_) => (true, true),
+            };
             Dependency {
                 installed: lact.installed(),
                 hint: Some(lact.reason(&error)),
@@ -177,7 +194,10 @@ fn ffmpeg_status(search_path: &OsStr, timeout: Duration) -> Dependency {
     match find_program(FFMPEG, search_path) {
         Some(ffmpeg) => {
             let version = run(&ffmpeg, &["-version"], timeout).and_then(|out| ffmpeg_version(&out));
-            found(id, version, None)
+            Dependency {
+                warning: version.is_none().then(|| FFMPEG_UNREADABLE.to_owned()),
+                ..found(id, version, None)
+            }
         }
         None => missing(id, None, thumbnail::INSTALL_HINT),
     }
@@ -221,11 +241,14 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Option<String> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    // Read while waiting, so a long output cannot fill the pipe and stall the tool.
+    // Read while waiting, so a long output cannot fill the pipe and stall the tool. The text
+    // comes back over a channel: a process the tool leaves behind may keep the pipe open, and
+    // the reader is then never joined, only abandoned.
     let mut stdout = child.stdout.take()?;
-    let reader = thread::spawn(move || {
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
         let mut text = String::new();
-        stdout.read_to_string(&mut text).ok().map(|_| text)
+        let _ = sender.send(stdout.read_to_string(&mut text).ok().map(|_| text));
     });
     let deadline = Instant::now() + timeout;
     let success = loop {
@@ -239,8 +262,13 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Option<String> {
             }
         }
     };
-    let text = reader.join().ok().flatten();
-    if success { text } else { None }
+    if !success {
+        return None;
+    }
+    // The tool has exited: its output is complete unless something it started still holds the
+    // pipe, and that is waited for only until the deadline (plus a moment for the last read).
+    let left = deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(100);
+    receiver.recv_timeout(left).ok().flatten()
 }
 
 /// The search path of this process.
@@ -527,6 +555,55 @@ mod tests {
             (dep.hint, dep.warning, dep.verified_version),
             (None, None, None)
         );
+    }
+
+    #[test]
+    fn an_ffmpeg_whose_version_cannot_be_read_warns() {
+        let setup = Setup::new("ffmpeg-broken");
+        setup.tool(FFMPEG, "exit 1");
+        let dep = setup.get(DependencyId::Ffmpeg);
+        assert!(dep.installed);
+        assert_eq!(dep.version, None);
+        assert_eq!(dep.warning.as_deref(), Some(FFMPEG_UNREADABLE));
+    }
+
+    #[test]
+    fn a_process_left_holding_the_output_does_not_stall_the_check() {
+        let setup = Setup::new("ffmpeg-child");
+        // Exits at once, but the background `sleep` keeps the inherited stdout open.
+        setup.tool(
+            FFMPEG,
+            "[ \"$1\" = -version ] || exit 0\nsleep 3 &\necho 'ffmpeg version 7.1'",
+        );
+        let started = Instant::now();
+        let dep = status(
+            &setup.lact(),
+            setup.bin().as_os_str(),
+            Duration::from_millis(300),
+        )
+        .remove(2);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(dep.installed);
+    }
+
+    #[test]
+    fn the_checks_run_side_by_side() {
+        let setup = Setup::new("parallel");
+        setup.tool(FFMPEG, "[ \"$1\" = -version ] && exec sleep 30");
+        setup.tool(
+            gsr::NATIVE_BINARY,
+            "[ \"$1\" = --version ] && exec sleep 30",
+        );
+        let timeout = Duration::from_secs(1);
+        let started = Instant::now();
+        let deps = status(&setup.lact(), setup.bin().as_os_str(), timeout);
+        // Two hanging tools one after the other would take two timeouts.
+        assert!(started.elapsed() < timeout * 2, "{:?}", started.elapsed());
+        assert!(deps[1].installed && deps[2].installed);
     }
 
     #[test]
