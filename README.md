@@ -120,7 +120,8 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust workspace tests
 `redline-probe` uses `redline-core` directly, from the `src-tauri/` directory:
 
 ```bash
-cargo run -p redline-probe -- sensors --watch     # sensors, one line per second
+cargo run -p redline-probe -- gpus               # AMD GPUs with their id and name
+cargo run -p redline-probe -- sensors --watch     # sensors, one line per second (--gpu <id>)
 cargo run -p redline-probe -- lact stats          # statistics from lactd
 cargo run -p redline-probe -- audio               # audio sources for GPU Screen Recorder
 # 60 s replay, game audio and microphone on two separate tracks

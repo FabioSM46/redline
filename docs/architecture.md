@@ -23,8 +23,9 @@
 
 ## Flows
 
-**Statistics**: the frontend calls `gpu_snapshot` every second; the backend reads sysfs. No
-permissions, no daemon.
+**Statistics**: the frontend calls `list_gpus` once (every AMD GPU, sorted by PCI slot; the id
+is the PCI slot, the same one LACT uses), then `gpu_snapshot(gpu_id)` every second; the backend
+reads sysfs. No permissions, no daemon.
 
 **Tuning**: the frontend asks for a change → the backend sends it to `lactd` → `lactd` applies it
 pending confirmation → the user confirms or cancels → the backend sends `confirm_pending_config`.
