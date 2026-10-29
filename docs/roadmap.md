@@ -38,7 +38,13 @@ Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 
 - Fan curve, power limit, profiles
 - Confirmation of changes in the UI
+- Overdrive enabled through LACT after an explicit confirmation (D11)
 - Guided dependency setup (D4)
+
+## Later — Clocks and voltages
+
+- Clock offsets, voltages and undervolting, through LACT (moved out of M3 when M3 was
+  specified)
 
 ## M4 — Overlay and release
 

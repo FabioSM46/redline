@@ -94,6 +94,10 @@ pub fn run() {
             tuning::set_power_limit,
             tuning::tuning_confirm,
             tuning::tuning_revert,
+            tuning::overdrive::prepare_enable_overdrive,
+            tuning::overdrive::enable_overdrive,
+            tuning::overdrive::prepare_disable_overdrive,
+            tuning::overdrive::disable_overdrive,
             dependencies::dependency_status,
             installer::install_dependency,
         ])
