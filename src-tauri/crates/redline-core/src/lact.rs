@@ -22,6 +22,7 @@
 //! | `get_gpu_config` | `{ id }` | `Option<`[`GpuConfig`]`>` (`null` = never configured) |
 //! | `list_profiles` | `{ include_state: false }` | [`ProfilesInfo`] |
 //! | `set_power_cap` | `{ id, cap }` (`cap: null` = default) | seconds until lactd reverts |
+//! | `set_fan_control` | [`FanOptions`] | seconds until lactd reverts |
 //! | `confirm_pending_config` | `{ command: "confirm" \| "revert" }` | — |
 
 use serde::de::DeserializeOwned;
@@ -347,6 +348,30 @@ pub struct ProfilesInfo {
     pub auto_switch: bool,
 }
 
+// ---- Requests ----
+
+/// The arguments of `set_fan_control` (`FanOptions` in lact-schema 0.10.1, without
+/// `spindown_delay_ms` and `change_threshold`, which lactd then keeps as stored).
+///
+/// What lactd 0.10.1 does with it (`set_fan_control` in `lact-daemon/src/server/handler.rs`):
+/// `enabled` replaces `fan_control_enabled` (false = the firmware's automatic control);
+/// `mode: null` keeps the stored fan settings, `static` replaces the static speed (0.0–1.0, else
+/// "static speed value out of range"), `curve` replaces the curve (speeds 0.0–1.0); **`pmfw`
+/// replaces the stored PMFW options as a whole**, so a caller that changes one of them sends the
+/// others as they are stored. lactd applies the four PMFW limits only while `enabled` is false,
+/// and zero RPM only outside static mode (`apply_config` in `gpu_controller/amd.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FanOptions {
+    /// The LACT device id.
+    pub id: String,
+    pub enabled: bool,
+    pub mode: Option<FanControlMode>,
+    /// 0.0–1.0.
+    pub static_speed: Option<f32>,
+    pub curve: Option<FanCurveMap>,
+    pub pmfw: PmfwOptions,
+}
+
 // ---- Client ----
 
 pub struct LactClient {
@@ -449,6 +474,13 @@ impl LactClient {
     /// restores the previous configuration on its own.
     pub fn set_power_cap(&self, id: &str, watts: Option<f64>) -> LactResult<u64> {
         self.call("set_power_cap", Some(json!({ "id": id, "cap": watts })))
+    }
+
+    /// Sets the fan control and returns how many seconds LACT waits for
+    /// [`confirm_pending`](Self::confirm_pending), like [`set_power_cap`](Self::set_power_cap).
+    pub fn set_fan_control(&self, options: &FanOptions) -> LactResult<u64> {
+        let args = serde_json::to_value(options).map_err(|e| LactError::Protocol(e.to_string()))?;
+        self.call("set_fan_control", Some(args))
     }
 
     /// `confirm_pending_config` with `confirm` (keep and save the pending change) or `revert`
@@ -733,6 +765,45 @@ mod tests {
         assert_eq!(
             server.join().unwrap(),
             json!({ "command": "confirm_pending_config", "args": { "command": "revert" } })
+        );
+    }
+
+    #[test]
+    fn set_fan_control_sends_lacts_fan_options() {
+        let dir = temp("fan");
+        let socket = dir.0.join("lactd.sock");
+        let client = LactClient::new(&socket).with_timeout(Duration::from_secs(2));
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"ok","data":5}"#,
+        );
+        let options = FanOptions {
+            id: "x-0000:0d:00.0".into(),
+            enabled: true,
+            mode: Some(FanControlMode::Curve),
+            static_speed: None,
+            curve: Some([(40, 0.25), (80, 1.0)].into()),
+            pmfw: PmfwOptions {
+                zero_rpm: Some(false),
+                ..PmfwOptions::default()
+            },
+        };
+        assert_eq!(client.set_fan_control(&options).unwrap(), 5);
+        // The shape lact-schema 0.10.1 deserializes `Request::SetFanControl(FanOptions)` from:
+        // missing options are `null`, curve keys are strings.
+        assert_eq!(
+            server.join().unwrap(),
+            json!({
+                "command": "set_fan_control",
+                "args": {
+                    "id": "x-0000:0d:00.0", "enabled": true, "mode": "curve",
+                    "static_speed": null, "curve": { "40": 0.25, "80": 1.0 },
+                    "pmfw": {
+                        "acoustic_limit": null, "acoustic_target": null, "minimum_pwm": null,
+                        "target_temperature": null, "zero_rpm": false, "zero_rpm_threshold": null
+                    }
+                }
+            })
         );
     }
 
