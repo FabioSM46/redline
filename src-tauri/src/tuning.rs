@@ -429,6 +429,13 @@ fn pmfw_status(pmfw: &PmfwInfo) -> PmfwStatus {
     }
 }
 
+/// lactd 0.10.1's answers to `confirm_pending_config` when no change is pending any more:
+/// "No pending config changes", or "Could not confirm config" when its own timer settled the
+/// change a moment earlier.
+fn nothing_pending_in_lactd(message: &str) -> bool {
+    message.contains("No pending config changes") || message.contains("Could not confirm config")
+}
+
 /// Where the service reports: the app's webviews, or a test's collector.
 pub trait Events: Send + Sync + 'static {
     fn pending(&self, change: &PendingChange);
@@ -604,7 +611,10 @@ impl Tuning {
     /// (nothing pending, lactd unreachable) leaves the pending change as it was. Blocking.
     pub fn settle(&self, gpu_id: &str, confirm: bool) -> Result<Outcome, String> {
         let _control = lock(&self.inner.control);
-        self.expire_overdue();
+        // An answer at or after the deadline is late, not lost: it reports `expired`.
+        if self.expire_overdue().as_deref() == Some(gpu_id) {
+            return Ok(Outcome::Expired);
+        }
         let serial = match &lock(&self.inner.state).pending {
             Some(pending) if pending.change.gpu_id == gpu_id => pending.serial,
             _ => return Err(NOTHING_PENDING.to_owned()),
@@ -612,8 +622,12 @@ impl Tuning {
         let outcome = match self.inner.lact.client.confirm_pending(confirm) {
             Ok(()) if confirm => Outcome::Confirmed,
             Ok(()) => Outcome::Reverted,
-            // lactd 0.10.1 refuses only when nothing is pending any more: its timer won.
-            Err(LactError::Daemon(_)) => Outcome::Expired,
+            // The two 0.10.1 refusals that mean nothing is pending any more: its timer won.
+            Err(LactError::Daemon(message)) if nothing_pending_in_lactd(&message) => {
+                Outcome::Expired
+            }
+            // Anything else (lactd unreachable, a refusal Redline does not know) keeps the
+            // change pending: its deadline still settles it.
             Err(error) => return Err(self.inner.lact.reason(&error)),
         };
         self.finish(serial, outcome);
@@ -649,16 +663,16 @@ impl Tuning {
     }
 
     /// A pending change past its deadline is `expired`: lactd has already reverted it.
-    fn expire_overdue(&self) {
+    /// Returns the GPU whose change it settled, if any.
+    fn expire_overdue(&self) -> Option<String> {
         let now = self.inner.clock.now_ms();
-        let overdue = lock(&self.inner.state)
+        let (serial, gpu_id) = lock(&self.inner.state)
             .pending
             .as_ref()
             .filter(|pending| now >= pending.change.deadline_ms)
-            .map(|pending| pending.serial);
-        if let Some(serial) = overdue {
-            self.finish(serial, Outcome::Expired);
-        }
+            .map(|pending| (pending.serial, pending.change.gpu_id.clone()))?;
+        self.finish(serial, Outcome::Expired);
+        Some(gpu_id)
     }
 
     fn schedule_expiry(&self, serial: u64, delay_ms: u64) {
@@ -1356,6 +1370,52 @@ mod tests {
             service.events.take(),
             vec![settled_event(SLOT_B, "expired")]
         );
+    }
+
+    #[test]
+    fn an_answer_at_the_deadline_reports_expired_not_an_error() {
+        let service = Service::start("deadline");
+        service.tuning.set_power_limit(SLOT_B, Some(250.0)).unwrap();
+        service.events.take();
+        service.log();
+        service.lactd_reverts();
+        // The clock reaches the deadline before the timer runs: the answer arrives first.
+        *service.clock.now.lock().unwrap() = 5_000;
+        assert_eq!(service.tuning.settle(SLOT_B, true), Ok(Outcome::Expired));
+        assert_eq!(
+            service.events.take(),
+            vec![settled_event(SLOT_B, "expired")]
+        );
+        // Nothing was sent to lactd, and the other GPU never had a change.
+        assert_eq!(service.log(), Vec::<String>::new());
+        assert_eq!(
+            service.tuning.settle(SLOT_A, false),
+            Err(NOTHING_PENDING.to_owned())
+        );
+    }
+
+    #[test]
+    fn an_unknown_lactd_refusal_keeps_the_change_pending() {
+        let setup = Setup::new("refusal");
+        let _lactd = FakeLactd::start(
+            &setup.socket(),
+            Box::new(|command, args| match command {
+                "set_power_cap" => json!(5),
+                "confirm_pending_config" => json!({ "error": "Could not save the config" }),
+                _ => two_gpus(VERIFIED_VERSION)(command, args),
+            }),
+        );
+        let clock = Arc::new(ManualClock::default());
+        let events = Arc::new(Collected::default());
+        let tuning = Tuning::new(setup.lact(true), clock.clone(), events.clone());
+        tuning.set_power_limit(SLOT_B, None).unwrap();
+        events.take();
+        let error = tuning.settle(SLOT_B, true).unwrap_err();
+        assert!(error.contains("Could not save the config"), "{error}");
+        assert!(tuning.pending(SLOT_B).is_some());
+        assert_eq!(events.take(), Vec::<Value>::new());
+        clock.advance(5_000);
+        assert_eq!(events.take(), vec![settled_event(SLOT_B, "expired")]);
     }
 
     #[test]
