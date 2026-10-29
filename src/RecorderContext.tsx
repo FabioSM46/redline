@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { recordingSince as nextRecordingSince } from "./record.ts";
 import {
   createThumbnailCache,
   type Recording,
@@ -22,13 +23,22 @@ export type RecorderContextValue = {
   clips: Loaded<Recording[]>;
   /** A replay action is running: switches stay focusable but ignore input. */
   busy: boolean;
-  /** Why the last action failed, until the next one; shown inline next to the switch. */
+  /** Why the last replay action failed, until the next action; shown inline next to the switch. */
   actionError: string | null;
+  /** Why the last `recording_toggle` failed, until the next action; shown by the Record tab. */
+  recordingError: string | null;
+  /**
+   * When the running recording started (wall-clock ms), as seen by this window; null when no
+   * recording runs or when it was already running at the first reading.
+   */
+  recordingSince: number | null;
   /** Starts the replay when it is off or failed, stops it when it is on or starting. */
   toggleReplay: () => void;
   startReplay: () => void;
   stopReplay: () => void;
   saveReplay: () => void;
+  /** Starts a recording, or stops the running one (`recording_toggle`). */
+  toggleRecording: () => void;
   /** Reads the clip list again (the Record tab after opening, for instance). */
   refreshClips: () => void;
   /** The cached preview of a clip; prefer `useThumbnail`. */
@@ -81,6 +91,8 @@ export function RecorderProvider({ children }: { children: ReactNode }) {
   const [clips, setClips] = useState<Loaded<Recording[]>>({ status: "loading" });
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [since, setSince] = useState<{ recording: boolean; since: number | null } | null>(null);
   // Counts `recorder-state` events. A command reply is applied only if no event arrived while it
   // was in flight: replies and events travel separately, and the event is always the newer one.
   const events = useRef(0);
@@ -142,18 +154,31 @@ export function RecorderProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshClips]);
 
-  const run = useCallback((command: "replay_start" | "replay_stop" | "replay_save") => {
+  // The recording timer follows `recording` in every status, from events and replies alike.
+  const recordingNow = recorder.status === "ready" ? recorder.value.recording : null;
+  useEffect(() => {
+    if (recordingNow === null) return;
+    setSince((previous) =>
+      previous?.recording === recordingNow
+        ? previous
+        : { recording: recordingNow, since: nextRecordingSince(previous, recordingNow, Date.now()) },
+    );
+  }, [recordingNow]);
+
+  const run = useCallback((command: "replay_start" | "replay_stop" | "replay_save" | "recording_toggle") => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     setActionError(null);
+    setRecordingError(null);
+    const setError = command === "recording_toggle" ? setRecordingError : setActionError;
     const seen = events.current;
     invoke<RecorderStatus | null>(command)
       .then(
         (value) => {
           if (mounted.current && value && events.current === seen) setRecorder({ status: "ready", value });
         },
-        (e) => mounted.current && setActionError(String(e)),
+        (e) => mounted.current && setError(String(e)),
       )
       .finally(() => {
         busyRef.current = false;
@@ -164,6 +189,7 @@ export function RecorderProvider({ children }: { children: ReactNode }) {
   const startReplay = useCallback(() => run("replay_start"), [run]);
   const stopReplay = useCallback(() => run("replay_stop"), [run]);
   const saveReplay = useCallback(() => run("replay_save"), [run]);
+  const toggleRecording = useCallback(() => run("recording_toggle"), [run]);
   const toggleReplay = useCallback(() => {
     if (recorder.status !== "ready" || !recorder.value.available) return;
     run(replayIsOn(recorder.value) ? "replay_stop" : "replay_start");
@@ -177,15 +203,33 @@ export function RecorderProvider({ children }: { children: ReactNode }) {
       clips,
       busy,
       actionError,
+      recordingError,
+      recordingSince: since?.since ?? null,
       toggleReplay,
       startReplay,
       stopReplay,
       saveReplay,
+      toggleRecording,
       refreshClips,
       thumbnail,
       peekThumbnail,
     }),
-    [recorder, clips, busy, actionError, toggleReplay, startReplay, stopReplay, saveReplay, refreshClips, thumbnail, peekThumbnail],
+    [
+      recorder,
+      clips,
+      busy,
+      actionError,
+      recordingError,
+      since,
+      toggleReplay,
+      startReplay,
+      stopReplay,
+      saveReplay,
+      toggleRecording,
+      refreshClips,
+      thumbnail,
+      peekThumbnail,
+    ],
   );
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;
