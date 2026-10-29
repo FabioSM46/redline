@@ -144,4 +144,25 @@ describe("thumbnail cache", () => {
     assert.equal(cache.peek("a"), undefined);
     assert.equal(cache.peek("slow"), undefined);
   });
+
+  it("keeps at most `size` answers, dropping the least recently read", async () => {
+    const asked: string[] = [];
+    const cache = createThumbnailCache(
+      async (id) => {
+        asked.push(id);
+        return `data:${id}`;
+      },
+      Date.now,
+      2,
+    );
+    await cache.get("a");
+    await cache.get("b");
+    await cache.get("a"); // a is now the most recently read
+    await cache.get("c"); // evicts b
+    assert.equal(cache.peek("a"), "data:a");
+    assert.equal(cache.peek("b"), undefined);
+    assert.equal(cache.peek("c"), "data:c");
+    await cache.get("b");
+    assert.deepEqual(asked, ["a", "b", "c", "b"]);
+  });
 });

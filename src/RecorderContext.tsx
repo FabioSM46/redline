@@ -5,7 +5,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { createThumbnailCache, type Recording, type RecorderStatus, replayIsOn } from "./recorder.ts";
+import {
+  createThumbnailCache,
+  type Recording,
+  type RecorderStatus,
+  replayIsOn,
+  THUMBNAIL_RETRY_MS,
+} from "./recorder.ts";
 
 export type Loaded<T> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; value: T };
 
@@ -42,7 +48,8 @@ export function useRecorder(): RecorderContextValue {
 
 /**
  * The preview of a clip: undefined while it is asked, null for "no preview" (show a neutral
- * placeholder), otherwise a data URL for `<img src>`. Asked once per clip and cached by id.
+ * placeholder), otherwise a data URL for `<img src>`. Cached by id; a null is asked again every
+ * THUMBNAIL_RETRY_MS while the clip stays on screen.
  */
 export function useThumbnail(id: string): string | null | undefined {
   const { thumbnail, peekThumbnail } = useRecorder();
@@ -50,9 +57,19 @@ export function useThumbnail(id: string): string | null | undefined {
 
   useEffect(() => {
     let current = true;
-    thumbnail(id).then((url) => current && setLoaded({ id, url }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ask = () => {
+      thumbnail(id).then((url) => {
+        if (!current) return;
+        setLoaded({ id, url });
+        // Null can mean "the queue was full": ask again once the cache lets the answer expire.
+        if (url === null) timer = setTimeout(ask, THUMBNAIL_RETRY_MS);
+      });
+    };
+    ask();
     return () => {
       current = false;
+      if (timer !== undefined) clearTimeout(timer);
     };
   }, [id, thumbnail]);
 

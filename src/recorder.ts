@@ -99,6 +99,12 @@ function pad(n: number): string {
 /** After this long a "no preview" answer is asked again: null can mean "the queue was full". */
 export const THUMBNAIL_RETRY_MS = 60_000;
 
+/**
+ * How many answered previews the cache keeps: the least recently read go first, so memory follows
+ * what is on screen rather than the size of the clip folders. A 256 px JPEG data URL is tens of KB.
+ */
+export const THUMBNAIL_CACHE_SIZE = 100;
+
 type ThumbnailEntry =
   | { status: "pending"; promise: Promise<string | null> }
   | { status: "done"; url: string | null; at: number };
@@ -113,19 +119,39 @@ export type ThumbnailCache = {
 };
 
 /**
- * An in-memory cache of `recording_thumbnail` answers, by clip id. A data URL is kept for the
- * session; a null (or a failed request) is kept for THUMBNAIL_RETRY_MS, then asked again.
+ * An in-memory cache of `recording_thumbnail` answers, by clip id. A data URL is kept until it is
+ * among the least recently read beyond `size`; a null (or a failed request) is kept for
+ * THUMBNAIL_RETRY_MS, then asked again. Requests in flight are never evicted.
  */
 export function createThumbnailCache(
   fetch: (id: string) => Promise<string | null>,
   now: () => number = Date.now,
+  size: number = THUMBNAIL_CACHE_SIZE,
 ): ThumbnailCache {
+  // Insertion order is recency order: every read moves its entry to the end.
   const entries = new Map<string, ThumbnailEntry>();
 
   function fresh(entry: ThumbnailEntry | undefined): entry is ThumbnailEntry {
     if (entry === undefined) return false;
     if (entry.status === "pending" || entry.url !== null) return true;
     return now() - entry.at < THUMBNAIL_RETRY_MS;
+  }
+
+  function touch(id: string, entry: ThumbnailEntry) {
+    entries.delete(id);
+    entries.set(id, entry);
+  }
+
+  function evict() {
+    let answered = 0;
+    for (const entry of entries.values()) if (entry.status === "done") answered++;
+    for (const [id, entry] of entries) {
+      if (answered <= size) break;
+      if (entry.status === "done") {
+        entries.delete(id);
+        answered--;
+      }
+    }
   }
 
   return {
@@ -136,6 +162,7 @@ export function createThumbnailCache(
     get(id) {
       const entry = entries.get(id);
       if (fresh(entry)) {
+        touch(id, entry);
         return entry.status === "pending" ? entry.promise : Promise.resolve(entry.url);
       }
       const pending: ThumbnailEntry = {
@@ -144,11 +171,14 @@ export function createThumbnailCache(
           .catch(() => null)
           .then((url) => {
             // Dropped by `retain` (or replaced) meanwhile: the answer is no longer this entry's.
-            if (entries.get(id) === pending) entries.set(id, { status: "done", url, at: now() });
+            if (entries.get(id) === pending) {
+              touch(id, { status: "done", url, at: now() });
+              evict();
+            }
             return url;
           }),
       };
-      entries.set(id, pending);
+      touch(id, pending);
       return pending.promise;
     },
     retain(ids) {
