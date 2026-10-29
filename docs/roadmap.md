@@ -2,11 +2,15 @@
 
 Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 
-## M0 — Foundations (in progress)
+## M0 — Foundations (done)
 
 - [x] Rust workspace with `redline-core` and the `redline-probe` CLI
 - [x] Sensor reading from sysfs
-- [x] `lactd` client and GPU Screen Recorder control (replay still to verify on real hardware)
+- [x] `lactd` client, verified against a running `lactd`
+- [x] GPU Screen Recorder control: replay verified on real hardware, with desktop audio and
+  microphone on two separate tracks
+- [x] Tests of `sensors` on fake sysfs trees (the `tests` module of
+  `src-tauri/crates/redline-core/src/sensors.rs`)
 - [x] Minimal Tauri app with live metrics
 - [x] Development pipeline ported from wow-don
 - [x] Repository in English
@@ -15,7 +19,6 @@ Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 
 - Dashboard with charts over time (temperature, clocks, power, usage)
 - Several GPUs on the same machine
-- Tests of `sensors` on fake sysfs trees
 
 ## M2 — Recording
 

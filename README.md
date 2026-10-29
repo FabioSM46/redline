@@ -9,12 +9,13 @@ actually use and leaves the rest out.
 
 ## Status
 
-In development, phase **M0 — Foundations** (see the [roadmap](docs/roadmap.md)). Today there is:
+In development: **M0 — Foundations** is done, **M1 — Performance** is next (see the
+[roadmap](docs/roadmap.md)). Today there is:
 
 - GPU sensor reading, tested on an RX 9070 (RDNA4);
 - a client for the LACT daemon, verified on real hardware;
-- control of GPU Screen Recorder: listing audio sources works on real hardware, the replay
-  with separate audio tracks is still to be tested;
+- control of GPU Screen Recorder, verified on real hardware: an instant replay saved with desktop
+  audio and microphone on two separate tracks;
 - a minimal Tauri app that shows live metrics.
 
 There is no installable package yet.
