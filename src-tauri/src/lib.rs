@@ -4,6 +4,7 @@ mod gallery;
 mod recorder;
 mod sampler;
 mod settings;
+mod sources;
 mod tray;
 
 use redline_core::sensors::{self, GpuInfo, GpuSnapshot};
@@ -56,6 +57,8 @@ pub fn run() {
             recorder::replay_start,
             recorder::replay_stop,
             recorder::replay_save,
+            sources::list_audio_sources,
+            sources::list_capture_targets,
             gallery::list_recordings,
             gallery::open_recording,
             gallery::show_in_folder,

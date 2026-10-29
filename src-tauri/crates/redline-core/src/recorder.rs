@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, ErrorKind, Read, Write};
+use std::ops::RangeInclusive;
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,39 @@ const WAIT_STEP: Duration = Duration::from_millis(20);
 /// Timeout of requests that gsr answers at once (everything but saving).
 pub const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// The `-k` values accepted by gsr 6.1.6 (man page, "Video Quality Options"), without `auto`:
+/// the automatic choice is no `-k` at all. HDR codecs are refused by gsr itself with portal
+/// capture; the Vulkan ones are marked experimental upstream.
+pub const CODECS: &[&str] = &[
+    "h264",
+    "hevc",
+    "av1",
+    "vp8",
+    "vp9",
+    "hevc_hdr",
+    "av1_hdr",
+    "hevc_10bit",
+    "av1_10bit",
+    "h264_vulkan",
+    "hevc_vulkan",
+    "hevc_10bit_vulkan",
+    "av1_vulkan",
+    "av1_hdr_vulkan",
+    "av1_10bit_vulkan",
+];
+/// The `-q` presets of gsr 6.1.6. A bitrate is accepted by gsr only in CBR mode, which Redline
+/// does not select, so only the presets are allowed.
+pub const QUALITIES: &[&str] = &["medium", "high", "very_high", "ultra"];
+/// gsr's own default quality.
+pub const DEFAULT_QUALITY: &str = "very_high";
+/// The `-r` range documented by gsr 6.1.6 (replay buffer, seconds).
+pub const REPLAY_SECONDS: RangeInclusive<u32> = 2..=86_400;
+/// The `-f` values Redline accepts. gsr requires a positive frame rate; the upper bound is ours,
+/// above any refresh rate a monitor offers today.
+pub const FPS: RangeInclusive<u32> = 1..=500;
+/// The capture value that goes through xdg-desktop-portal (Wayland).
+pub const PORTAL: &str = "portal";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launcher {
     /// A gsr binary run directly: `gpu-screen-recorder` from PATH, or an explicit path.
@@ -60,7 +94,7 @@ impl Launcher {
     pub fn detect() -> Result<Launcher> {
         let native = Launcher::Native(PathBuf::from(NATIVE_BINARY));
         let runs = native
-            .command(None)
+            .command(&[])
             .arg("--version")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -83,7 +117,7 @@ impl Launcher {
     /// The version gsr reports with `--version`, for example `6.1.6`.
     pub fn version(&self) -> Result<String> {
         let out = self
-            .command(None)
+            .command(&[])
             .arg("--version")
             .stdin(Stdio::null())
             .output()
@@ -96,15 +130,15 @@ impl Launcher {
             .ok_or_else(|| anyhow!("gpu-screen-recorder --version printed nothing"))
     }
 
-    /// `share`: a host folder the Flatpak sandbox must see (the IPC socket's folder); the native
-    /// binary sees everything already.
-    fn command(&self, share: Option<&Path>) -> Command {
+    /// `share`: host folders the Flatpak sandbox must see (the IPC socket's folder, the portal
+    /// token's folder); the native binary sees everything already.
+    fn command(&self, share: &[&Path]) -> Command {
         match self {
             Launcher::Native(program) => Command::new(program),
             Launcher::Flatpak => {
                 let mut cmd = Command::new("flatpak");
                 cmd.args(["run", "--command=gpu-screen-recorder"]);
-                if let Some(dir) = share {
+                for dir in share {
                     let mut option = std::ffi::OsString::from("--filesystem=");
                     option.push(dir);
                     cmd.arg(option);
@@ -147,12 +181,17 @@ impl AudioTrack {
 pub struct ReplayConfig {
     /// `portal` (Wayland, asks for the screen once), `screen`, or a monitor name
     pub capture: String,
+    /// The portal session token file (`-portal-session-token-filepath`); `None` = gsr's own
+    /// default location. Used only with portal capture.
+    pub portal_token: Option<PathBuf>,
     pub fps: u32,
     pub replay_seconds: u32,
     /// mkv, to carry several audio tracks without surprises
     pub container: String,
-    /// h264, hevc, av1... `None` = gsr's choice
+    /// h264, hevc, av1... (one of [`CODECS`]); `None` = gsr's choice
     pub codec: Option<String>,
+    /// One of [`QUALITIES`]
+    pub quality: String,
     pub replay_dir: PathBuf,
     /// Where regular recordings started during the replay go
     pub recording_dir: PathBuf,
@@ -170,13 +209,21 @@ impl ReplayConfig {
             self.replay_seconds.to_string(),
             "-c".into(),
             self.container.clone(),
+            "-q".into(),
+            self.quality.clone(),
             "-o".into(),
             self.replay_dir.display().to_string(),
             "-ro".into(),
             self.recording_dir.display().to_string(),
         ];
-        if self.capture == "portal" {
+        if self.capture == PORTAL {
             args.extend(["-restore-portal-session".into(), "yes".into()]);
+            if let Some(token) = &self.portal_token {
+                args.extend([
+                    "-portal-session-token-filepath".into(),
+                    token.display().to_string(),
+                ]);
+            }
         }
         if let Some(codec) = &self.codec {
             args.extend(["-k".into(), codec.clone()]);
@@ -225,6 +272,14 @@ impl ReplaySession {
         on_output: impl FnMut(Output) + Send + 'static,
     ) -> Result<ReplaySession> {
         for dir in [&config.replay_dir, &config.recording_dir] {
+            check_output_dir(launcher, dir)?;
+            fs::create_dir_all(dir)
+                .with_context(|| format!("could not create the folder {}", dir.display()))?;
+        }
+        // Created here, so gsr can write the token whether or not it creates folders itself.
+        if config.capture == PORTAL
+            && let Some(dir) = config.portal_token.as_deref().and_then(Path::parent)
+        {
             fs::create_dir_all(dir)
                 .with_context(|| format!("could not create the folder {}", dir.display()))?;
         }
@@ -382,9 +437,32 @@ impl Drop for ReplaySession {
     }
 }
 
+/// A folder gsr can write to and the host can see. The Flatpak has a private `/tmp`: a file saved
+/// there never reaches the host.
+fn check_output_dir(launcher: &Launcher, dir: &Path) -> Result<()> {
+    if !dir.is_absolute() {
+        bail!("the folder {} is not an absolute path", dir.display());
+    }
+    if *launcher == Launcher::Flatpak && dir.starts_with("/tmp") {
+        bail!(
+            "the folder {} is under /tmp, which the GPU Screen Recorder Flatpak cannot share \
+             with the system: choose another folder",
+            dir.display()
+        );
+    }
+    Ok(())
+}
+
 /// The full command for a replay session with its IPC socket at `socket`.
 fn command_line(launcher: &Launcher, config: &ReplayConfig, socket: &Path) -> Command {
-    let mut cmd = launcher.command(socket.parent());
+    let mut share: Vec<&Path> = socket.parent().into_iter().collect();
+    if config.capture == PORTAL
+        && let Some(dir) = config.portal_token.as_deref().and_then(Path::parent)
+        && !share.contains(&dir)
+    {
+        share.push(dir);
+    }
+    let mut cmd = launcher.command(&share);
     cmd.args(config.args()).arg("-ipc").arg(socket);
     cmd
 }
@@ -544,31 +622,66 @@ impl ReadyProbe {
     }
 }
 
-/// Audio source listed by gsr: (name to pass to `-a`, description).
-pub fn list_audio_devices(launcher: &Launcher) -> Result<Vec<(String, String)>> {
+/// Runs gsr with a single listing option and returns its stdout.
+fn list(launcher: &Launcher, option: &str) -> Result<String> {
     let out = launcher
-        .command(None)
-        .arg("--list-audio-devices")
-        .output()?;
-    Ok(String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| {
-            let (name, desc) = l.split_once('|')?;
-            Some((name.to_owned(), desc.to_owned()))
+        .command(&[])
+        .arg(option)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("running gpu-screen-recorder {option} failed"))?;
+    if !out.status.success() {
+        bail!("gpu-screen-recorder {option} failed ({})", out.status);
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Splits `name|description` lines; lines without a `|` or with an empty name are skipped.
+fn parse_pairs(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let (name, desc) = line.split_once('|')?;
+            let name = name.trim();
+            (!name.is_empty()).then(|| (name.to_owned(), desc.trim().to_owned()))
         })
-        .collect())
+        .collect()
+}
+
+/// Audio devices from `--list-audio-devices` output: (name, description). `default_output` and
+/// `default_input` come first in gsr's own list; any other name is passed as `device:<name>`.
+pub fn parse_audio_devices(text: &str) -> Vec<(String, String)> {
+    parse_pairs(text)
+}
+
+/// Application names from `--list-application-audio` output, one per line, without duplicates.
+pub fn parse_application_audio(text: &str) -> Vec<String> {
+    let mut apps: Vec<String> = Vec::new();
+    for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        if !apps.iter().any(|app| app == line) {
+            apps.push(line.to_owned());
+        }
+    }
+    apps
+}
+
+/// Monitors from `--list-monitors` output: (name for `-w`, resolution such as `3440x1440`).
+pub fn parse_monitors(text: &str) -> Vec<(String, String)> {
+    parse_pairs(text)
+}
+
+/// Audio source listed by gsr: (name, description).
+pub fn list_audio_devices(launcher: &Launcher) -> Result<Vec<(String, String)>> {
+    list(launcher, "--list-audio-devices").map(|text| parse_audio_devices(&text))
 }
 
 /// Applications currently playing audio, usable as `app:<name>`.
 pub fn list_application_audio(launcher: &Launcher) -> Result<Vec<String>> {
-    let out = launcher
-        .command(None)
-        .arg("--list-application-audio")
-        .output()?;
-    Ok(String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect())
+    list(launcher, "--list-application-audio").map(|text| parse_application_audio(&text))
+}
+
+/// Monitors gsr can capture by name (`-w <name>`): (name, resolution).
+pub fn list_monitors(launcher: &Launcher) -> Result<Vec<(String, String)>> {
+    list(launcher, "--list-monitors").map(|text| parse_monitors(&text))
 }
 
 #[cfg(test)]
@@ -579,10 +692,12 @@ mod tests {
     fn config(capture: &str) -> ReplayConfig {
         ReplayConfig {
             capture: capture.into(),
+            portal_token: Some(PathBuf::from("/data/redline/portal-session-token")),
             fps: 60,
             replay_seconds: 30,
             container: "mkv".into(),
             codec: None,
+            quality: DEFAULT_QUALITY.into(),
             replay_dir: PathBuf::from("/tmp/replay"),
             recording_dir: PathBuf::from("/tmp/rec"),
             audio: vec![
@@ -616,6 +731,21 @@ mod tests {
             .collect();
         assert_eq!(audio, ["default_output", "default_input|app:Discord"]);
         assert!(!args.contains(&"-restore-portal-session".to_string()));
+        assert!(!args.contains(&"-portal-session-token-filepath".to_string()));
+        assert!(!args.contains(&"-k".to_string()));
+        let i = args.iter().position(|a| a == "-q").unwrap();
+        assert_eq!(args[i + 1], "very_high");
+    }
+
+    #[test]
+    fn a_chosen_codec_is_passed() {
+        let mut config = config("DP-2");
+        config.codec = Some("hevc".into());
+        let args = config.args();
+        let i = args.iter().position(|a| a == "-k").unwrap();
+        assert_eq!(args[i + 1], "hevc");
+        let i = args.iter().position(|a| a == "-w").unwrap();
+        assert_eq!(args[i + 1], "DP-2");
     }
 
     #[test]
@@ -626,6 +756,11 @@ mod tests {
             .position(|a| a == "-restore-portal-session")
             .unwrap();
         assert_eq!(args[i + 1], "yes");
+        let i = args
+            .iter()
+            .position(|a| a == "-portal-session-token-filepath")
+            .unwrap();
+        assert_eq!(args[i + 1], "/data/redline/portal-session-token");
     }
 
     #[test]
@@ -648,18 +783,81 @@ mod tests {
         assert_eq!(cmd.get_program(), "flatpak");
         let args = args_of(&cmd);
         assert_eq!(
-            args[..4],
+            args[..5],
             [
                 "run",
                 "--command=gpu-screen-recorder",
                 "--filesystem=/run/user/1000/redline",
+                "--filesystem=/data/redline",
                 FLATPAK_ID
             ]
         );
+        // No token folder to share without portal capture.
+        let cmd = command_line(&Launcher::Flatpak, &config("DP-2"), socket);
+        assert_eq!(args_of(&cmd)[3], FLATPAK_ID);
         assert_eq!(
             args[args.len() - 2..],
             ["-ipc", "/run/user/1000/redline/gsr-1.sock"]
         );
+    }
+
+    #[test]
+    fn output_folders_must_be_absolute_and_outside_tmp_for_the_flatpak() {
+        let native = Launcher::Native("gsr".into());
+        assert!(check_output_dir(&native, Path::new("/tmp/replays")).is_ok());
+        assert!(check_output_dir(&native, Path::new("/videos")).is_ok());
+        let error = check_output_dir(&Launcher::Flatpak, Path::new("/tmp/replays")).unwrap_err();
+        assert!(error.to_string().contains("/tmp/replays"));
+        assert!(check_output_dir(&Launcher::Flatpak, Path::new("/videos")).is_ok());
+        let error = check_output_dir(&native, Path::new("videos")).unwrap_err();
+        assert!(error.to_string().contains("videos"));
+    }
+
+    #[test]
+    fn listing_outputs_parse() {
+        // Shapes as printed by gsr 6.1.6.
+        let devices = parse_audio_devices(
+            "default_output|Default output\n\
+             default_input|Default input\n\
+             alsa_output.pci-0000_0b_00.1.hdmi-stereo.monitor|Monitor of HDMI Audio\n\
+             garbage line\n\
+             |no name\n",
+        );
+        assert_eq!(
+            devices,
+            [
+                ("default_output".into(), "Default output".into()),
+                ("default_input".into(), "Default input".into()),
+                (
+                    "alsa_output.pci-0000_0b_00.1.hdmi-stereo.monitor".into(),
+                    "Monitor of HDMI Audio".into()
+                ),
+            ]
+        );
+        assert_eq!(
+            parse_application_audio("Firefox\n\nDiscord\nFirefox\n"),
+            ["Firefox", "Discord"]
+        );
+        assert!(parse_application_audio("").is_empty());
+        assert_eq!(
+            parse_monitors("DP-2|3440x1440\nHDMI-A-1|1920x1080\n"),
+            [
+                ("DP-2".into(), "3440x1440".into()),
+                ("HDMI-A-1".into(), "1920x1080".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn the_allowed_values_are_gsr_s() {
+        assert!(!CODECS.contains(&"auto"));
+        assert!(CODECS.contains(&"h264") && CODECS.contains(&"av1"));
+        assert!(QUALITIES.contains(&DEFAULT_QUALITY));
+        assert_eq!(
+            (*REPLAY_SECONDS.start(), *REPLAY_SECONDS.end()),
+            (2, 86_400)
+        );
+        assert!(FPS.contains(&60) && !FPS.contains(&0));
     }
 
     #[test]
