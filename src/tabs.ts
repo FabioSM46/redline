@@ -16,10 +16,10 @@ export const PERFORMANCE_TABS = [
 
 export type PerformanceTabId = (typeof PERFORMANCE_TABS)[number]["id"];
 
-/** Shortcuts (D8) joins this list when its milestone arrives. */
 export const SETTINGS_TABS = [
   { id: "general", label: "General" },
   { id: "capture", label: "Capture" },
+  { id: "shortcuts", label: "Shortcuts" },
 ] as const;
 
 export type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"];

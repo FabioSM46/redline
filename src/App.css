@@ -11,6 +11,7 @@
   --radius: 10px;
   --border-width: 1px;
   --indicator: 2px;
+  --font-mono: ui-monospace, monospace;
 
   --bg: #f6f6f7;
   --surface: #ffffff;
@@ -811,4 +812,33 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space);
+}
+
+/* Settings → Shortcuts: a command to bind, its Copy button and the desktop steps. */
+.command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.command-text {
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  user-select: all;
+}
+
+.shortcut-steps {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  margin: 0;
+  padding-left: var(--space);
+}
+
+.shortcut-later {
+  margin: var(--space-sm) 0 0;
 }
