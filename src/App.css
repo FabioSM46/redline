@@ -955,6 +955,16 @@ body {
   background: var(--surface);
 }
 
+/* Focused when it opens (the control that opened it is disabled): the border already marks it. */
+.tuning-confirm:focus {
+  outline: none;
+}
+
+.tuning-confirm:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
 .tuning-confirm > p {
   margin: 0;
 }

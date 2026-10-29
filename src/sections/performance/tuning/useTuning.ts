@@ -46,8 +46,12 @@ export function useTuningStatus(gpuId: string): { state: Loaded<TuningStatus>; r
  * The one change lactd holds for the whole daemon, from `tuning-pending` / `tuning-settled` and
  * from the replies of the setters. `onSettled` runs once per settled change.
  */
-export function usePendingChange(onSettled: (settled: Settled) => void): [PendingState, Dispatch<PendingAction>] {
+export function usePendingChange(
+  onSettled: (settled: Settled) => void,
+): [PendingState, Dispatch<PendingAction>, string | null] {
   const [state, dispatch] = useReducer(pendingReducer, NO_PENDING);
+  // A failed subscription is shown: without the events the page cannot follow a pending change.
+  const [listenError, setListenError] = useState<string | null>(null);
   const settledRef = useRef(onSettled);
   settledRef.current = onSettled;
 
@@ -57,7 +61,7 @@ export function usePendingChange(onSettled: (settled: Settled) => void): [Pendin
     const subscribe = (promise: Promise<() => void>) =>
       promise.then(
         (stop) => (active ? unlisten.push(stop) : stop()),
-        () => {},
+        (e) => active && setListenError(String(e)),
       );
     subscribe(listen<PendingChange>(PENDING_EVENT, (event) => dispatch({ type: "pending", change: event.payload })));
     subscribe(listen<Settled>(SETTLED_EVENT, (event) => dispatch({ type: "settled", result: event.payload })));
@@ -73,7 +77,7 @@ export function usePendingChange(onSettled: (settled: Settled) => void): [Pendin
     if (settled !== null) settledRef.current(settled.result);
   }, [settled]);
 
-  return [state, dispatch];
+  return [state, dispatch, listenError];
 }
 
 /** The current time, every `intervalMs` while `active`. */

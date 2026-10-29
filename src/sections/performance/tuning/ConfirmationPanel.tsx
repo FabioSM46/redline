@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { type Dispatch, useState } from "react";
+import { type Dispatch, useEffect, useRef, useState } from "react";
 import { useGpu } from "../../../GpuContext.tsx";
 import {
   changeLabel,
@@ -8,6 +8,9 @@ import {
   type PendingAction,
   type PendingChange,
   secondsLeft,
+  SETTLE_GRACE_MS,
+  stillPending,
+  type TuningStatus,
   watts,
 } from "../../../tuning.ts";
 import { useNow } from "./useTuning.ts";
@@ -33,6 +36,36 @@ export function ConfirmationPanel({
   const [error, setError] = useState<string | null>(null);
 
   const left = secondsLeft(change.deadline_ms, now);
+
+  // The control that opened the panel is now disabled: focus moves here, next to Keep and Revert.
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => section.current?.focus(), []);
+
+  // A missed `tuning-settled` must not leave the panel (and every control) stuck: past the
+  // deadline and a grace, ask the backend whether it still holds the change, again until it lets go.
+  const overdue = left === 0;
+  useEffect(() => {
+    if (!overdue) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      invoke<TuningStatus>("tuning_status", { gpuId: change.gpu_id }).then(
+        (status) => {
+          if (!active) return;
+          if (stillPending(status, change)) timer = setTimeout(check, SETTLE_GRACE_MS);
+          else dispatch({ type: "gone", change, nowMs: Date.now() });
+        },
+        () => {
+          if (active) timer = setTimeout(check, SETTLE_GRACE_MS);
+        },
+      );
+    };
+    timer = setTimeout(check, SETTLE_GRACE_MS);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [overdue, change, dispatch]);
   const name = gpus.find((g) => g.id === change.gpu_id)?.name ?? change.gpu_id;
   const otherGpu = change.gpu_id !== gpu.id;
   // The result, read from the sensors: only for the GPU the shell is polling.
@@ -51,7 +84,7 @@ export function ConfirmationPanel({
   };
 
   return (
-    <section className="tuning-confirm" aria-labelledby="tuning-confirm-title">
+    <section ref={section} tabIndex={-1} className="tuning-confirm" aria-labelledby="tuning-confirm-title">
       <h2 className="tuning-confirm-title" id="tuning-confirm-title">
         Keep this change?
       </h2>

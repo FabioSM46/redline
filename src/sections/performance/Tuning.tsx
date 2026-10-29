@@ -22,7 +22,7 @@ type Detail = { gpuId: string; deadlineMs: number; text: string };
 export function Tuning({ navigate }: { navigate: Navigate }) {
   const { gpu, gpus } = useGpu();
   const { state, reload } = useTuningStatus(gpu.id);
-  const [pending, dispatch] = usePendingChange(reload);
+  const [pending, dispatch, listenError] = usePendingChange(reload);
   const [sending, setSending] = useState(false);
   const [overdriveBusy, setOverdriveBusy] = useState(false);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -74,6 +74,11 @@ export function Tuning({ navigate }: { navigate: Navigate }) {
         <p className="settings-notice" role="status">
           {changeLabel(settled.change.what)}
           {settledName !== null && ` on ${settledName}`}: {outcomeSentence(settled.result)}
+        </p>
+      )}
+      {listenError !== null && (
+        <p className="setting-error" role="alert">
+          Redline cannot follow tuning changes, so a change made now may not show its confirmation: {listenError}
         </p>
       )}
       {state.status === "loading" && <p className="state">Reading what LACT can change…</p>}

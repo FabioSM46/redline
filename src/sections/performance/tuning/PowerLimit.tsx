@@ -23,9 +23,12 @@ export function PowerLimitBlock({ gpuId, power, locked, apply }: TuningBlockProp
   const [text, setText] = useState(draft === null ? "" : String(draft));
   const [error, setError] = useState<string | null>(null);
 
-  const send = (value: number | null, detail: string) => {
+  // Whole watts on the way out: a typed 200.5 is sent as 201, never as a fraction.
+  const send = (value: number | null, detail: (watts: number | null) => string) => {
+    const whole = value !== null && range !== null ? clampWatts(value, range) : null;
+    if (value !== null && whole === null) return;
     setError(null);
-    apply(() => invoke<PendingChange>("set_power_limit", { gpuId, watts: value }), detail).then(setError);
+    apply(() => invoke<PendingChange>("set_power_limit", { gpuId, watts: whole }), detail(whole)).then(setError);
   };
 
   const pick = (value: number) => {
@@ -100,7 +103,7 @@ export function PowerLimitBlock({ gpuId, power, locked, apply }: TuningBlockProp
                 type="button"
                 className="button"
                 disabled={locked || !canApply(draft, power)}
-                onClick={() => draft !== null && send(draft, `${watts(power.current_w)} → ${watts(draft)}`)}
+                onClick={() => draft !== null && send(draft, (sent) => `${watts(power.current_w)} → ${watts(sent)}`)}
               >
                 Apply
               </button>
@@ -109,7 +112,7 @@ export function PowerLimitBlock({ gpuId, power, locked, apply }: TuningBlockProp
               type="button"
               className="button"
               disabled={locked || !canReset(power)}
-              onClick={() => send(null, `${watts(power.current_w)} → default (${watts(power.default_w)})`)}
+              onClick={() => send(null, () => `${watts(power.current_w)} → default (${watts(power.default_w)})`)}
             >
               Default
             </button>

@@ -19,6 +19,7 @@ import {
   powerRange,
   secondsLeft,
   SETTLED_EVENT,
+  stillPending,
   TUNING_CHANGES,
   type TuningStatus,
 } from "./tuning.ts";
@@ -224,5 +225,23 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
     for (const variant of variants) {
       assert.equal((TUNING_CHANGES as readonly string[]).includes(variant), true, variant);
     }
+  });
+});
+
+describe("a missed tuning-settled", () => {
+  it("ends the change as expired once the backend no longer holds it after the deadline", () => {
+    const pending = pendingReducer(NO_PENDING, { type: "pending", change });
+    assert.equal(pendingReducer(pending, { type: "gone", change, nowMs: 9_999 }), pending);
+    assert.deepEqual(pendingReducer(pending, { type: "gone", change, nowMs: 10_000 }), {
+      pending: null,
+      settled: { change, result: { gpu_id: change.gpu_id, outcome: "expired" } },
+    });
+    assert.equal(pendingReducer(pending, { type: "gone", change: other, nowMs: 30_000 }), pending);
+  });
+
+  it("reads whether the status still holds the change", () => {
+    assert.equal(stillPending({ pending: change }, change), true);
+    assert.equal(stillPending({ pending: null }, change), false);
+    assert.equal(stillPending({ pending: { ...change, deadline_ms: 11_000 } }, change), false);
   });
 });

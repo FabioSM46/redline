@@ -153,7 +153,12 @@ export type PendingAction =
   /** A `tuning_status` reply: a change pending on that GPU, read now. */
   | { type: "status"; change: PendingChange; nowMs: number }
   /** A late confirm or revert reply that says how it ended, when the event was missed. */
-  | { type: "answered"; change: PendingChange; result: Settled };
+  | { type: "answered"; change: PendingChange; result: Settled }
+  /**
+   * A `tuning_status` read after the deadline no longer holds `change`: its `tuning-settled` was
+   * missed. Past the deadline lactd has reverted it by itself, so it ended as `expired`.
+   */
+  | { type: "gone"; change: PendingChange; nowMs: number };
 
 function sameChange(a: PendingChange, b: PendingChange): boolean {
   return a.gpu_id === b.gpu_id && a.what === b.what && a.deadline_ms === b.deadline_ms;
@@ -181,7 +186,22 @@ export function pendingReducer(state: PendingState, action: PendingAction): Pend
     case "answered":
       if (state.pending === null || !sameChange(state.pending, action.change)) return state;
       return { pending: null, settled: { change: action.change, result: action.result } };
+    case "gone":
+      if (state.pending === null || !sameChange(state.pending, action.change)) return state;
+      if (action.nowMs < action.change.deadline_ms) return state;
+      return {
+        pending: null,
+        settled: { change: action.change, result: { gpu_id: action.change.gpu_id, outcome: "expired" } },
+      };
   }
+}
+
+/** How long after the deadline the panel waits for `tuning-settled` before asking the backend. */
+export const SETTLE_GRACE_MS = 2000;
+
+/** Whether `status` (read for `change.gpu_id`) still holds `change`. */
+export function stillPending(status: { pending: PendingChange | null }, change: PendingChange): boolean {
+  return status.pending !== null && sameChange(status.pending, change);
 }
 
 /** LACT cannot be reached at all (not installed, not running, no permission): see Dependencies. */
