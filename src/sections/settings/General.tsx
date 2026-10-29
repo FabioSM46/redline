@@ -1,17 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { applyTheme, parseThemeSetting, THEME_OPTIONS, type ThemeSetting } from "../../theme.ts";
+import { IDLE, type Loaded, type SaveState, Setting, Value } from "./Setting.tsx";
 
 /** `Settings` in src-tauri/src/settings.rs, as `get_settings` / `set_settings` return it. */
 type Settings = { theme: ThemeSetting; start_minimised: boolean };
-
-/** A value read from the backend: loading, unreadable, or known. */
-type Loaded<T> = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; value: T };
-
-/** What a control is doing after a change: nothing, saving, or the reason the last save failed. */
-type SaveState = { status: "idle" } | { status: "saving" } | { status: "error"; message: string };
-
-const IDLE: SaveState = { status: "idle" };
 
 function toSettings(raw: { theme: unknown; start_minimised: unknown }): Settings {
   return { theme: parseThemeSetting(raw.theme), start_minimised: raw.start_minimised === true };
@@ -177,46 +170,6 @@ function useTrayAvailable(): boolean | null {
     };
   }, []);
   return available;
-}
-
-function Setting({
-  title,
-  description,
-  save,
-  children,
-}: {
-  title: string;
-  description: string;
-  save: SaveState;
-  children: ReactNode;
-}) {
-  return (
-    <div className="setting">
-      <div className="setting-text">
-        <span className="setting-title">{title}</span>
-        <span className="setting-description">{description}</span>
-        {save.status === "error" && (
-          <span className="setting-error" role="alert">
-            Not saved: {save.message}
-          </span>
-        )}
-      </div>
-      <div className="setting-control">{children}</div>
-    </div>
-  );
-}
-
-/** The control once its value is known; a short state line while loading or when unreadable. */
-function Value<T>({ state, what, children }: { state: Loaded<T>; what: string; children: (value: T) => ReactNode }) {
-  if (state.status === "loading") return <span className="setting-description">Loading…</span>;
-  if (state.status === "error") {
-    return (
-      <span className="setting-error" role="alert">
-        Cannot read {what}: {state.message}
-      </span>
-    );
-  }
-  return <>{children(state.value)}</>;
 }
 
 function Toggle({
