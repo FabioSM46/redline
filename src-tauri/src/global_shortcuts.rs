@@ -160,12 +160,32 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Stores `status` and sends it to the webviews.
+/// Whether `next` may replace `current`. `Unavailable` and `Failed` are final: once the session
+/// is gone, a `ShortcutsChanged` still in flight must not bring back a `Ready` the configure
+/// command can no longer serve.
+fn replaces(current: &ShortcutsStatus, next: &ShortcutsStatus) -> bool {
+    !matches!(
+        (current, next),
+        (
+            ShortcutsStatus::Unavailable | ShortcutsStatus::Failed { .. },
+            ShortcutsStatus::Ready { .. }
+        )
+    )
+}
+
+/// Stores `status` and sends it to the webviews, unless the current status is final (see
+/// [`replaces`]). The check, the store and the event happen under one lock, so two publishers
+/// cannot interleave.
 fn publish<R: Runtime>(app: &AppHandle<R>, status: ShortcutsStatus) {
-    if let Some(state) = app.try_state::<ShortcutsState>() {
-        *lock(&state.status) = status.clone();
+    let Some(state) = app.try_state::<ShortcutsState>() else {
+        return;
+    };
+    let mut current = lock(&state.status);
+    if !replaces(&current, &status) {
+        return;
     }
-    if let Err(error) = app.emit(STATUS_EVENT, &status) {
+    *current = status;
+    if let Err(error) = app.emit(STATUS_EVENT, &*current) {
         eprintln!("redline: could not send {STATUS_EVENT} ({error})");
     }
 }
@@ -218,8 +238,10 @@ enum Setup {
 /// until the app exits.
 async fn session<R: Runtime>(app: &AppHandle<R>) -> Result<(), Setup> {
     // A host (non-sandboxed) app tells the portal its id, so the desktop can keep the keys under
-    // it. Best effort: the registry is newer than the portal on some desktops, and an app the
-    // portal already identified (launched from its `.desktop` file) is refused, harmlessly.
+    // it. The bundle identifier is the only valid one Redline has: the `.deb`'s desktop-file name,
+    // `redline`, is not a reverse-DNS app id, so the registry would refuse it. Best effort: the
+    // registry is newer than the portal on some desktops, and an app the portal already
+    // identified (launched from its `.desktop` file) is refused, harmlessly.
     if let Ok(app_id) = ashpd::AppID::try_from(app.config().identifier.as_str())
         && let Err(error) = ashpd::register_host_app(app_id).await
     {
@@ -284,8 +306,11 @@ async fn session<R: Runtime>(app: &AppHandle<R>) -> Result<(), Setup> {
             }
         }
     };
-    tauri::async_runtime::spawn(on_change);
+    let on_change = tauri::async_runtime::spawn(on_change);
     on_activate.await;
+    // Both streams end together; a change already being published loses to the final `Failed`
+    // anyway (`replaces`).
+    on_change.abort();
     Err(Setup::Ended)
 }
 
@@ -437,6 +462,35 @@ mod tests {
                 ],
             })
         );
+    }
+
+    #[test]
+    fn a_final_status_is_never_replaced_by_ready() {
+        let ready = ready(2, &[]);
+        let failed = ShortcutsStatus::Failed {
+            error: "ended".to_owned(),
+        };
+        assert!(!replaces(&failed, &ready));
+        assert!(!replaces(&ShortcutsStatus::Unavailable, &ready));
+        // Everything else moves on.
+        assert!(replaces(&ShortcutsStatus::Checking, &ready));
+        assert!(replaces(&ready, &ready));
+        assert!(replaces(&ready, &failed));
+        assert!(replaces(
+            &ShortcutsStatus::Checking,
+            &ShortcutsStatus::Unavailable
+        ));
+        assert!(replaces(&failed, &failed));
+    }
+
+    #[test]
+    fn only_the_bundle_identifier_is_a_valid_portal_app_id() {
+        // The portal registry takes a reverse-DNS id; the `.deb`'s desktop-file name is not one.
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let identifier = config["identifier"].as_str().unwrap();
+        assert!(ashpd::AppID::try_from(identifier).is_ok());
+        assert!(ashpd::AppID::try_from("redline").is_err());
     }
 
     #[test]
