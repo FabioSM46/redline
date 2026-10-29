@@ -8,8 +8,12 @@
 //! 2. Redline's own cache: one frame written earlier by an external tool, reused while the file
 //!    keeps the same modification time and size (the cache name contains both).
 //! 3. An external tool found on PATH, `ffmpegthumbnailer` then `ffmpeg`: it writes one JPEG
-//!    frame into Redline's cache. At most one runs at a time, with a timeout. When every tool
-//!    fails a `.fail` marker is cached, so the same unchanged file is not tried again.
+//!    frame into Redline's cache. At most one runs at a time, each killed after `timeout`, so
+//!    one clip costs at most `tools × timeout`; a caller that cannot start within
+//!    [`QUEUE_WAIT`] gets `None` and may ask again later. When every tool fails, a `.fail`
+//!    marker naming the tools tried is cached: the same unchanged file is not tried again with
+//!    the same tools, a different set of tools tries again, and a failure that was only a
+//!    timeout is retried after [`TIMEOUT_RETRY`].
 //!
 //! No source is `None`, never an error: a missing tool is a disabled feature.
 
@@ -28,6 +32,11 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 pub const THUMBNAIL_SIZE: u32 = 256;
 /// How long one tool may run on one file before it is killed.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a caller waits for its turn to run a tool before giving up (nothing is cached).
+pub const QUEUE_WAIT: Duration = Duration::from_secs(60);
+/// A failure caused only by timeouts (a loaded machine, not a bad file) is tried again after
+/// this long.
+pub const TIMEOUT_RETRY: Duration = Duration::from_secs(60 * 60);
 /// Images larger than this are not read: a thumbnail is a few tens of kilobytes.
 const MAX_IMAGE_BYTES: u64 = 4 * 1024 * 1024;
 /// The desktop cache folders that are looked at, best first.
@@ -104,38 +113,50 @@ impl Thumbnailer {
         }
         let key = cache_key(&uri, stamp);
         let cached = self.own_cache.join(format!("{key}.jpg"));
-        let failed = self.own_cache.join(format!("{key}.fail"));
-        if let Some(image) = cached_result(&cached, &failed) {
-            return image;
+        if let Some(image) = read_image(&cached) {
+            return Some(image);
         }
         let tools = self.tools();
         if tools.is_empty() {
             // Nothing is cached: installing a tool later makes previews appear.
             return None;
         }
-        let _one_at_a_time = GENERATING
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        // Another caller may have generated it while this one waited.
-        if let Some(image) = cached_result(&cached, &failed) {
-            return image;
+        let failed = self.own_cache.join(format!("{key}.fail"));
+        let tried = tool_names(&tools);
+        if failure_is_cached(&failed, &tried) {
+            return None;
+        }
+        let _one_at_a_time = lock_with_deadline(&GENERATING, QUEUE_WAIT)?;
+        // Another caller may have generated it, or failed, while this one waited.
+        if let Some(image) = read_image(&cached) {
+            return Some(image);
+        }
+        if failure_is_cached(&failed, &tried) {
+            return None;
         }
         fs::create_dir_all(&self.own_cache).ok()?;
         let partial = self.own_cache.join(format!("{key}.part.jpg"));
         let seek_s = crate::media::duration_seconds(&video).map(|seconds| seconds / 10.0);
+        let mut only_timeouts = true;
         for (tool, program) in tools {
             let _ = fs::remove_file(&partial);
             let mut command = generate_command(tool, &program, &video, &partial, seek_s);
-            if run_with_timeout(&mut command, self.timeout)
-                && let Some(image) = read_image(&partial)
-                && image.mime == "image/jpeg"
-                && fs::rename(&partial, &cached).is_ok()
-            {
-                return Some(image);
+            match run_with_timeout(&mut command, self.timeout) {
+                Run::Succeeded => {
+                    if let Some(image) = read_image(&partial)
+                        && image.mime == "image/jpeg"
+                        && fs::rename(&partial, &cached).is_ok()
+                    {
+                        return Some(image);
+                    }
+                    only_timeouts = false;
+                }
+                Run::Failed => only_timeouts = false,
+                Run::TimedOut => {}
             }
         }
         let _ = fs::remove_file(&partial);
-        let _ = fs::write(&failed, b"");
+        let _ = fs::write(&failed, failure_marker(&tried, only_timeouts));
         None
     }
 
@@ -167,13 +188,52 @@ impl Thumbnailer {
     }
 }
 
-/// `Some(Some(image))` for a cached thumbnail, `Some(None)` for a cached failure, `None` when
-/// nothing is cached.
-fn cached_result(cached: &Path, failed: &Path) -> Option<Option<Image>> {
-    if let Some(image) = read_image(cached) {
-        return Some(Some(image));
+/// The names of `tools`, as a failure marker records them.
+fn tool_names(tools: &[(Tool, PathBuf)]) -> String {
+    tools
+        .iter()
+        .map(|(tool, _)| tool.program())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The content of a failure marker: the tools tried and whether they all only timed out.
+fn failure_marker(tried: &str, only_timeouts: bool) -> String {
+    format!("tools={tried}\ntimeout={}\n", u8::from(only_timeouts))
+}
+
+/// A failure marker at `failed` that still applies: written for the same tools, and either a
+/// real failure or a timeout younger than [`TIMEOUT_RETRY`].
+fn failure_is_cached(failed: &Path, tried: &str) -> bool {
+    let Ok(marker) = fs::read_to_string(failed) else {
+        return false;
+    };
+    if !marker.lines().any(|line| line == format!("tools={tried}")) {
+        return false;
     }
-    failed.exists().then_some(None)
+    if !marker.lines().any(|line| line == "timeout=1") {
+        return true;
+    }
+    fs::metadata(failed)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|written| written.elapsed().ok())
+        .is_some_and(|age| age < TIMEOUT_RETRY)
+}
+
+/// `mutex`, waiting at most `wait` for it; `None` when the queue is too long.
+fn lock_with_deadline(mutex: &Mutex<()>, wait: Duration) -> Option<std::sync::MutexGuard<'_, ()>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(std::sync::TryLockError::WouldBlock) => return None,
+        }
+    }
 }
 
 /// What identifies one version of a file.
@@ -267,8 +327,8 @@ fn generate_command(
                 .arg(video)
                 .arg("-o")
                 .arg(out)
-                .args(["-s", &THUMBNAIL_SIZE.to_string(), "-c", "jpeg", "-q", "8"])
-                .args(["-t", "10%"]);
+                // No `-t`: the default seek is already 10% of the length.
+                .args(["-s", &THUMBNAIL_SIZE.to_string(), "-c", "jpeg", "-q", "8"]);
         }
         Tool::Ffmpeg => {
             let seek = format!("{:.3}", seek_s.unwrap_or(0.0));
@@ -287,26 +347,41 @@ fn generate_command(
     command
 }
 
-/// Runs `command` with no input or output; true when it exits successfully before `timeout`.
-/// After the timeout it is killed and reaped.
-pub fn run_with_timeout(command: &mut Command, timeout: Duration) -> bool {
+/// How a tool run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Run {
+    Succeeded,
+    /// It could not start, or exited with an error.
+    Failed,
+    /// Killed after the timeout.
+    TimedOut,
+}
+
+/// Runs `command` with no input or output, for at most `timeout`; after that it is killed and
+/// reaped.
+pub fn run_with_timeout(command: &mut Command, timeout: Duration) -> Run {
     let Ok(mut child) = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
     else {
-        return false;
+        return Run::Failed;
     };
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return status.success(),
+            Ok(Some(status)) if status.success() => return Run::Succeeded,
+            Ok(Some(_)) => return Run::Failed,
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
-            _ => {
+            outcome => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return false;
+                return if outcome.is_ok() {
+                    Run::TimedOut
+                } else {
+                    Run::Failed
+                };
             }
         }
     }
@@ -824,6 +899,12 @@ mod tests {
         assert_eq!(runs(&log), 4);
         assert_eq!(thumbs.thumbnail(&other), None);
         assert_eq!(runs(&log), 4, "a cached failure is not retried");
+        // Another set of tools tries again.
+        fs::remove_file(bin.join("ffmpegthumbnailer")).unwrap();
+        assert_eq!(thumbs.thumbnail(&other), None);
+        assert_eq!(runs(&log), 5, "a failure with other tools does not apply");
+        assert_eq!(thumbs.thumbnail(&other), None);
+        assert_eq!(runs(&log), 5);
         // No partial file is left behind.
         let leftovers: Vec<_> = fs::read_dir(root.join("own"))
             .unwrap()
@@ -838,7 +919,12 @@ mod tests {
     fn a_tool_that_hangs_is_killed_after_the_timeout() {
         let root = temp_dir("timeout");
         let bin = root.join("bin");
-        tool(&bin, "ffmpegthumbnailer", "exec sleep 30");
+        let log = root.join("runs.log");
+        tool(
+            &bin,
+            "ffmpegthumbnailer",
+            &format!("echo h >> '{}'\nexec sleep 30", log.display()),
+        );
         let thumbs = Thumbnailer {
             timeout: Duration::from_millis(200),
             ..thumbnailer(&root, &bin)
@@ -847,7 +933,69 @@ mod tests {
         let started = Instant::now();
         assert_eq!(thumbs.thumbnail(&clip), None);
         assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(runs(&log), 1);
+        // A recent timeout is not retried on every call...
+        assert_eq!(thumbs.thumbnail(&clip), None);
+        assert_eq!(runs(&log), 1);
+        // ...but an old one is: a timeout says more about the machine than about the file.
+        let marker = fs::read_dir(root.join("own"))
+            .unwrap()
+            .flatten()
+            .find(|entry| entry.file_name().to_string_lossy().ends_with(".fail"))
+            .unwrap()
+            .path();
+        assert!(fs::read_to_string(&marker).unwrap().contains("timeout=1"));
+        let old = SystemTime::now() - TIMEOUT_RETRY - Duration::from_secs(60);
+        File::options()
+            .write(true)
+            .open(&marker)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(old))
+            .unwrap();
+        assert_eq!(thumbs.thumbnail(&clip), None);
+        assert_eq!(runs(&log), 2);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_long_queue_gives_up_instead_of_waiting_forever() {
+        let mutex = Mutex::new(());
+        let held = mutex.lock().unwrap();
+        let started = Instant::now();
+        assert!(lock_with_deadline(&mutex, Duration::from_millis(150)).is_none());
+        assert!(started.elapsed() >= Duration::from_millis(150));
+        drop(held);
+        assert!(lock_with_deadline(&mutex, Duration::from_millis(150)).is_some());
+    }
+
+    #[test]
+    fn ffmpegthumbnailer_keeps_its_default_seek() {
+        let command = generate_command(
+            Tool::Ffmpegthumbnailer,
+            Path::new("/bin/ffmpegthumbnailer"),
+            Path::new("/clips/a.mkv"),
+            Path::new("/cache/a.jpg"),
+            Some(12.0),
+        );
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "-i",
+                "/clips/a.mkv",
+                "-o",
+                "/cache/a.jpg",
+                "-s",
+                "256",
+                "-c",
+                "jpeg",
+                "-q",
+                "8"
+            ]
+        );
     }
 
     #[test]
