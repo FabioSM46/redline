@@ -20,6 +20,8 @@ export const SETTINGS_TABS = [
   { id: "general", label: "General" },
   { id: "capture", label: "Capture" },
   { id: "shortcuts", label: "Shortcuts" },
+  { id: "dependencies", label: "Dependencies" },
+  { id: "about", label: "About" },
 ] as const;
 
 export type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"];

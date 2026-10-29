@@ -98,6 +98,7 @@ pub fn run() {
             tuning::profiles::create_profile,
             tuning::profiles::activate_profile,
             tuning::profiles::delete_profile,
+            tuning::fan::set_fan,
             tuning::overdrive::prepare_enable_overdrive,
             tuning::overdrive::enable_overdrive,
             tuning::overdrive::prepare_disable_overdrive,

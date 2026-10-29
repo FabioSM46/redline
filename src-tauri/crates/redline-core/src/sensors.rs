@@ -7,7 +7,8 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 const AMD_VENDOR: &str = "0x1002";
-const DRM_ROOT: &str = "/sys/class/drm";
+/// Where the kernel lists the DRM cards.
+pub const DRM_ROOT: &str = "/sys/class/drm";
 
 /// What the UI needs to list a GPU and ask for it again by id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -164,6 +165,15 @@ impl AmdGpu {
         }
     }
 
+    /// The firmware (PMFW) fan curve, `gpu_od/fan_ctrl/fan_curve`: only on GPUs whose fan is
+    /// driven by the power management firmware, and there only with overdrive enabled. `None`
+    /// when the file is missing or unreadable.
+    pub fn pmfw_fan_curve(&self) -> Option<PmfwFanCurve> {
+        parse_pmfw_fan_curve(
+            &fs::read_to_string(self.device.join("gpu_od/fan_ctrl/fan_curve")).ok()?,
+        )
+    }
+
     /// Finds the `<prefix>N_input` sensor whose `<prefix>N_label` equals `label`.
     fn labeled(&self, hwmon: &Path, prefix: &str, label: &str) -> Option<u64> {
         let start = if prefix == "in" { 0 } else { 1 };
@@ -172,6 +182,77 @@ impl AmdGpu {
             (l == label).then(|| read_u64(&hwmon.join(format!("{prefix}{n}_input"))))?
         })
     }
+}
+
+/// The shape of a firmware fan curve. Its number of points is fixed by the firmware: a new curve
+/// must have exactly as many. The ranges are `None` when the firmware does not allow changing
+/// the curve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PmfwFanCurve {
+    pub points: usize,
+    /// °C, inclusive.
+    pub temperature_range: Option<(i32, i32)>,
+    /// Percent, inclusive.
+    pub speed_range: Option<(u32, u32)>,
+}
+
+/// Parses `fan_curve` as the kernel writes it (the format `amdgpu-sysfs` 0.21, LACT 0.10.1's
+/// reader, expects):
+///
+/// ```text
+/// OD_FAN_CURVE:
+/// 0: 0C 0%
+/// ...
+/// OD_RANGE:
+/// FAN_CURVE(hotspot temp): 25C 100C
+/// FAN_CURVE(fan speed): 20% 100%
+/// ```
+pub fn parse_pmfw_fan_curve(text: &str) -> Option<PmfwFanCurve> {
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    if lines.next()? != "OD_FAN_CURVE:" {
+        return None;
+    }
+    let mut points = 0;
+    let mut temperature_range = None;
+    let mut speed_range = None;
+    let mut in_range = false;
+    for line in lines {
+        if line == "OD_RANGE:" {
+            in_range = true;
+            continue;
+        }
+        let (name, value) = line.split_once(": ")?;
+        if !in_range {
+            // `<index>: <temp>C <speed>%`
+            let (temperature, speed) = value.split_once(' ')?;
+            temperature.strip_suffix('C')?.parse::<i32>().ok()?;
+            speed.strip_suffix('%')?.parse::<u32>().ok()?;
+            points += 1;
+            continue;
+        }
+        let (min, max) = value.split_once(' ')?;
+        match name {
+            "FAN_CURVE(hotspot temp)" => {
+                let parse = |v: &str| v.strip_suffix('C')?.parse::<i32>().ok();
+                temperature_range = Some((parse(min)?, parse(max)?));
+            }
+            "FAN_CURVE(fan speed)" => {
+                let parse = |v: &str| v.strip_suffix('%')?.parse::<u32>().ok();
+                speed_range = Some((parse(min)?, parse(max)?));
+            }
+            _ => {}
+        }
+    }
+    // Like LACT: both ranges, or the curve cannot be changed.
+    let (temperature_range, speed_range) = match (temperature_range, speed_range) {
+        (Some(t), Some(s)) => (Some(t), Some(s)),
+        _ => (None, None),
+    };
+    (points > 0).then_some(PmfwFanCurve {
+        points,
+        temperature_range,
+        speed_range,
+    })
 }
 
 fn first_hwmon(device: &Path) -> Option<PathBuf> {
@@ -310,6 +391,52 @@ mod tests {
         assert!(err.to_string().contains("0000:00:02.0"), "{err}");
         let err = AmdGpu::by_id_in(&root.join("drm"), "0000:ff:00.0").unwrap_err();
         assert!(err.to_string().contains("0000:ff:00.0"), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    const FAN_CURVE: &str = "OD_FAN_CURVE:\n0: 0C 0%\n1: 0C 0%\n2: 0C 0%\n3: 0C 0%\n4: 0C 0%\nOD_RANGE:\nFAN_CURVE(hotspot temp): 25C 100C\nFAN_CURVE(fan speed): 20% 100%";
+
+    #[test]
+    fn parses_the_firmware_fan_curve() {
+        assert_eq!(
+            parse_pmfw_fan_curve(FAN_CURVE),
+            Some(PmfwFanCurve {
+                points: 5,
+                temperature_range: Some((25, 100)),
+                speed_range: Some((20, 100)),
+            })
+        );
+        // Without OD_RANGE the curve cannot be changed.
+        let fixed = "OD_FAN_CURVE:\n0: 30C 20%\n1: 50C 40%\n";
+        assert_eq!(
+            parse_pmfw_fan_curve(fixed),
+            Some(PmfwFanCurve {
+                points: 2,
+                temperature_range: None,
+                speed_range: None,
+            })
+        );
+        for broken in [
+            "",
+            "OD_SCLK:\n0: 500Mhz",
+            "OD_FAN_CURVE:\n0: 30 20%",
+            "OD_FAN_CURVE:\n",
+        ] {
+            assert_eq!(parse_pmfw_fan_curve(broken), None, "{broken:?}");
+        }
+    }
+
+    #[test]
+    fn reads_the_firmware_fan_curve_only_where_the_gpu_has_one() {
+        let root = temp_root("fancurve");
+        fake_card(&root, "card1", "0000:0d:00.0", AMD_VENDOR, &[]);
+        let gpu = AmdGpu::by_id_in(&root.join("drm"), "0000:0d:00.0").unwrap();
+        // No `gpu_od` folder: an older GPU, or overdrive off.
+        assert_eq!(gpu.pmfw_fan_curve(), None);
+        let dir = root.join("devices/0000:0d:00.0/gpu_od/fan_ctrl");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("fan_curve"), FAN_CURVE).unwrap();
+        assert_eq!(gpu.pmfw_fan_curve().map(|curve| curve.points), Some(5));
         fs::remove_dir_all(&root).unwrap();
     }
 

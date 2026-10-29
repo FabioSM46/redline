@@ -99,6 +99,26 @@ included. Names are trimmed, non-empty, at most 64 characters, without control c
 `Default`, and unique ignoring case. Redline never turns LACT's automatic switching on, and
 refuses a manual switch while LACT has it on.
 
+**Fan** (`tuning::fan`, verified against lactd 0.10.1's `set_fan_control` handler and
+`apply_config`): `set_fan(gpu_id, settings)` with `settings = { mode: "auto" | "static" |
+"curve", static_speed?, curve?: [{ temperature_c, speed_pct }], pmfw?: { zero_rpm,
+zero_rpm_threshold, target_temperature, acoustic_limit, acoustic_target, minimum_pwm } }` returns
+a `PendingChange` with `what: "fan"`, confirmed or reverted like any other change. `auto` gives
+the fan back to the firmware, `static` holds a speed (percent), `curve` follows the curve.
+Fields that do not belong to the mode, and unknown fields, are refused. Before lactd sees
+anything the backend checks the settings against the GPU, from `device_info` (the
+`ConfigurableFanControl` and `HasPmfw` flags), `device_stats` (the firmware options and their
+ranges) and, for a firmware fan, `gpu_od/fan_ctrl/fan_curve` in sysfs (read only: the fixed number
+of curve points and their `OD_RANGE`). `tuning_status` reports the same rules as
+`fan.curve_rules = { points (exact count, or null = any from 1), temperature: { min_c, max_c },
+speed: { min_pct, max_pct }, whole_percent }`, `null` when neither a speed nor a curve can be
+set. A curve has distinct temperatures and never slows down as the temperature rises. The four
+firmware limits apply only in `auto` and zero RPM only outside `static` (lactd ignores them
+elsewhere), each inside the range the firmware reports. A firmware fan with overdrive off has
+none of this, and the refusal says to enable overdrive. The request is LACT's own
+`set_fan_control`, never `set_gpu_config`; lactd replaces its stored firmware options as a whole,
+so the backend sends the stored ones (`get_gpu_config`) with the new ones on top.
+
 Overdrive (D11) is not a pending change: it is a kernel parameter for the next boot. The frontend
 calls `prepare_enable_overdrive` → the backend reads `system_info` (the live overdrive bit and
 `amdgpu_params_configurator`) and answers the steps lactd will take, `reboot_required: true` and

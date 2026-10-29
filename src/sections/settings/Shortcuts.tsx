@@ -219,7 +219,7 @@ function CommandRow({ title, description, command }: { title: string; descriptio
  * The copy fallback for webviews without the async Clipboard API: select the text in a hidden,
  * read-only textarea and run the copy command. `true` only when the webview reports success.
  */
-function copyWithSelection(text: string): boolean {
+export function copyWithSelection(text: string): boolean {
   const area = document.createElement("textarea");
   area.value = text;
   area.readOnly = true;
