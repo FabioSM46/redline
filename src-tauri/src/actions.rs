@@ -9,6 +9,8 @@
 //!   instance the new launch's arguments ([`on_second_launch`]). With an action it performs it
 //!   without showing or focusing the window; without one it brings the window to the front, as
 //!   before.
+//! - **Global shortcut** (#65): where the GlobalShortcuts portal exists, the desktop reports a
+//!   key press and `global_shortcuts` calls [`dispatch`], as a second launch does.
 //! - **First launch** with an action: the app starts hidden in the tray when there is one
 //!   (`autostart::start_hidden`) and performs the action once GPU Screen Recorder has been
 //!   detected and `replay_on_start` has run (`recorder::init`).
@@ -106,15 +108,17 @@ pub fn second_launch(argv: &[String]) -> SecondLaunch {
 }
 
 /// The single-instance callback. It runs while the second launch waits for the answer on the
-/// session bus, so the action runs on its own thread.
+/// session bus, so the action runs on its own thread ([`dispatch`]).
 pub fn on_second_launch<R: Runtime>(app: &AppHandle<R>, argv: &[String]) {
-    let action = match second_launch(argv) {
-        SecondLaunch::Show => {
-            tray::show_main_window(app);
-            return;
-        }
-        SecondLaunch::Act(action) => action,
-    };
+    match second_launch(argv) {
+        SecondLaunch::Show => tray::show_main_window(app),
+        SecondLaunch::Act(action) => dispatch(app, action),
+    }
+}
+
+/// Performs `action` on its own thread, without showing or focusing the window: a second launch
+/// with an action argument, or a global shortcut the desktop reports (`global_shortcuts`, #65).
+pub fn dispatch<R: Runtime>(app: &AppHandle<R>, action: Action) {
     let service = app
         .try_state::<Recorder>()
         .map(|service| service.inner().clone());
@@ -126,7 +130,7 @@ pub fn on_second_launch<R: Runtime>(app: &AppHandle<R>, argv: &[String]) {
                 None => notify_failure(action, NOT_READY),
             });
     if let Err(error) = spawned {
-        eprintln!("redline: the launch action did not start ({error})");
+        eprintln!("redline: the action did not start ({error})");
     }
 }
 

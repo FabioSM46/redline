@@ -46,7 +46,8 @@ Rejected:
 
 Under Wayland global shortcuts go through the GlobalShortcuts portal. GNOME implements it from
 version 48; Ubuntu 24.04 ships GNOME 46. Until the portal is there, Redline will offer commands
-(for example "save replay") to bind to the desktop's custom shortcuts.
+(for example "save replay") to bind to the desktop's custom shortcuts. Where the portal exists,
+Redline registers the same actions through it (D10); the commands stay as the fallback.
 
 ## D6 — MIT license (2026-10-29)
 
@@ -164,6 +165,44 @@ hand-written canvas or SVG charts (axes, cursor and scaling are exactly what uPl
 well).
 
 `uplot` is the only package this decision approves; no other chart or component library.
+
+## D10 — Global shortcuts through the portal with `ashpd` (2026-10-29)
+
+Where the `org.freedesktop.portal.GlobalShortcuts` portal exists (GNOME 48 and later, KDE
+Plasma), Redline registers its actions through it (#65). The client is **`ashpd`** (MIT), the
+Rust wrapper of the XDG desktop portals, pinned to an exact version (`=0.13.13`) with
+`default-features = false` and only the `global_shortcuts` and `async-io` features. The user
+approved this dependency explicitly for #65. It builds on `zbus`, already in `Cargo.lock` through
+`tauri-plugin-single-instance` with its `async-io` backend: `ashpd` uses the same backend, so the
+lockfile gains one package (`ashpd` itself) and the single-instance plugin's `zbus` keeps the
+backend it was tested with. async-io runs its own reactor, so the futures run on Tauri's tokio
+runtime unchanged.
+
+How the portal is used (`src-tauri/src/global_shortcuts.rs`):
+
+- A task on Tauri's async runtime, started in `setup`, so startup never waits on the portal. A
+  host app first tells the portal its id (`org.freedesktop.host.portal.Registry`, the bundle
+  identifier), best effort: the registry is missing on older portals, and an app the portal
+  already identified from its `.desktop` file is refused harmlessly.
+- Availability is read at runtime: the interface's `version` property. No interface, no portal
+  service or no session bus means "unavailable", and Settings → Shortcuts keeps the commands of
+  D5. That is not an error and nothing is shown as one.
+- One session for the app's whole life, kept in managed state and independent of the window:
+  hiding it in the tray changes nothing. `BindShortcuts` registers one shortcut per entry of
+  `ACTION_ARGS`, with the argument without its dashes as the id (`save-replay`): the desktop
+  stores the user's keys under that id, so it never changes. Redline proposes no keys; the
+  desktop's dialog picks them.
+- `Activated` performs the action with the same code as a second launch
+  (`actions::dispatch`), without showing the window. `ShortcutsChanged` updates the bindings
+  Settings → Shortcuts shows (the `global-shortcuts` event).
+- `ConfigureShortcuts` (portal version 2) opens the desktop's own dialog to change the keys;
+  with version 1 the keys are changed in the desktop's settings.
+
+Rejected: talking to the portal through GIO (`extern "C"`, as `desktop.rs`): sessions, request
+objects, `Response` signals and signal subscriptions over raw GVariant pointers are much more
+unsafe code than two one-shot calls; X11 key grabs (out of scope for #65).
+
+`ashpd` is the only crate this decision approves.
 
 ## Open
 

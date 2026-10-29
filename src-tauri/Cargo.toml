@@ -23,6 +23,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+# D10: the GlobalShortcuts portal. Pinned; async-io, the zbus stack the lockfile already uses.
+ashpd = { version = "=0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 redline-core = { workspace = true }
 
 [workspace]
