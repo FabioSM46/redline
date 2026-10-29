@@ -263,9 +263,11 @@ fn fan_status(configurable: bool, stats: &DeviceStats) -> FanStatus {
     FanStatus {
         configurable,
         control_enabled: fan.control_enabled,
-        mode: fan.control_mode.map(|mode| match mode {
-            FanControlMode::Static => FanMode::Static,
-            FanControlMode::Curve => FanMode::Curve,
+        // A mode a later LACT adds is unknown here: `null`, not a failure.
+        mode: fan.control_mode.as_ref().and_then(|mode| match mode {
+            FanControlMode::Static => Some(FanMode::Static),
+            FanControlMode::Curve => Some(FanMode::Curve),
+            FanControlMode::Other(_) => None,
         }),
         static_speed: fan.static_speed.map(percent),
         curve: fan.curve.as_ref().map(|curve| {
@@ -575,9 +577,10 @@ mod tests {
             &setup.socket(),
             Box::new(|command, _| match command {
                 "system_info" => json!({ "version": VERIFIED_VERSION }),
-                "list_devices" => json!([{ "id": GPU_B }]),
+                // Values a later LACT might add: still readable, unknown ones are `null`.
+                "list_devices" => json!([{ "id": GPU_B, "device_type": "Virtual" }]),
                 "device_info" => json!({}),
-                "device_stats" => json!({ "fan": {}, "power": {} }),
+                "device_stats" => json!({ "fan": { "control_mode": "auto" }, "power": {} }),
                 _ => json!({ "error": "no profiles" }),
             }),
         );

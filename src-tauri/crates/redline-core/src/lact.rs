@@ -102,12 +102,54 @@ pub struct SystemInfo {
     pub amdgpu_params_configurator: Option<Value>,
 }
 
-/// LACT's `DeviceType`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DeviceType {
-    #[default]
-    Dedicated,
-    Integrated,
+/// An enum LACT sends as a string. A value a later LACT adds is kept by name in `Other` instead
+/// of failing the whole answer: a new LACT is a warning, never an outage.
+macro_rules! open_enum {
+    (
+        $(#[$meta:meta])*
+        $name:ident { $($(#[$vmeta:meta])* $variant:ident = $text:literal,)+ }
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        #[serde(from = "String", into = "String")]
+        pub enum $name {
+            $($(#[$vmeta])* $variant,)+
+            Other(String),
+        }
+
+        impl From<String> for $name {
+            fn from(name: String) -> Self {
+                match name.as_str() {
+                    $($text => $name::$variant,)+
+                    _ => $name::Other(name),
+                }
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(value: $name) -> Self {
+                match value {
+                    $($name::$variant => $text.into(),)+
+                    $name::Other(name) => name,
+                }
+            }
+        }
+    };
+}
+
+open_enum! {
+    /// LACT's `DeviceType`.
+    DeviceType {
+        Dedicated = "Dedicated",
+        Integrated = "Integrated",
+    }
+}
+
+impl Default for DeviceType {
+    /// LACT's own default when the field is missing.
+    fn default() -> Self {
+        DeviceType::Dedicated
+    }
 }
 
 /// One entry of `list_devices`.
@@ -137,41 +179,16 @@ pub fn find_device<'a>(
     devices.iter().find(|device| device.pci_slot() == pci_slot)
 }
 
-/// LACT's `DeviceFlag`. A flag a later LACT adds is kept by name instead of failing the answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "String", into = "String")]
-pub enum DeviceFlag {
-    /// LACT can drive the fan (on RDNA3+ only when the firmware fan curve is writable, which
-    /// needs overdrive).
-    ConfigurableFanControl,
-    DumpableVBios,
-    /// RDNA3 and later: the fan is driven through the power management firmware.
-    HasPmfw,
-    AutoFanThreshold,
-    Other(String),
-}
-
-impl From<String> for DeviceFlag {
-    fn from(name: String) -> Self {
-        match name.as_str() {
-            "ConfigurableFanControl" => DeviceFlag::ConfigurableFanControl,
-            "DumpableVBios" => DeviceFlag::DumpableVBios,
-            "HasPmfw" => DeviceFlag::HasPmfw,
-            "AutoFanThreshold" => DeviceFlag::AutoFanThreshold,
-            _ => DeviceFlag::Other(name),
-        }
-    }
-}
-
-impl From<DeviceFlag> for String {
-    fn from(flag: DeviceFlag) -> Self {
-        match flag {
-            DeviceFlag::ConfigurableFanControl => "ConfigurableFanControl".into(),
-            DeviceFlag::DumpableVBios => "DumpableVBios".into(),
-            DeviceFlag::HasPmfw => "HasPmfw".into(),
-            DeviceFlag::AutoFanThreshold => "AutoFanThreshold".into(),
-            DeviceFlag::Other(name) => name,
-        }
+open_enum! {
+    /// LACT's `DeviceFlag`.
+    DeviceFlag {
+        /// LACT can drive the fan (on RDNA3+ only when the firmware fan curve is writable, which
+        /// needs overdrive).
+        ConfigurableFanControl = "ConfigurableFanControl",
+        DumpableVBios = "DumpableVBios",
+        /// RDNA3 and later: the fan is driven through the power management firmware.
+        HasPmfw = "HasPmfw",
+        AutoFanThreshold = "AutoFanThreshold",
     }
 }
 
@@ -190,13 +207,19 @@ impl DeviceInfo {
     }
 }
 
-/// LACT's `FanControlMode`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FanControlMode {
-    Static,
-    #[default]
-    Curve,
+open_enum! {
+    /// LACT's `FanControlMode`.
+    FanControlMode {
+        Static = "static",
+        Curve = "curve",
+    }
+}
+
+impl Default for FanControlMode {
+    /// LACT's own default (`#[default] Curve`).
+    fn default() -> Self {
+        FanControlMode::Curve
+    }
 }
 
 /// Temperature (°C) → fan speed (0.0–1.0), as LACT stores a curve (`FanCurveMap`). JSON object
@@ -562,6 +585,29 @@ mod tests {
         assert!(!info.has(&DeviceFlag::ConfigurableFanControl));
         assert_eq!(info.flags[2], DeviceFlag::Other("SomethingNew".into()));
         assert_eq!(serde_json::to_value(&info.flags[1]).unwrap(), "HasPmfw");
+    }
+
+    #[test]
+    fn unknown_fan_modes_and_device_types_do_not_fail_the_answer() {
+        let stats: DeviceStats =
+            serde_json::from_value(json!({ "fan": { "control_mode": "auto" }, "power": {} }))
+                .unwrap();
+        assert_eq!(
+            stats.fan.control_mode,
+            Some(FanControlMode::Other("auto".into()))
+        );
+        let devices: Vec<DeviceListEntry> =
+            serde_json::from_value(json!([{ "id": "x-0000:0d:00.0", "device_type": "Virtual" }]))
+                .unwrap();
+        assert_eq!(devices[0].device_type, DeviceType::Other("Virtual".into()));
+        assert_eq!(
+            serde_json::to_value(FanControlMode::Static).unwrap(),
+            "static"
+        );
+        assert_eq!(
+            serde_json::to_value(DeviceType::Integrated).unwrap(),
+            "Integrated"
+        );
     }
 
     #[test]
