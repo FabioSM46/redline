@@ -1,16 +1,17 @@
 import { type ComponentType, useState } from "react";
 import "./App.css";
 import { GpuProvider, type GpuListState, useGpuList } from "./GpuContext.tsx";
+import { RecorderProvider } from "./RecorderContext.tsx";
 import { Home } from "./sections/Home.tsx";
 import { Performance } from "./sections/Performance.tsx";
 import { Record } from "./sections/Record.tsx";
 import { Settings } from "./sections/Settings.tsx";
 import { Mark, TopBar } from "./shell/TopBar.tsx";
 import { StatusBar } from "./shell/StatusBar.tsx";
-import type { TabId } from "./tabs.ts";
+import type { SectionProps, TabId } from "./tabs.ts";
 
 /** One component per tab: each section fills its own file without touching the shell. */
-const SECTIONS: { [Tab in TabId]: ComponentType } = {
+const SECTIONS: { [Tab in TabId]: ComponentType<SectionProps> } = {
   home: Home,
   performance: Performance,
   record: Record,
@@ -38,13 +39,15 @@ function App() {
   const Section = SECTIONS[tab];
   return (
     <GpuProvider value={gpus.value}>
-      <div className="shell">
-        <TopBar active={tab} onSelect={setTab} />
-        <main className="content">
-          <Section />
-        </main>
-        <StatusBar />
-      </div>
+      <RecorderProvider>
+        <div className="shell">
+          <TopBar active={tab} onSelect={setTab} />
+          <main className="content">
+            <Section navigate={setTab} />
+          </main>
+          <StatusBar />
+        </div>
+      </RecorderProvider>
     </GpuProvider>
   );
 }
