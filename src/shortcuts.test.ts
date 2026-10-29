@@ -136,10 +136,28 @@ describe("copyError", () => {
   });
 });
 
-describe("PORTAL_SHORTCUTS_EVENT", () => {
-  it("is STATUS_EVENT in global_shortcuts.rs", () => {
-    const source = readFileSync(GLOBAL_SHORTCUTS_RS, "utf8");
+describe("mirror of ShortcutsStatus in global_shortcuts.rs", () => {
+  const source = readFileSync(GLOBAL_SHORTCUTS_RS, "utf8");
+
+  it("listens to STATUS_EVENT", () => {
     assert.equal(source.includes(`pub const STATUS_EVENT: &str = "${PORTAL_SHORTCUTS_EVENT}";`), true);
+  });
+
+  it("reads the field names the backend serializes", () => {
+    for (const needle of [
+      '#[serde(tag = "state", rename_all = "snake_case")]',
+      "pub enum ShortcutsStatus {",
+      "    Checking,",
+      "    Unavailable,",
+      "        version: u32,",
+      "        can_configure: bool,",
+      "        bindings: Vec<Binding>,",
+      "    Failed { error: String },",
+      "    pub arg: &'static str,",
+      "    pub trigger: Option<String>,",
+    ]) {
+      assert.equal(source.includes(needle), true, needle);
+    }
   });
 });
 
@@ -177,6 +195,17 @@ describe("portalRows", () => {
       portalRows([]).every((r) => r.trigger === null),
       true,
     );
+  });
+
+  it("shows every action unbound when the payload has no bindings list", () => {
+    for (const bindings of [undefined, null]) {
+      const rows = portalRows(bindings);
+      assert.equal(rows.length, SHORTCUT_ACTIONS.length);
+      assert.equal(
+        rows.every((r) => r.trigger === null),
+        true,
+      );
+    }
   });
 
   it("trims the desktop's description", () => {

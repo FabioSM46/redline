@@ -33,7 +33,7 @@ export function Shortcuts() {
   if (portal.state === "ready") {
     return (
       <div className="settings">
-        <PortalShortcuts canConfigure={portal.can_configure} bindings={portal.bindings} />
+        <PortalKeyList canConfigure={portal.can_configure} bindings={portal.bindings} />
         <details className="settings-advanced">
           <summary>Commands to bind instead</summary>
           <div className="settings">
@@ -92,7 +92,7 @@ function usePortalShortcuts(): PortalShortcuts {
 }
 
 /** The keys the desktop reports, one row per action, and the way to change them. */
-function PortalShortcuts({ canConfigure, bindings }: { canConfigure: boolean; bindings: PortalShortcutsBindings }) {
+function PortalKeyList({ canConfigure, bindings }: { canConfigure: boolean; bindings: PortalShortcutsBindings }) {
   const [configure, setConfigure] = useState<ConfigureState>({ status: "idle" });
 
   function onConfigure() {
