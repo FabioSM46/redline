@@ -19,6 +19,8 @@ const FALLBACK_HEIGHT = 180;
 
 function readPalette(): ChartPalette {
   const style = getComputedStyle(document.documentElement);
+  // The body's family: it reflects a declaration on <body> and inherits one made on :root.
+  const fontFamily = getComputedStyle(document.body).fontFamily;
   const token = (name: string) => style.getPropertyValue(name).trim();
   const height = Number.parseFloat(token("--chart-height"));
   return {
@@ -26,7 +28,7 @@ function readPalette(): ChartPalette {
     secondary: token("--chart-secondary"),
     axis: token("--muted"),
     grid: token("--chart-grid"),
-    font: `${token("--text-sm")} ${style.fontFamily}`,
+    font: `${token("--text-sm")} ${fontFamily}`,
     height: Number.isFinite(height) && height > 0 ? height : FALLBACK_HEIGHT,
   };
 }

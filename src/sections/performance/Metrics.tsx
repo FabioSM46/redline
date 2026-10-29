@@ -11,6 +11,7 @@ type HistoryState = { status: "error"; message: string } | { status: "ok"; sampl
 type StoredHistory = { gpuId: string; windowS: WindowS; state: HistoryState };
 
 const REFRESH_MS = 1000;
+const REQUEST_TIMEOUT_MS = 5 * REFRESH_MS;
 
 /** Charts over time of the selected GPU, from `gpu_history`, refreshed every second. */
 export function Metrics() {
@@ -27,10 +28,17 @@ export function Metrics() {
     const read = () => {
       if (inFlight) return;
       inFlight = true;
-      invoke<HistorySample[]>("gpu_history", { gpuId, windowS })
+      // A request that never settles must not stop the polling for good: past the timeout it
+      // becomes an error on screen and the next tick asks again. Its late reply is ignored.
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const expired = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("gpu_history did not answer in time")), REQUEST_TIMEOUT_MS);
+      });
+      Promise.race([invoke<HistorySample[]>("gpu_history", { gpuId, windowS }), expired])
         .then((samples) => current && setStored({ gpuId, windowS, state: { status: "ok", samples } }))
         .catch((e) => current && setStored({ gpuId, windowS, state: { status: "error", message: String(e) } }))
         .finally(() => {
+          clearTimeout(timeout);
           inFlight = false;
         });
     };
