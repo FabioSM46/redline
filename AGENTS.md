@@ -50,8 +50,11 @@ frontend a path to open or a command to run is a bug even when it "works".
 - **Every tuning change is confirmed.** `lactd` applies the change as pending: the app must ask
   the user for confirmation and send `confirm` or `revert` (`confirm_pending_config`).
   An interface that confirms on its own, without the user seeing the result, is a bug.
-- **Undervolting and overclocking** require the `amdgpu.ppfeaturemask` kernel parameter: the app
-  explains it, it does not set it.
+- **Overdrive** (the `amdgpu.ppfeaturemask` kernel parameter, needed by the RDNA3/4 fan curve,
+  overclocking and undervolting): the app explains it and, only after the user has confirmed a
+  plan that shows what will change and that a reboot is needed, may ask `lactd` to enable or
+  disable it (`enable_overdrive` / `disable_overdrive`, D11). Redline never edits kernel
+  parameters, boot files or the initramfs itself, and never reboots the machine.
 - **GPU Screen Recorder is GPL-3.0**: it is used only as an external process (options, signals,
   stdout, IPC). Never copy or adapt its code. LACT is MIT.
 - **A missing tool is a disabled feature, not an error.** Without `lactd` tuning is disabled and

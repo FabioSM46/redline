@@ -23,6 +23,8 @@
 //! | `list_profiles` | `{ include_state: false }` | [`ProfilesInfo`] |
 //! | `set_power_cap` | `{ id, cap }` (`cap: null` = default) | seconds until lactd reverts |
 //! | `confirm_pending_config` | `{ command: "confirm" \| "revert" }` | — |
+//! | `enable_overdrive` | — | — (an empty string) |
+//! | `disable_overdrive` | — | — (an empty string) |
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -39,6 +41,9 @@ pub const DEFAULT_SOCKET: &str = "/run/lactd.sock";
 pub const VERIFIED_VERSION: &str = "0.10.1";
 /// How long a request may wait for the socket, in each direction.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long `enable_overdrive` and `disable_overdrive` may wait for the answer: lactd answers
+/// only after regenerating the initramfs, which takes minutes with `dracut --regenerate-all`.
+pub const OVERDRIVE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Why a request to `lactd` failed. The first three are about reaching the socket, and each has
 /// a different fix; the others mean `lactd` was reached.
@@ -100,8 +105,35 @@ pub struct SystemInfo {
     /// Whether the `amdgpu.ppfeaturemask` overdrive bit is set; `None` when LACT cannot tell.
     pub amdgpu_overdrive_enabled: Option<bool>,
     /// How LACT would enable overdrive on this system, as LACT sends it (for example
-    /// `{"Modprobe": "Debian"}`). Kept untyped: only the overdrive issue reads it.
+    /// `{"Modprobe": "Debian"}`); `None` when LACT cannot set kernel parameters here (NixOS, or
+    /// an unreadable `/etc/os-release`). Kept untyped so that a configurator a later LACT adds
+    /// does not fail the whole answer: read it with [`params_configurator`](Self::params_configurator).
     pub amdgpu_params_configurator: Option<Value>,
+}
+
+impl SystemInfo {
+    /// [`amdgpu_params_configurator`](Self::amdgpu_params_configurator), typed. `None` when LACT
+    /// cannot set kernel parameters on this system.
+    pub fn params_configurator(&self) -> Option<ParamsConfigurator> {
+        let value = self.amdgpu_params_configurator.as_ref()?;
+        if value.is_null() {
+            return None;
+        }
+        let unknown = || ParamsConfigurator::Other(value.to_string());
+        if let Some(initramfs) = value.get("Modprobe") {
+            return Some(match initramfs {
+                Value::Null => ParamsConfigurator::Modprobe(None),
+                Value::String(name) => {
+                    ParamsConfigurator::Modprobe(Some(InitramfsType::from(name.clone())))
+                }
+                _ => unknown(),
+            });
+        }
+        Some(match value.get("BootArg").and_then(Value::as_str) {
+            Some("RpmOstree") => ParamsConfigurator::RpmOstree,
+            _ => unknown(),
+        })
+    }
 }
 
 /// An enum LACT sends as a string. A value a later LACT adds is kept by name in `Other` instead
@@ -347,11 +379,53 @@ pub struct ProfilesInfo {
     pub auto_switch: bool,
 }
 
+/// How lactd 0.10.1 sets `amdgpu.ppfeaturemask` (`AmdgpuParamsConfigurator` in lact-schema,
+/// `enable_overdrive` / `disable_overdrive` in `lact-daemon/src/system.rs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParamsConfigurator {
+    /// Writes (or, to disable, removes) `/etc/modprobe.d/99-amdgpu-overdrive.conf`, then
+    /// regenerates the initramfs with the given tool; `None` = no initramfs to regenerate.
+    Modprobe(Option<InitramfsType>),
+    /// Adds (or removes) `amdgpu.ppfeaturemask` in the kernel arguments with `rpm-ostree kargs`
+    /// (Fedora Atomic).
+    RpmOstree,
+    /// A configurator this client does not know, as LACT sent it.
+    Other(String),
+}
+
+/// The file lactd 0.10.1 writes to enable overdrive with [`ParamsConfigurator::Modprobe`].
+pub const OVERDRIVE_MODPROBE_FILE: &str = "/etc/modprobe.d/99-amdgpu-overdrive.conf";
+
+open_enum! {
+    /// LACT's `InitramfsType`: which tool regenerates the initramfs.
+    InitramfsType {
+        /// `update-initramfs -u` (Debian, Ubuntu).
+        Debian = "Debian",
+        /// `mkinitcpio -P` (Arch).
+        Mkinitcpio = "Mkinitcpio",
+        /// `dracut --regenerate-all --force` (Fedora).
+        Dracut = "Dracut",
+    }
+}
+
+impl InitramfsType {
+    /// The command lactd runs, or `None` for a type this client does not know.
+    pub fn command(&self) -> Option<&'static str> {
+        match self {
+            InitramfsType::Debian => Some("update-initramfs -u"),
+            InitramfsType::Mkinitcpio => Some("mkinitcpio -P"),
+            InitramfsType::Dracut => Some("dracut --regenerate-all --force"),
+            InitramfsType::Other(_) => None,
+        }
+    }
+}
+
 // ---- Client ----
 
 pub struct LactClient {
     socket: PathBuf,
     timeout: Duration,
+    overdrive_timeout: Duration,
 }
 
 impl Default for LactClient {
@@ -365,6 +439,7 @@ impl LactClient {
         Self {
             socket: socket.into(),
             timeout: DEFAULT_TIMEOUT,
+            overdrive_timeout: OVERDRIVE_TIMEOUT,
         }
     }
 
@@ -374,9 +449,24 @@ impl LactClient {
         self
     }
 
+    /// The same client with another timeout for the overdrive requests (tests use a short one).
+    pub fn with_overdrive_timeout(mut self, timeout: Duration) -> Self {
+        self.overdrive_timeout = timeout;
+        self
+    }
+
     /// Sends a command and returns the `data` field of the response. One connection per
     /// request, as LACT's own CLI does.
     pub fn request(&self, command: &str, args: Option<Value>) -> LactResult<Value> {
+        self.request_within(command, args, self.timeout)
+    }
+
+    fn request_within(
+        &self,
+        command: &str,
+        args: Option<Value>,
+        timeout: Duration,
+    ) -> LactResult<Value> {
         let mut req = json!({ "command": command });
         if let Some(args) = args {
             req["args"] = args;
@@ -384,10 +474,10 @@ impl LactClient {
 
         let mut stream = UnixStream::connect(&self.socket).map_err(LactError::connecting)?;
         stream
-            .set_read_timeout(Some(self.timeout))
+            .set_read_timeout(Some(timeout))
             .map_err(LactError::Io)?;
         stream
-            .set_write_timeout(Some(self.timeout))
+            .set_write_timeout(Some(timeout))
             .map_err(LactError::Io)?;
 
         let mut line = serde_json::to_vec(&req).map_err(|e| LactError::Protocol(e.to_string()))?;
@@ -463,6 +553,29 @@ impl LactClient {
             Some(json!({ "command": command })),
         )
         .map(|_| ())
+    }
+
+    /// `enable_overdrive`: lactd (root) sets the overdrive bit of `amdgpu.ppfeaturemask` in the
+    /// boot configuration, as [`SystemInfo::params_configurator`] says, and regenerates the
+    /// initramfs. It takes effect after a reboot. Not a pending change: there is nothing to
+    /// confirm with lactd, so the caller asks the user **before** sending it.
+    ///
+    /// Waits up to the overdrive timeout ([`OVERDRIVE_TIMEOUT`] by default). lactd 0.10.1
+    /// refuses with "Overdrive support was already toggled - please reboot to apply the
+    /// changes" after any enable or disable since it started, and with "Overdrive mask already
+    /// enabled" when the running kernel already has the bit.
+    pub fn enable_overdrive(&self) -> LactResult<()> {
+        self.request_within("enable_overdrive", None, self.overdrive_timeout)
+            .map(|_| ())
+    }
+
+    /// `disable_overdrive`: undoes [`enable_overdrive`](Self::enable_overdrive) (removes the
+    /// modprobe file and regenerates the initramfs, or removes the kernel argument). lactd
+    /// 0.10.1 refuses with "Overclocking was not enabled through LACT (…)" when the modprobe
+    /// file is missing, and with the same "already toggled" message as enabling.
+    pub fn disable_overdrive(&self) -> LactResult<()> {
+        self.request_within("disable_overdrive", None, self.overdrive_timeout)
+            .map(|_| ())
     }
 }
 
@@ -734,6 +847,98 @@ mod tests {
             server.join().unwrap(),
             json!({ "command": "confirm_pending_config", "args": { "command": "revert" } })
         );
+    }
+
+    #[test]
+    fn overdrive_requests_have_no_arguments_and_their_own_timeout() {
+        let dir = temp("overdrive");
+        let socket = dir.0.join("lactd.sock");
+        // The ordinary timeout is far too short for the answer below: the overdrive one is used.
+        let client = LactClient::new(&socket)
+            .with_timeout(Duration::from_millis(50))
+            .with_overdrive_timeout(Duration::from_secs(2));
+        for (command, call) in [
+            (
+                "enable_overdrive",
+                LactClient::enable_overdrive as fn(&LactClient) -> _,
+            ),
+            ("disable_overdrive", LactClient::disable_overdrive),
+        ] {
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server = thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(stream.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                // lactd answers only once the initramfs is regenerated.
+                thread::sleep(Duration::from_millis(200));
+                let mut stream = stream;
+                writeln!(stream, r#"{{"status":"ok","data":""}}"#).unwrap();
+                serde_json::from_str::<Value>(&line).unwrap()
+            });
+            call(&client).unwrap();
+            assert_eq!(server.join().unwrap(), json!({ "command": command }));
+            std::fs::remove_file(&socket).unwrap();
+        }
+
+        // A refusal is lactd's own message.
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"error","data":{"description":"Overdrive mask already enabled","source":null}}"#,
+        );
+        assert!(matches!(
+            client.enable_overdrive(),
+            Err(LactError::Daemon(m)) if m == "Overdrive mask already enabled"
+        ));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn reads_how_lact_sets_the_kernel_parameter() {
+        let configurator = |value: Value| {
+            serde_json::from_value::<SystemInfo>(json!({
+                "version": "0.10.1", "amdgpu_params_configurator": value
+            }))
+            .unwrap()
+            .params_configurator()
+        };
+        assert_eq!(
+            configurator(json!({ "Modprobe": "Debian" })),
+            Some(ParamsConfigurator::Modprobe(Some(InitramfsType::Debian)))
+        );
+        assert_eq!(
+            configurator(json!({ "Modprobe": "Dracut" })),
+            Some(ParamsConfigurator::Modprobe(Some(InitramfsType::Dracut)))
+        );
+        assert_eq!(
+            configurator(json!({ "Modprobe": null })),
+            Some(ParamsConfigurator::Modprobe(None))
+        );
+        assert_eq!(
+            configurator(json!({ "BootArg": "RpmOstree" })),
+            Some(ParamsConfigurator::RpmOstree)
+        );
+        // NixOS, or an unreadable os-release: LACT cannot set it.
+        assert_eq!(configurator(Value::Null), None);
+        let info: SystemInfo = serde_json::from_str(r#"{"version":"0.10.1"}"#).unwrap();
+        assert_eq!(info.params_configurator(), None);
+        // What a later LACT may add is kept, not a failure.
+        assert_eq!(
+            configurator(json!({ "Modprobe": "Booster" })),
+            Some(ParamsConfigurator::Modprobe(Some(InitramfsType::Other(
+                "Booster".into()
+            ))))
+        );
+        assert_eq!(InitramfsType::Other("Booster".into()).command(), None);
+        assert_eq!(
+            configurator(json!({ "BootArg": "Grubby" })),
+            Some(ParamsConfigurator::Other(r#"{"BootArg":"Grubby"}"#.into()))
+        );
+        assert!(matches!(
+            configurator(json!("Systemd")),
+            Some(ParamsConfigurator::Other(_))
+        ));
     }
 
     #[test]
