@@ -1,5 +1,6 @@
 mod actions;
 mod autostart;
+mod dependencies;
 mod desktop;
 mod gallery;
 mod global_shortcuts;
@@ -88,6 +89,7 @@ pub fn run() {
             global_shortcuts::global_shortcuts_status,
             global_shortcuts::global_shortcuts_configure,
             tuning::tuning_status,
+            dependencies::dependency_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
