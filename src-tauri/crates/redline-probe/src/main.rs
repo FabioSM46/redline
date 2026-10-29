@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 #[derive(Parser)]
 #[command(about = "Redline integration probes")]
@@ -59,6 +59,18 @@ enum Cmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// A regular recording without the replay, into one file: [q] stop
+    Record {
+        #[arg(long, default_value_t = 60)]
+        fps: u32,
+        #[arg(long, default_value = "portal")]
+        capture: String,
+        /// One track per value; use `|` to mix several sources into the same track
+        #[arg(long = "track", default_values_t = ["default_output".to_string(), "default_input".to_string()])]
+        tracks: Vec<String>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
     /// List the (video/audio) streams of a file with ffprobe
     Tracks { file: PathBuf },
     /// Preview of a video: desktop thumbnail cache, then ffmpegthumbnailer or ffmpeg on PATH
@@ -89,6 +101,12 @@ fn main() -> Result<()> {
             tracks,
             out,
         } => replay(seconds, fps, capture, tracks, out),
+        Cmd::Record {
+            fps,
+            capture,
+            tracks,
+            out,
+        } => record(fps, capture, tracks, out),
         Cmd::Tracks { file } => tracks(&file),
         Cmd::Thumbnail {
             file,
@@ -188,17 +206,17 @@ fn audio() -> Result<()> {
     Ok(())
 }
 
-fn replay(
+fn probe_config(
     seconds: u32,
     fps: u32,
     capture: String,
-    tracks: Vec<String>,
+    tracks: &[String],
     out: Option<PathBuf>,
-) -> Result<()> {
+) -> ReplayConfig {
     let base = out.unwrap_or_else(|| {
         PathBuf::from(std::env::var("HOME").unwrap_or_default()).join("Videos/Redline")
     });
-    let config = ReplayConfig {
+    ReplayConfig {
         capture,
         portal_token: None,
         fps,
@@ -212,29 +230,30 @@ fn replay(
             .iter()
             .map(|t| AudioTrack(t.split('|').map(str::to_owned).collect()))
             .collect(),
-    };
+    }
+}
 
+/// GPU Screen Recorder, with a notice when it is not the verified version.
+fn probe_launcher() -> Result<Launcher> {
     let launcher = Launcher::detect()?;
     let version = launcher.version().ok();
     if let Some(notice) = recorder::version_notice(version.as_deref()) {
         eprintln!("{notice}");
     }
-    // The IPC socket lives in the user's runtime folder, as in the app.
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    let socket = runtime
-        .join("redline-probe")
-        .join(format!("gsr-{}.sock", std::process::id()));
-    eprintln!("Starting gsr ({launcher:?}), buffer {seconds}s, audio tracks: {tracks:?}");
-    let (saved_tx, saved) = mpsc::channel();
-    let mut session = ReplaySession::start(&launcher, &config, &socket, move |output| {
-        let _ = saved_tx.send(output);
-    })?;
-    let mut ready = session.ready_probe();
-    let mut announced = false;
-    eprintln!("Commands: [s]+Enter save replay, [r]+Enter start/stop recording, [q]+Enter quit");
+    Ok(launcher)
+}
 
+/// The IPC socket lives in the user's runtime folder, as in the app.
+fn probe_socket() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("redline-probe")
+        .join(format!("gsr-{}.sock", std::process::id()))
+}
+
+/// Lines typed on stdin, trimmed, on a channel.
+fn stdin_lines() -> mpsc::Receiver<String> {
     let (tx, keys) = mpsc::channel();
     thread::spawn(move || {
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
@@ -243,6 +262,29 @@ fn replay(
             }
         }
     });
+    keys
+}
+
+fn replay(
+    seconds: u32,
+    fps: u32,
+    capture: String,
+    tracks: Vec<String>,
+    out: Option<PathBuf>,
+) -> Result<()> {
+    let config = probe_config(seconds, fps, capture, &tracks, out);
+    let launcher = probe_launcher()?;
+    let socket = probe_socket();
+    eprintln!("Starting gsr ({launcher:?}), buffer {seconds}s, audio tracks: {tracks:?}");
+    let (saved_tx, saved) = mpsc::channel();
+    let mut session = ReplaySession::start(&launcher, &config, &socket, move |output| {
+        let _ = saved_tx.send(output);
+    })?;
+    let mut ready = session.ready_probe();
+    let mut announced = false;
+    let mut recording = false;
+    eprintln!("Commands: [s]+Enter save replay, [r]+Enter start/stop recording, [q]+Enter quit");
+    let keys = stdin_lines();
 
     loop {
         while let Ok(output) = saved.try_recv() {
@@ -264,9 +306,18 @@ fn replay(
                 Ok(path) => eprintln!("save confirmed: {}", path.display()),
                 Err(error) => eprintln!("save failed: {error}"),
             },
+            Ok(k) if k == "r" && !recording => match session.start_replay_recording() {
+                Ok(()) => {
+                    eprintln!("recording requested");
+                    recording = true;
+                }
+                Err(error) => eprintln!("recording start failed: {error}"),
+            },
             Ok(k) if k == "r" => {
-                if let Err(error) = session.toggle_recording() {
-                    eprintln!("recording toggle failed: {error}");
+                recording = false;
+                match session.stop_replay_recording(Duration::from_secs(30)) {
+                    Ok(path) => eprintln!("recording saved: {}", path.display()),
+                    Err(error) => eprintln!("recording stop failed: {error}"),
                 }
             }
             Ok(k) if k == "q" => break,
@@ -282,6 +333,56 @@ fn replay(
     let status = session.stop()?;
     eprintln!("gsr stopped ({status})");
     // gsr may write the last path while it shuts down
+    while let Ok(output) = saved.recv_timeout(Duration::from_millis(500)) {
+        print_output(&output);
+    }
+    Ok(())
+}
+
+fn record(fps: u32, capture: String, tracks: Vec<String>, out: Option<PathBuf>) -> Result<()> {
+    let config = probe_config(60, fps, capture, &tracks, out);
+    let launcher = probe_launcher()?;
+    let socket = probe_socket();
+    let file =
+        recorder::recording_file(&config.recording_dir, &config.container, SystemTime::now());
+    eprintln!("Recording into {} ({launcher:?})", file.display());
+    let (saved_tx, saved) = mpsc::channel();
+    let mut session =
+        ReplaySession::start_recording(&launcher, &config, &file, &socket, move |output| {
+            let _ = saved_tx.send(output);
+        })?;
+    let mut ready = session.ready_probe();
+    let mut announced = false;
+    eprintln!("Commands: [q]+Enter stop");
+    let keys = stdin_lines();
+    loop {
+        if !announced && ready.poll() {
+            eprintln!("capture running");
+            announced = true;
+        }
+        if let Some(status) = session.try_exit()? {
+            eprintln!("gsr has exited ({status})");
+            if let Some(error) = session.last_error() {
+                eprintln!("last error: {error}");
+            }
+            break;
+        }
+        match keys.recv_timeout(Duration::from_millis(200)) {
+            Ok(k) if k == "q" => {
+                let status = session.stop()?;
+                eprintln!("gsr stopped ({status})");
+                break;
+            }
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                eprintln!("stdin closed: stopping gsr");
+                let status = session.stop()?;
+                eprintln!("gsr stopped ({status})");
+                break;
+            }
+        }
+    }
+    // gsr prints the file's path while it shuts down
     while let Ok(output) = saved.recv_timeout(Duration::from_millis(500)) {
         print_output(&output);
     }

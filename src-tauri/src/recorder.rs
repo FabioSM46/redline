@@ -13,23 +13,33 @@
 //! for a screen) → `on` (gsr answers on its IPC socket, which it serves only once capture runs).
 //! Any exit we did not ask for → `error`; stopping → `off`.
 //!
+//! Regular recordings ([`Recorder::toggle_recording`], `recording` in the status) run in one of
+//! two ways, and there is never more than one gsr process ([`ServiceState::running`]):
+//! - replay on: the replay process records into `recording_dir` (`start-replay-recording` /
+//!   `stop-replay-recording` over its IPC socket);
+//! - replay off (or in error): a separate gsr process records one file into `recording_dir` and
+//!   is stopped like the replay (SIGINT to our own gsr). The replay cannot start while it runs.
+//!
+//! Stopping the replay, a settings change that restarts it, and quitting all stop the process
+//! with SIGINT, which finishes the recording and keeps the file (gsr prints its path, so
+//! `file-saved` follows).
+//!
 //! Extension points for the issues built on this one:
 //! - settings (#29, done): [`Environment::config`] is the single source of the [`ReplayConfig`],
 //!   built from `settings::RecordingSettings`; [`settings_changed`] restarts a running replay.
-//! - recording (#30): [`RecorderStatus::recording`] and [`FileKind::Recording`] exist already;
-//!   requests to the running process go through its IPC socket ([`Running::socket`]), stopping
-//!   through [`Recorder::stop`].
 //! - gallery and notifications (#31): subscribe to [`Events::file_saved`]; the folders come from
 //!   `settings::recording_settings`.
-//! - command-line actions (#32): call [`Recorder::start`], [`Recorder::stop`], [`Recorder::save`]
-//!   from the single-instance callback, as the commands do.
+//! - command-line actions (#32): call [`Recorder::start`], [`Recorder::stop`], [`Recorder::save`],
+//!   [`Recorder::toggle_recording`] from the single-instance callback, as the commands do.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use redline_core::recorder::{self, Launcher, Output, ReadyProbe, ReplayConfig, ReplaySession};
+use redline_core::recorder::{
+    self, Launcher, Mode, Output, ReadyProbe, ReplayConfig, ReplaySession,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
@@ -48,6 +58,10 @@ const NOT_RUNNING: &str = "The replay is off: start it first.";
 const STILL_STARTING: &str =
     "The replay is still starting: GPU Screen Recorder is waiting for the screen to capture.";
 const NO_VIDEO_FOLDER: &str = "No video folder to save replays in.";
+const RECORDING_RUNS: &str =
+    "A recording is running without the replay: stop it before starting the replay.";
+/// gsr's stdout lines (6.1.6) for a regular recording that did not start or was not saved.
+const GSR_RECORDING_FAILURES: [&str; 2] = ["Failed to start recording", "Failed to save recording"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,7 +80,9 @@ pub struct RecorderStatus {
     /// When not available: what to install.
     pub unavailable_reason: Option<String>,
     pub replay: ReplayState,
-    /// A regular recording is running (#30).
+    /// A regular recording is running: in the replay process, or in its own process when the
+    /// replay is off. With the portal it is true from the start, while the desktop asks for the
+    /// screen.
     pub recording: bool,
     /// The replay length: of the running replay, otherwise of the next one.
     pub replay_seconds: u32,
@@ -155,11 +171,20 @@ pub struct Environment {
 struct Running {
     session: ReplaySession,
     socket: PathBuf,
+    /// The replay, or a recording without the replay.
+    mode: Mode,
+}
+
+impl Running {
+    fn is_replay(&self) -> bool {
+        self.mode == Mode::Replay
+    }
 }
 
 struct ServiceState {
     availability: Option<Availability>,
     status: RecorderStatus,
+    /// The only gsr process: the replay or a recording without it, never both.
     running: Option<Running>,
     /// Bumped by every start and stop: a thread of an older session finds a different value and
     /// leaves the state alone.
@@ -235,19 +260,14 @@ impl Recorder {
 
     /// [`Recorder::start`] with `control` already held.
     fn start_locked(&self) -> Result<RecorderStatus, String> {
-        if self.state().running.is_some() {
-            return Ok(self.state().status.clone());
-        }
-        // Detected again when missing: installing it does not require a restart.
         // Bound first: a guard in the match scrutinee would live through the arms.
-        let known = self.state().availability.clone();
-        let launcher = match known {
-            Some(Availability::Ready { launcher, .. }) => launcher,
-            _ => match self.refresh_availability() {
-                Availability::Ready { launcher, .. } => launcher,
-                Availability::Missing(reason) => return Err(reason),
-            },
-        };
+        let running = self.state().running.as_ref().map(Running::is_replay);
+        match running {
+            Some(true) => return Ok(self.state().status.clone()),
+            Some(false) => return Err(RECORDING_RUNS.to_owned()),
+            None => {}
+        }
+        let launcher = self.launcher_locked()?;
         let config = (self.inner.env.config)().map_err(|error| self.fail(error))?;
         let socket = self
             .inner
@@ -278,6 +298,7 @@ impl Recorder {
         state.running = Some(Running {
             session,
             socket: socket.clone(),
+            mode: Mode::Replay,
         });
         let status = state.status.clone();
         drop(state);
@@ -292,15 +313,20 @@ impl Recorder {
         self.stop_locked()
     }
 
-    /// [`Recorder::stop`] with `control` already held. A running session is always stopped,
+    /// [`Recorder::stop`] with `control` already held. A running replay is always stopped,
     /// whatever the last detection said: stopping needs only our own process tree, not the
-    /// binary. With nothing running, a missing GPU Screen Recorder is the answer.
+    /// binary; a recording in it ends and is kept. With nothing running, a missing GPU Screen
+    /// Recorder is the answer. A recording without the replay is left alone.
     fn stop_locked(&self) -> Result<RecorderStatus, String> {
         let mut state = self.state();
-        if state.running.is_none() {
-            drop(state);
-            self.ensure_available()?;
-            state = self.state();
+        match state.running.as_ref().map(Running::is_replay) {
+            Some(false) => return Ok(state.status.clone()),
+            Some(true) => {}
+            None => {
+                drop(state);
+                self.ensure_available()?;
+                state = self.state();
+            }
         }
         state.generation += 1;
         let running = state.running.take();
@@ -331,8 +357,10 @@ impl Recorder {
             let state = self.state();
             match (&state.running, state.status.replay) {
                 (Some(running), ReplayState::On) => running.socket.clone(),
-                (Some(_), _) => return Err(STILL_STARTING.to_owned()),
-                (None, _) => return Err(NOT_RUNNING.to_owned()),
+                (Some(running), _) if running.is_replay() => {
+                    return Err(STILL_STARTING.to_owned());
+                }
+                _ => return Err(NOT_RUNNING.to_owned()),
             }
         };
         recorder::save_replay(&socket, SAVE_TIMEOUT)
@@ -344,7 +372,12 @@ impl Recorder {
     /// the status shows the length of the next replay.
     pub fn reconfigure(&self) -> Result<RecorderStatus, String> {
         let _control = lock(&self.inner.control);
-        if self.state().running.is_some() {
+        if self
+            .state()
+            .running
+            .as_ref()
+            .is_some_and(Running::is_replay)
+        {
             self.stop_locked()?;
             return self.start_locked();
         }
@@ -366,6 +399,13 @@ impl Recorder {
     /// install when it is missing.
     pub fn launcher(&self) -> Result<Launcher, String> {
         let _control = lock(&self.inner.control);
+        self.launcher_locked()
+    }
+
+    /// [`Recorder::launcher`] with `control` already held. Detected again when missing:
+    /// installing it does not require a restart.
+    fn launcher_locked(&self) -> Result<Launcher, String> {
+        // Bound first: a guard in the match scrutinee would live through the arms.
         let known = self.state().availability.clone();
         match known {
             Some(Availability::Ready { launcher, .. }) => Ok(launcher),
@@ -376,12 +416,125 @@ impl Recorder {
         }
     }
 
-    /// Stops the replay when the app exits.
+    /// Starts a regular recording, or stops the one running; the returned status says which.
+    /// With the replay on, the replay process records; with the replay off (or in error), a
+    /// separate process does. Fails with the sentence that says what to install when GPU Screen
+    /// Recorder is missing, and while the replay is still starting.
+    pub fn toggle_recording(&self) -> Result<RecorderStatus, String> {
+        let _control = lock(&self.inner.control);
+        let state = self.state();
+        let recording = state.status.recording;
+        let replay = state.status.replay;
+        let running = state
+            .running
+            .as_ref()
+            .map(|running| (running.is_replay(), running.socket.clone()));
+        drop(state);
+        match (running, recording) {
+            (Some((false, _)), _) => self.stop_recording_process(),
+            (Some((true, socket)), true) => self.stop_replay_recording(&socket),
+            (Some((true, _)), false) if replay != ReplayState::On => Err(STILL_STARTING.to_owned()),
+            (Some((true, socket)), false) => self.start_replay_recording(&socket),
+            (None, _) => self.start_recording_process(),
+        }
+    }
+
+    /// Asks the replay process to record; gsr reports a failure later on stdout.
+    fn start_replay_recording(&self, socket: &Path) -> Result<RecorderStatus, String> {
+        recorder::start_replay_recording(socket)
+            .map_err(|error| format!("Could not start the recording: {error:#}"))?;
+        Ok(self.set_recording(true, None))
+    }
+
+    /// Asks the replay process to stop recording; returns once the file is written. A refusal
+    /// (no recording was running after all) also ends the `recording` state.
+    fn stop_replay_recording(&self, socket: &Path) -> Result<RecorderStatus, String> {
+        match recorder::stop_replay_recording(socket, SAVE_TIMEOUT) {
+            Ok(_) => Ok(self.set_recording(false, None)),
+            Err(error) => {
+                let error = format!("Could not stop the recording: {error:#}");
+                self.set_recording(false, Some(error.clone()));
+                Err(error)
+            }
+        }
+    }
+
+    /// Starts gsr recording one file into `recording_dir`, without the replay.
+    fn start_recording_process(&self) -> Result<RecorderStatus, String> {
+        let launcher = self.launcher_locked()?;
+        let fail = |error: String| {
+            self.set_recording(false, Some(error.clone()));
+            error
+        };
+        let config = (self.inner.env.config)().map_err(fail)?;
+        let socket = self.inner.env.socket.clone().map_err(fail)?;
+        let file =
+            recorder::recording_file(&config.recording_dir, &config.container, SystemTime::now());
+
+        let mut state = self.state();
+        state.generation += 1;
+        let generation = state.generation;
+        drop(state);
+        let output = self.output_handler(generation, &config);
+        let session = ReplaySession::start_recording(&launcher, &config, &file, &socket, output)
+            .map_err(|error| fail(format!("Could not start the recording: {error:#}")))?;
+        let mut state = self.state();
+        state.running = Some(Running {
+            session,
+            socket: socket.clone(),
+            mode: Mode::Recording(file),
+        });
+        // A previous replay error is acknowledged by this action, as by a new start.
+        if state.status.replay == ReplayState::Error {
+            state.status.replay = ReplayState::Off;
+        }
+        drop(state);
+        let status = self.set_recording(true, None);
+        self.supervise(generation, socket);
+        Ok(status)
+    }
+
+    /// Stops the recording process (SIGINT): gsr closes the file and prints its path.
+    fn stop_recording_process(&self) -> Result<RecorderStatus, String> {
+        let mut state = self.state();
+        state.generation += 1;
+        let running = state.running.take();
+        drop(state);
+        let error = match running.map(|mut running| running.session.stop()) {
+            Some(Err(error)) => Some(format!("Could not stop the recording: {error:#}")),
+            _ => None,
+        };
+        let status = self.set_recording(false, error);
+        match &status.error {
+            Some(error) => Err(error.clone()),
+            None => Ok(status),
+        }
+    }
+
+    /// Sets `recording` and `error`, and publishes the status.
+    fn set_recording(&self, recording: bool, error: Option<String>) -> RecorderStatus {
+        let mut state = self.state();
+        state.status.recording = recording;
+        state.status.error = error;
+        let status = state.status.clone();
+        drop(state);
+        self.inner.events.state(&status);
+        status
+    }
+
+    /// Stops whatever runs when the app exits; a recording in progress is finished and kept.
     pub fn shutdown(&self) {
         // Under `control`: a start in flight finishes first and its session is stopped too.
         let _control = lock(&self.inner.control);
-        if self.state().running.is_some() {
-            let _ = self.stop_locked();
+        let running = self.state().running.as_ref().map(Running::is_replay);
+        match running {
+            Some(true) => {
+                let _ = self.stop_locked();
+            }
+            Some(false) => {
+                let _ = self.stop_recording_process();
+            }
+            None => {}
         }
     }
 
@@ -454,6 +607,9 @@ impl Recorder {
                 if state.generation != generation {
                     return;
                 }
+                if GSR_RECORDING_FAILURES.contains(&message.as_str()) {
+                    state.status.recording = false;
+                }
                 state.status.error = Some(format!("GPU Screen Recorder: {message}"));
                 let status = state.status.clone();
                 drop(state);
@@ -467,9 +623,14 @@ impl Recorder {
     fn supervise(&self, generation: u64, socket: PathBuf) {
         let inner = Arc::clone(&self.inner);
         let spawned = thread::Builder::new()
-            .name("redline-replay-supervisor".into())
+            .name("redline-recorder-supervisor".into())
             .spawn(move || {
-                let mut probe = Some(ReadyProbe::new(&socket));
+                // A recording without the replay has no readiness to report.
+                let replay = lock(&inner.state)
+                    .running
+                    .as_ref()
+                    .is_some_and(Running::is_replay);
+                let mut probe = replay.then(|| ReadyProbe::new(&socket));
                 loop {
                     thread::sleep(POLL_INTERVAL);
                     // Polled outside the lock: it never blocks, but it does I/O.
@@ -484,17 +645,20 @@ impl Recorder {
                     let exited = match running.session.try_exit() {
                         Ok(exited) => exited,
                         Err(error) => {
-                            eprintln!("redline: cannot read the replay process state ({error})");
+                            eprintln!("redline: cannot read the recorder process state ({error})");
                             None
                         }
                     };
+                    let replay = running.is_replay();
                     if let Some(exit) = exited {
                         let message = exit_message(exit, running.session.last_error());
                         state.running = None;
-                        state.status.replay = ReplayState::Error;
+                        if replay {
+                            state.status.replay = ReplayState::Error;
+                        }
                         state.status.recording = false;
                         state.status.error = Some(message);
-                    } else if ready && state.status.replay == ReplayState::Starting {
+                    } else if ready && replay && state.status.replay == ReplayState::Starting {
                         probe = None;
                         state.status.replay = ReplayState::On;
                     } else {
@@ -682,6 +846,12 @@ pub async fn replay_stop(service: State<'_, Recorder>) -> Result<RecorderStatus,
     blocking(&service, |service| service.stop()).await
 }
 
+/// Starts a regular recording, or stops the running one (see [`Recorder::toggle_recording`]).
+#[tauri::command]
+pub async fn recording_toggle(service: State<'_, Recorder>) -> Result<RecorderStatus, String> {
+    blocking(&service, |service| service.toggle_recording()).await
+}
+
 #[tauri::command]
 pub async fn replay_save(service: State<'_, Recorder>) -> Result<(), String> {
     blocking(&service, |service| service.save()).await
@@ -695,6 +865,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
     use std::process::Command;
+    use std::sync::mpsc;
     use std::time::Instant;
 
     /// Collects what the service reports, in order.
@@ -727,12 +898,57 @@ mod tests {
         settings::RecordingSettings::defaults(video_dir).replay_config(None)
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir =
+    /// The longest a test with a process may run: past it the whole test binary exits, so a
+    /// hang fails `cargo test` instead of stalling it.
+    const TEST_DEADLINE: Duration = Duration::from_secs(60);
+
+    /// A test's own folder, removed when the test ends, also when it fails. Removing it ends
+    /// every fake gsr started in it (see [`fake_gsr`]). It also carries the test's watchdog.
+    struct TestDir {
+        path: PathBuf,
+        _watchdog: mpsc::Sender<()>,
+    }
+
+    impl std::ops::Deref for TestDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// Exits the test binary when the returned sender is not dropped within [`TEST_DEADLINE`].
+    fn watchdog(name: &str) -> mpsc::Sender<()> {
+        let (alive, deadline) = mpsc::channel::<()>();
+        let name = name.to_owned();
+        thread::spawn(move || {
+            if let Err(mpsc::RecvTimeoutError::Timeout) = deadline.recv_timeout(TEST_DEADLINE) {
+                // Straight to stderr: `eprintln!` is captured by the test harness and lost on exit.
+                use std::io::Write as _;
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "recorder test '{name}' ran past {TEST_DEADLINE:?}: exiting"
+                );
+                std::process::exit(101);
+            }
+        });
+        alive
+    }
+
+    fn temp_dir(name: &str) -> TestDir {
+        let path =
             std::env::temp_dir().join(format!("redline-replay-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("run")).unwrap();
-        dir
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(path.join("run")).unwrap();
+        TestDir {
+            path,
+            _watchdog: watchdog(name),
+        }
     }
 
     fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
@@ -743,15 +959,21 @@ mod tests {
         }
     }
 
-    /// A shell script standing in for gpu-screen-recorder. `$out` is the replay folder (`-o`);
-    /// `body` runs after the arguments are read.
+    /// A shell script standing in for gpu-screen-recorder. `$out` is `-o` (the replay folder, or
+    /// the file of a recording without the replay), `$rec` is `-ro`, `$dir` is the test's folder;
+    /// `body` runs after the arguments are read. The waiting loops ([`SLEEP`], [`LOOP`]) end when
+    /// the test's folder is gone or after 30 seconds, so a failed test leaves no process behind.
     fn fake_gsr(dir: &Path, body: &str) -> PathBuf {
         let script = dir.join("fake-gsr");
         let text = format!(
             "#!/bin/sh\n\
+             dir='{}'\n\
              [ \"$1\" = --version ] && {{ echo {}; exit 0; }}\n\
-             while [ $# -gt 0 ]; do [ \"$1\" = -o ] && out=$2; shift; done\n\
+             while [ $# -gt 0 ]; do\n\
+               [ \"$1\" = -o ] && out=$2; [ \"$1\" = -ro ] && rec=$2; shift\n\
+             done\n\
              {body}\n",
+            dir.display(),
             recorder::VERIFIED_VERSION
         );
         fs::write(&script, text).unwrap();
@@ -789,9 +1011,12 @@ mod tests {
     }
 
     /// Plays gsr's IPC side: answers the readiness probe with an error, as gsr does for a name
-    /// it does not know, and `save-replay` with the saved path.
-    fn serve_ipc(socket: &Path) {
+    /// it does not know, `save-replay` and `stop-replay-recording` with the saved path, and
+    /// `start-replay-recording` with a bare ok. Returns the request lines it received.
+    fn serve_ipc(socket: &Path) -> Arc<Mutex<Vec<String>>> {
         let listener = UnixListener::bind(socket).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&requests);
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let mut line = String::new();
@@ -800,15 +1025,136 @@ mod tests {
                 }
                 let reply = if line.contains("\"save-replay\"") {
                     "{\"id\":1,\"result\":\"ok\",\"data\":\"/v/Replay_1.mkv\"}\n"
+                } else if line.contains("\"start-replay-recording\"") {
+                    "{\"id\":1,\"result\":\"ok\"}\n"
+                } else if line.contains("\"stop-replay-recording\"") {
+                    "{\"id\":1,\"result\":\"ok\",\"data\":\"/v/Video_1.mkv\"}\n"
                 } else {
                     "{\"id\":1,\"result\":\"error\",\"data\":\"unknown request name\"}\n"
                 };
+                lock(&seen).push(line);
                 let _ = (&stream).write_all(reply.as_bytes());
             }
         });
+        requests
     }
 
-    const LOOP: &str = "trap 'exit 0' INT\nwhile :; do sleep 0.05; done";
+    fn names(requests: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
+        lock(requests)
+            .iter()
+            .filter_map(|line| {
+                let request: serde_json::Value = serde_json::from_str(line).ok()?;
+                Some(request["name"].as_str()?.to_owned())
+            })
+            .filter(|name| name != recorder::READY_PROBE)
+            .collect()
+    }
+
+    #[test]
+    fn a_recording_during_the_replay_uses_the_replay_process() {
+        let dir = temp_dir("replay-recording");
+        // SIGINT finishes the recording in progress and prints its path, as gsr does.
+        let ready = dir.join("ready");
+        let body = format!(
+            "trap 'echo \"$rec/Video_kept.mkv\"; exit 0' INT\n: > '{}'\n{SLEEP}",
+            ready.display()
+        );
+        let (service, events) = service(&dir, &body);
+        let requests = serve_ipc(&dir.join("run").join("gsr.sock"));
+
+        service.start().unwrap();
+        wait_until("on", || service.status().replay == ReplayState::On);
+        wait_until("the trap", || ready.exists());
+        let started = service.toggle_recording().unwrap();
+        assert!(started.recording);
+        assert_eq!(started.replay, ReplayState::On);
+        assert!(!service.toggle_recording().unwrap().recording);
+        assert_eq!(
+            names(&requests),
+            ["start-replay-recording", "stop-replay-recording"]
+        );
+
+        // Turning the replay off while recording ends the recording and keeps the file.
+        assert!(service.toggle_recording().unwrap().recording);
+        let stopped = service.stop().unwrap();
+        assert_eq!(
+            (stopped.replay, stopped.recording),
+            (ReplayState::Off, false)
+        );
+        wait_until("file-saved", || !lock(&events.files).is_empty());
+        let file = lock(&events.files)[0].clone();
+        assert_eq!(file.kind, FileKind::Recording);
+        assert_eq!(file.file_name, "Video_kept.mkv");
+        // Never a second process: the replay process did all of it.
+        assert_eq!(names(&requests).len(), 3);
+    }
+
+    #[test]
+    fn a_recording_without_the_replay_is_one_process_that_keeps_its_file() {
+        let dir = temp_dir("recording");
+        // In recording mode `$out` is the file; SIGINT closes it and prints its path.
+        let ready = dir.join("ready");
+        let body = format!(
+            "trap 'echo \"$out\"; exit 0' INT\nrm -f '{0}'\n: > '{0}'\n{SLEEP}",
+            ready.display()
+        );
+        let (service, events) = service(&dir, &body);
+
+        let started = service.toggle_recording().unwrap();
+        // SIGINT before the script has set its trap would kill it without the file's path.
+        wait_until("the trap", || ready.exists());
+        assert_eq!(
+            (started.replay, started.recording),
+            (ReplayState::Off, true)
+        );
+        // The replay and the recording never run as two processes.
+        assert_eq!(service.start().unwrap_err(), RECORDING_RUNS);
+        assert!(service.stop().unwrap().recording, "replay_stop leaves it");
+        assert_eq!(service.save().unwrap_err(), NOT_RUNNING);
+
+        let stopped = service.toggle_recording().unwrap();
+        assert_eq!(
+            (stopped.replay, stopped.recording),
+            (ReplayState::Off, false)
+        );
+        wait_until("file-saved", || !lock(&events.files).is_empty());
+        let file = lock(&events.files)[0].clone();
+        assert_eq!(file.kind, FileKind::Recording);
+        assert!(file.file_name.starts_with("Video_") && file.file_name.ends_with(".mkv"));
+        assert!(dir.join("Redline").join("Recordings").is_dir());
+
+        // Quitting during a recording keeps the file too.
+        let _ = fs::remove_file(&ready);
+        assert!(service.toggle_recording().unwrap().recording);
+        wait_until("the second trap", || ready.exists());
+        service.shutdown();
+        assert!(!service.status().recording);
+        wait_until("the second file-saved", || lock(&events.files).len() == 2);
+        // With nothing running the replay starts again.
+        assert_eq!(service.start().unwrap().replay, ReplayState::Starting);
+        service.shutdown();
+    }
+
+    #[test]
+    fn a_recording_process_that_dies_ends_the_recording_with_the_reason() {
+        let dir = temp_dir("recording-exit");
+        let body = "echo 'gsr error: failed to get the portal session' >&2\nexit 3";
+        let (service, _) = service(&dir, body);
+        assert!(service.toggle_recording().unwrap().recording);
+        wait_until("the end", || !service.status().recording);
+        let status = service.status();
+        assert_eq!(status.replay, ReplayState::Off);
+        assert_eq!(
+            status.error.as_deref(),
+            Some("GPU Screen Recorder stopped: failed to get the portal session")
+        );
+    }
+
+    /// Waits like gsr until stopped, at most 30 seconds or until the test's folder is removed.
+    const SLEEP: &str =
+        "n=0\nwhile [ -d \"$dir\" ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n + 1)); done";
+    const LOOP: &str = "trap 'exit 0' INT\n\
+        n=0\nwhile [ -d \"$dir\" ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n + 1)); done";
 
     #[test]
     fn a_replay_starts_saves_and_stops() {
@@ -851,7 +1197,6 @@ mod tests {
             );
         }
         assert!(!events.saw(|status| status.replay == ReplayState::Error));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -860,7 +1205,7 @@ mod tests {
         let launcher = Launcher::Native(fake_gsr(&dir, LOOP));
         let seconds = Arc::new(Mutex::new(60));
         let source = Arc::clone(&seconds);
-        let video_dir = dir.clone();
+        let video_dir = dir.to_path_buf();
         let events = Collector::default();
         let service = Recorder::new(
             Environment {
@@ -906,7 +1251,6 @@ mod tests {
         );
         service.shutdown();
         assert_eq!(service.status().replay, ReplayState::Off);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -916,8 +1260,8 @@ mod tests {
         let (service, _) = service(&dir, LOOP);
         assert_eq!(service.start().unwrap().replay, ReplayState::Starting);
         assert_eq!(service.save().unwrap_err(), STILL_STARTING);
+        assert_eq!(service.toggle_recording().unwrap_err(), STILL_STARTING);
         assert_eq!(service.stop().unwrap().replay, ReplayState::Off);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -935,7 +1279,6 @@ mod tests {
         // Stopping acknowledges the error.
         let stopped = service.stop().unwrap();
         assert_eq!((stopped.replay, stopped.error), (ReplayState::Off, None));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -965,7 +1308,6 @@ mod tests {
         assert_eq!(service.start().unwrap().replay, ReplayState::Starting);
         service.shutdown();
         assert_eq!(service.status().replay, ReplayState::Off);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -975,7 +1317,7 @@ mod tests {
         let launcher = Launcher::Native(fake_gsr(&dir, LOOP));
         let installed = Arc::new(AtomicBool::new(true));
         let seen = Arc::clone(&installed);
-        let video_dir = dir.clone();
+        let video_dir = dir.to_path_buf();
         let service = Recorder::new(
             Environment {
                 detect: Box::new(move || {
@@ -1001,7 +1343,6 @@ mod tests {
         assert_eq!(service.stop().unwrap().replay, ReplayState::Off);
         // With nothing left to stop, the missing tool is the answer again.
         assert_eq!(service.stop().unwrap_err(), MISSING);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1022,6 +1363,7 @@ mod tests {
         assert_eq!(service.start().unwrap_err(), MISSING);
         assert_eq!(service.save().unwrap_err(), MISSING);
         assert_eq!(service.stop().unwrap_err(), MISSING);
+        assert_eq!(service.toggle_recording().unwrap_err(), MISSING);
         assert_eq!(service.launcher().unwrap_err(), MISSING);
         assert!(events.saw(|status| status.unavailable_reason.is_some()));
         // The status still says off: a missing tool is not a replay error.
