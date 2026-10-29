@@ -19,13 +19,29 @@ type GpuSnapshot = {
   vram_total_mib: number | null;
 };
 
+type GpuInfo = {
+  id: string;
+  name: string;
+  pci_slot: string;
+};
+
 function App() {
+  // undefined: still listing; null: no AMD GPU found.
+  const [gpuId, setGpuId] = useState<string | null | undefined>(undefined);
   const [snapshot, setSnapshot] = useState<GpuSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // The GPU selector arrives with the app shell: until then, read the first GPU listed.
   useEffect(() => {
+    invoke<GpuInfo[]>("list_gpus")
+      .then((gpus) => setGpuId(gpus[0]?.id ?? null))
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  useEffect(() => {
+    if (!gpuId) return;
     const read = () =>
-      invoke<GpuSnapshot>("gpu_snapshot")
+      invoke<GpuSnapshot>("gpu_snapshot", { gpuId })
         .then((s) => {
           setSnapshot(s);
           setError(null);
@@ -34,10 +50,13 @@ function App() {
     read();
     const timer = setInterval(read, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [gpuId]);
 
   if (error) {
     return <main className="state">Cannot read the GPU: {error}</main>;
+  }
+  if (gpuId === null) {
+    return <main className="state">No AMD GPU found. Redline needs the amdgpu driver.</main>;
   }
   if (!snapshot) {
     return <main className="state">Reading sensors…</main>;
