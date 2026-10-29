@@ -57,6 +57,7 @@ pub fn run() {
             recorder::replay_start,
             recorder::replay_stop,
             recorder::replay_save,
+            recorder::recording_toggle,
             sources::list_audio_sources,
             sources::list_capture_targets,
             gallery::list_recordings,

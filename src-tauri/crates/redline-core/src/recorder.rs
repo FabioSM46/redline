@@ -18,6 +18,12 @@
 //! gsr writes the path of every saved file to stdout, and a `gsr error: ...` line when a save
 //! fails ([`parse_output_line`]).
 //!
+//! A session runs in one of two [`Mode`]s: the replay buffer, during which regular recordings
+//! are started and stopped with the `start-replay-recording` / `stop-replay-recording` IPC
+//! requests, or a single regular recording into one file, ended with SIGINT like the replay.
+//! Stopping either one with SIGINT finishes and keeps a recording in progress: gsr closes the
+//! file and prints its path before exiting.
+//!
 //! We use the native binary when it is on PATH, otherwise the Flatpak.
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -32,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The GPU Screen Recorder version whose options, signals and IPC protocol this module was
 /// checked against.
@@ -177,6 +183,16 @@ impl AudioTrack {
     }
 }
 
+/// What a session records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mode {
+    /// The replay buffer (`-r`) into `replay_dir`, with regular recordings into `recording_dir`
+    /// on request (`-ro`).
+    Replay,
+    /// One regular recording into this file, without a replay buffer.
+    Recording(PathBuf),
+}
+
 #[derive(Debug, Clone)]
 pub struct ReplayConfig {
     /// `portal` (Wayland, asks for the screen once), `screen`, or a monitor name
@@ -199,23 +215,28 @@ pub struct ReplayConfig {
 }
 
 impl ReplayConfig {
-    fn args(&self) -> Vec<String> {
+    fn args(&self, mode: &Mode) -> Vec<String> {
         let mut args: Vec<String> = vec![
             "-w".into(),
             self.capture.clone(),
             "-f".into(),
             self.fps.to_string(),
-            "-r".into(),
-            self.replay_seconds.to_string(),
             "-c".into(),
             self.container.clone(),
             "-q".into(),
             self.quality.clone(),
-            "-o".into(),
-            self.replay_dir.display().to_string(),
-            "-ro".into(),
-            self.recording_dir.display().to_string(),
         ];
+        match mode {
+            Mode::Replay => args.extend([
+                "-r".into(),
+                self.replay_seconds.to_string(),
+                "-o".into(),
+                self.replay_dir.display().to_string(),
+                "-ro".into(),
+                self.recording_dir.display().to_string(),
+            ]),
+            Mode::Recording(file) => args.extend(["-o".into(), file.display().to_string()]),
+        }
         if self.capture == PORTAL {
             args.extend(["-restore-portal-session".into(), "yes".into()]);
             if let Some(token) = &self.portal_token {
@@ -253,7 +274,7 @@ pub fn parse_output_line(line: &str) -> Option<Output> {
         .then(|| Output::Saved(PathBuf::from(line)))
 }
 
-/// gsr in replay mode, started and owned by us.
+/// A gsr process started and owned by us: the replay buffer, or a single recording ([`Mode`]).
 pub struct ReplaySession {
     child: Child,
     launcher: Launcher,
@@ -263,15 +284,50 @@ pub struct ReplaySession {
 }
 
 impl ReplaySession {
-    /// Starts gsr with its IPC socket at `socket`. `on_output` runs on a reader thread for every
-    /// [`Output`] line, until gsr closes stdout. gsr's stderr is forwarded to ours.
+    /// Starts gsr in replay mode with its IPC socket at `socket`. `on_output` runs on a reader
+    /// thread for every [`Output`] line, until gsr closes stdout. gsr's stderr is forwarded to
+    /// ours.
     pub fn start(
         launcher: &Launcher,
         config: &ReplayConfig,
         socket: &Path,
         on_output: impl FnMut(Output) + Send + 'static,
     ) -> Result<ReplaySession> {
-        for dir in [&config.replay_dir, &config.recording_dir] {
+        Self::spawn(launcher, config, &Mode::Replay, socket, on_output)
+    }
+
+    /// Starts gsr recording into `file` (normally from [`recording_file`]), without a replay
+    /// buffer. gsr prints the file's path when it stops.
+    pub fn start_recording(
+        launcher: &Launcher,
+        config: &ReplayConfig,
+        file: &Path,
+        socket: &Path,
+        on_output: impl FnMut(Output) + Send + 'static,
+    ) -> Result<ReplaySession> {
+        Self::spawn(
+            launcher,
+            config,
+            &Mode::Recording(file.to_owned()),
+            socket,
+            on_output,
+        )
+    }
+
+    fn spawn(
+        launcher: &Launcher,
+        config: &ReplayConfig,
+        mode: &Mode,
+        socket: &Path,
+        on_output: impl FnMut(Output) + Send + 'static,
+    ) -> Result<ReplaySession> {
+        let dirs: Vec<&Path> = match mode {
+            Mode::Replay => vec![&config.replay_dir, &config.recording_dir],
+            Mode::Recording(file) => {
+                vec![file.parent().context("the recording file has no folder")?]
+            }
+        };
+        for dir in dirs {
             check_output_dir(launcher, dir)?;
             fs::create_dir_all(dir)
                 .with_context(|| format!("could not create the folder {}", dir.display()))?;
@@ -292,7 +348,7 @@ impl ReplaySession {
             .create(socket_dir)
             .context("could not create the IPC socket folder")?;
 
-        let mut child = command_line(launcher, config, socket)
+        let mut child = command_line(launcher, config, mode, socket)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -344,9 +400,14 @@ impl ReplaySession {
         save_replay(&self.socket, timeout)
     }
 
-    /// Starts or stops a regular recording into `recording_dir` while the replay runs.
-    pub fn toggle_recording(&self) -> Result<()> {
-        ipc_request(&self.socket, "toggle-replay-recording", None, IPC_TIMEOUT).map(|_| ())
+    /// Starts a regular recording into `recording_dir` while the replay runs.
+    pub fn start_replay_recording(&self) -> Result<()> {
+        start_replay_recording(&self.socket)
+    }
+
+    /// Stops the regular recording running during the replay; returns the saved file's path.
+    pub fn stop_replay_recording(&self, timeout: Duration) -> Result<PathBuf> {
+        stop_replay_recording(&self.socket, timeout)
     }
 
     /// The exit status if gsr has exited, without blocking.
@@ -367,7 +428,8 @@ impl ReplaySession {
     }
 
     /// SIGINT to our gsr, then SIGKILL to our whole process tree after [`STOP_TIMEOUT`].
-    /// In replay mode stopping saves nothing.
+    /// The replay buffer is not saved; a recording in progress (either mode) is finished and
+    /// kept, and its path comes on stdout.
     pub fn stop(&mut self) -> Result<ExitStatus> {
         if let Some(status) = self.try_exit()? {
             return Ok(status);
@@ -453,8 +515,8 @@ fn check_output_dir(launcher: &Launcher, dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The full command for a replay session with its IPC socket at `socket`.
-fn command_line(launcher: &Launcher, config: &ReplayConfig, socket: &Path) -> Command {
+/// The full command for a session in `mode` with its IPC socket at `socket`.
+fn command_line(launcher: &Launcher, config: &ReplayConfig, mode: &Mode, socket: &Path) -> Command {
     let mut share: Vec<&Path> = socket.parent().into_iter().collect();
     if config.capture == PORTAL
         && let Some(dir) = config.portal_token.as_deref().and_then(Path::parent)
@@ -463,7 +525,7 @@ fn command_line(launcher: &Launcher, config: &ReplayConfig, socket: &Path) -> Co
         share.push(dir);
     }
     let mut cmd = launcher.command(&share);
-    cmd.args(config.args()).arg("-ipc").arg(socket);
+    cmd.args(config.args(mode)).arg("-ipc").arg(socket);
     cmd
 }
 
@@ -528,6 +590,65 @@ pub fn save_replay(socket: &Path, timeout: Duration) -> Result<PathBuf> {
         Some(Value::String(path)) => Ok(PathBuf::from(path)),
         _ => bail!("GPU Screen Recorder did not say where it saved the replay"),
     }
+}
+
+/// Asks the replay session listening on `socket` to start a regular recording into its
+/// `recording_dir` (`start-replay-recording`, gsr 6.1.6). gsr accepts it at once and starts on
+/// the next frame; it does nothing when a recording already runs. A recording that cannot start
+/// is reported later on stdout (`gsr error: Failed to start recording`).
+pub fn start_replay_recording(socket: &Path) -> Result<()> {
+    ipc_request(socket, "start-replay-recording", None, IPC_TIMEOUT).map(|_| ())
+}
+
+/// Stops the regular recording of the replay session listening on `socket`
+/// (`stop-replay-recording`, gsr 6.1.6); the reply comes once the file is written and carries its
+/// path. gsr refuses it when no recording runs.
+pub fn stop_replay_recording(socket: &Path, timeout: Duration) -> Result<PathBuf> {
+    match ipc_request(socket, "stop-replay-recording", None, timeout)? {
+        Some(Value::String(path)) => Ok(PathBuf::from(path)),
+        _ => bail!("GPU Screen Recorder did not say where it saved the recording"),
+    }
+}
+
+/// A new file for a recording without the replay: `dir/Video_<local date and time>.<container>`,
+/// gsr's own naming for recordings, with `_2`, `_3`... when that name is taken.
+pub fn recording_file(dir: &Path, container: &str, now: SystemTime) -> PathBuf {
+    let stamp = local_time(now).map_or_else(
+        || {
+            let secs = now.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            secs.to_string()
+        },
+        |[year, month, day, hour, minute, second]| {
+            format!("{year:04}-{month:02}-{day:02}_{hour:02}-{minute:02}-{second:02}")
+        },
+    );
+    let mut file = dir.join(format!("Video_{stamp}.{container}"));
+    let mut n = 2;
+    while fs::symlink_metadata(&file).is_ok() {
+        file = dir.join(format!("Video_{stamp}_{n}.{container}"));
+        n += 1;
+    }
+    file
+}
+
+/// `[year, month, day, hour, minute, second]` of `time` in the local time zone.
+fn local_time(time: SystemTime) -> Option<[i32; 6]> {
+    let secs = time.duration_since(UNIX_EPOCH).ok()?.as_secs();
+    let secs = libc::time_t::try_from(secs).ok()?;
+    // SAFETY: an all-zero `tm` is a valid value (integers, and a null zone name pointer).
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: both pointers are valid for the call; localtime_r is the thread-safe variant.
+    if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
+        return None;
+    }
+    Some([
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min,
+        tm.tm_sec,
+    ])
 }
 
 /// One request on gsr's IPC socket. `Ok(data)` for an `ok` reply; an `error` reply is an error
@@ -723,7 +844,7 @@ mod tests {
 
     #[test]
     fn one_audio_flag_per_track_and_mixed_sources_joined() {
-        let args = config("screen").args();
+        let args = config("screen").args(&Mode::Replay);
         let audio: Vec<_> = args
             .windows(2)
             .filter(|w| w[0] == "-a")
@@ -738,10 +859,54 @@ mod tests {
     }
 
     #[test]
+    fn replay_and_recording_modes_differ_only_in_the_output() {
+        let value = |args: &[String], flag: &str| {
+            let i = args.iter().position(|a| a == flag)?;
+            Some(args[i + 1].clone())
+        };
+        let replay = config("portal").args(&Mode::Replay);
+        assert_eq!(value(&replay, "-r").as_deref(), Some("30"));
+        assert_eq!(value(&replay, "-o").as_deref(), Some("/tmp/replay"));
+        assert_eq!(value(&replay, "-ro").as_deref(), Some("/tmp/rec"));
+
+        let file = PathBuf::from("/tmp/rec/Video_1.mkv");
+        let recording = config("portal").args(&Mode::Recording(file));
+        assert_eq!(value(&recording, "-r"), None);
+        assert_eq!(value(&recording, "-ro"), None);
+        assert_eq!(
+            value(&recording, "-o").as_deref(),
+            Some("/tmp/rec/Video_1.mkv")
+        );
+        // Everything else is the same settings.
+        for flag in ["-w", "-f", "-c", "-q", "-restore-portal-session", "-a"] {
+            assert_eq!(value(&replay, flag), value(&recording, flag), "{flag}");
+        }
+    }
+
+    #[test]
+    fn recording_files_are_named_like_gsr_s_and_never_overwritten() {
+        let dir = temp_dir("names");
+        let now = SystemTime::now();
+        let first = recording_file(&dir, "mkv", now);
+        let name = first.file_name().unwrap().to_str().unwrap().to_owned();
+        // Video_YYYY-MM-DD_HH-MM-SS.mkv
+        assert_eq!(name.len(), "Video_2026-10-29_14-04-22.mkv".len(), "{name}");
+        assert!(name.starts_with("Video_20") && name.ends_with(".mkv"));
+        assert_eq!(first.parent(), Some(dir.as_path()));
+        fs::write(&first, b"").unwrap();
+        let second = recording_file(&dir, "mkv", now);
+        assert_eq!(
+            second.file_name().unwrap().to_str().unwrap(),
+            name.replace(".mkv", "_2.mkv")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_chosen_codec_is_passed() {
         let mut config = config("DP-2");
         config.codec = Some("hevc".into());
-        let args = config.args();
+        let args = config.args(&Mode::Replay);
         let i = args.iter().position(|a| a == "-k").unwrap();
         assert_eq!(args[i + 1], "hevc");
         let i = args.iter().position(|a| a == "-w").unwrap();
@@ -750,7 +915,7 @@ mod tests {
 
     #[test]
     fn portal_capture_restores_the_session() {
-        let args = config("portal").args();
+        let args = config("portal").args(&Mode::Replay);
         let i = args
             .iter()
             .position(|a| a == "-restore-portal-session")
@@ -766,7 +931,12 @@ mod tests {
     #[test]
     fn the_native_command_passes_the_ipc_socket() {
         let socket = Path::new("/run/user/1000/redline/gsr-1.sock");
-        let cmd = command_line(&Launcher::Native("gsr".into()), &config("portal"), socket);
+        let cmd = command_line(
+            &Launcher::Native("gsr".into()),
+            &config("portal"),
+            &Mode::Replay,
+            socket,
+        );
         assert_eq!(cmd.get_program(), "gsr");
         let args = args_of(&cmd);
         assert_eq!(
@@ -779,7 +949,7 @@ mod tests {
     #[test]
     fn the_flatpak_sees_the_socket_folder_and_options_come_before_the_app_id() {
         let socket = Path::new("/run/user/1000/redline/gsr-1.sock");
-        let cmd = command_line(&Launcher::Flatpak, &config("portal"), socket);
+        let cmd = command_line(&Launcher::Flatpak, &config("portal"), &Mode::Replay, socket);
         assert_eq!(cmd.get_program(), "flatpak");
         let args = args_of(&cmd);
         assert_eq!(
@@ -793,7 +963,7 @@ mod tests {
             ]
         );
         // No token folder to share without portal capture.
-        let cmd = command_line(&Launcher::Flatpak, &config("DP-2"), socket);
+        let cmd = command_line(&Launcher::Flatpak, &config("DP-2"), &Mode::Replay, socket);
         assert_eq!(args_of(&cmd)[3], FLATPAK_ID);
         assert_eq!(
             args[args.len() - 2..],
@@ -960,18 +1130,22 @@ mod tests {
         let socket = dir.join("gsr.sock");
         serve(&socket, |name| match name {
             "save-replay" => "{\"id\":1,\"result\":\"ok\",\"data\":\"/v/Replay_1.mkv\"}\n".into(),
-            "toggle-replay-recording" => "{\"id\":1,\"result\":\"ok\"}\n".into(),
+            "start-replay-recording" => "{\"id\":1,\"result\":\"ok\"}\n".into(),
+            "stop-replay-recording" => {
+                "{\"id\":1,\"result\":\"ok\",\"data\":\"/v/Video_1.mkv\"}\n".into()
+            }
             _ => "{\"id\":1,\"result\":\"error\",\"data\":\"unknown request name\"}\n".into(),
         });
         assert_eq!(
             save_replay(&socket, IPC_TIMEOUT).unwrap(),
             PathBuf::from("/v/Replay_1.mkv")
         );
-        // The 6.1.6 name (`ipc_handlers.toggle_replay_recording` in src/cli/main.c, listed in the
-        // man page's IPC section); the reply carries no data.
+        // The 6.1.6 names (src/cli/ipc.c, listed in the man page's IPC section): starting is
+        // answered at once with no data, stopping once the file is written, with its path.
+        start_replay_recording(&socket).unwrap();
         assert_eq!(
-            ipc_request(&socket, "toggle-replay-recording", None, IPC_TIMEOUT).unwrap(),
-            None
+            stop_replay_recording(&socket, IPC_TIMEOUT).unwrap(),
+            PathBuf::from("/v/Video_1.mkv")
         );
         let refused = ipc_request(&socket, "toggle-pause", None, IPC_TIMEOUT);
         assert_eq!(refused.unwrap_err().to_string(), "unknown request name");
