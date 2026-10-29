@@ -5,6 +5,7 @@ mod recorder;
 mod sampler;
 mod settings;
 mod sources;
+mod thumbnails;
 mod tray;
 
 use redline_core::sensors::{self, GpuInfo, GpuSnapshot};
@@ -62,6 +63,8 @@ pub fn run() {
             gallery::list_recordings,
             gallery::open_recording,
             gallery::show_in_folder,
+            thumbnails::recording_thumbnail,
+            thumbnails::thumbnail_support,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
