@@ -24,7 +24,8 @@ fn gpu_snapshot(gpu_id: String, sampler: State<'_, Sampler>) -> Result<GpuSnapsh
 pub fn run() {
     tauri::Builder::default()
         // Registered first, as the plugin requires: a second launch exits and brings the
-        // existing window to the front (D8).
+        // existing window to the front (D8). The lock is a name on the session bus: without a
+        // bus the plugin logs a warning and the app launches normally, with no single instance.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::show_main_window(app);
         }))
