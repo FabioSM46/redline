@@ -12,6 +12,9 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
 
+/// The application name every notification carries.
+pub const APP_NAME: &str = "Redline";
+
 const G_BUS_TYPE_SESSION: c_int = 2;
 const G_DBUS_CALL_FLAGS_NONE: c_int = 0;
 /// A notification server answers at once, unless D-Bus has to start it first.
@@ -94,6 +97,13 @@ pub fn notify(app_name: &str, summary: &str, body: &str) -> bool {
             NOTIFY_TIMEOUT_MS,
         )
     }
+}
+
+/// `text` escaped for the notification servers that read the body as markup.
+pub fn escape_markup(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Asks the file manager to open the folder of `path` with the file selected. `false` when no
@@ -203,6 +213,12 @@ mod tests {
             Some("file:///redline-test/Replays/Replay%201%20%232.mkv")
         );
         assert_eq!(file_uri(Path::new("relative.mkv")), None);
+    }
+
+    #[test]
+    fn markup_is_escaped_ampersand_first() {
+        assert_eq!(escape_markup("a <b> & c"), "a &lt;b&gt; &amp; c");
+        assert_eq!(escape_markup("&lt;"), "&amp;lt;");
     }
 
     #[test]

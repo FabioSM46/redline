@@ -1,3 +1,4 @@
+mod actions;
 mod autostart;
 mod desktop;
 mod gallery;
@@ -29,17 +30,26 @@ fn gpu_snapshot(gpu_id: String, sampler: State<'_, Sampler>) -> Result<GpuSnapsh
 pub fn run() {
     tauri::Builder::default()
         // Registered first, as the plugin requires: a second launch exits and brings the
-        // existing window to the front (D8). The lock is a name on the session bus: without a
-        // bus the plugin logs a warning and the app launches normally, with no single instance.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            tray::show_main_window(app);
+        // existing window to the front (D8), or, with an action such as `--save-replay`, has the
+        // running instance perform it without showing the window (#32). The lock is a name on
+        // the session bus: without a bus the plugin logs a warning and the app launches
+        // normally, with no single instance, and performs its own action.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            actions::on_second_launch(app, &argv);
         }))
         // Backend only: no `autostart:*` permission reaches the frontend (D8).
         .plugin(autostart::plugin())
         .setup(|app| {
             settings::init(app.handle());
             sampler::start(app)?;
-            recorder::init(app.handle());
+            // A first launch with an action performs it once GPU Screen Recorder has been
+            // detected and `replay_on_start` has run.
+            let launch_action = actions::requested(std::env::args_os().skip(1));
+            recorder::init(app.handle(), move |service| {
+                if let Some(action) = launch_action {
+                    actions::perform(service, action);
+                }
+            });
             tray::create(app.handle());
             autostart::show_main_window_unless_hidden_start(app.handle());
             Ok(())

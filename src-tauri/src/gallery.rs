@@ -33,7 +33,6 @@ use crate::{desktop, thumbnails};
 
 /// The extensions of the containers GPU Screen Recorder can write.
 const VIDEO_EXTENSIONS: [&str; 5] = ["mkv", "mp4", "webm", "flv", "mov"];
-const APP_NAME: &str = "Redline";
 const NO_FOLDER: &str = "No video folder to look for saved clips in.";
 const UNKNOWN_ID: &str = "This clip is no longer in the replay or recording folder.";
 
@@ -250,12 +249,7 @@ pub fn notification_text(file: &FileSaved) -> (&'static str, String) {
         FileKind::Replay => "Replay saved",
         FileKind::Recording => "Recording saved",
     };
-    let body = file
-        .file_name
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
-    (summary, body)
+    (summary, desktop::escape_markup(&file.file_name))
 }
 
 /// Shows "Replay saved" / "Recording saved" for `file`, on its own thread: the caller is the
@@ -266,7 +260,7 @@ pub fn notify_saved(file: &FileSaved) {
     let spawned = thread::Builder::new()
         .name("redline-notify".into())
         .spawn(move || {
-            desktop::notify(APP_NAME, summary, &body);
+            desktop::notify(desktop::APP_NAME, summary, &body);
         });
     if let Err(error) = spawned {
         eprintln!("redline: the saved-file notification did not start ({error})");

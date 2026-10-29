@@ -85,6 +85,17 @@ recording in progress, so turning the replay off, a settings change that restart
 Redline all keep the file. GPU Screen Recorder prints the path of every finished recording, which
 becomes `file-saved` with `kind: "recording"`.
 
+**Command-line actions** (D5): `redline --save-replay`, `redline --toggle-replay` and
+`redline --toggle-recording`, to bind in the desktop's custom shortcuts. The list is
+`ACTION_ARGS` in `src-tauri/src/actions.rs`, the only place that names them. A second launch
+forwards its arguments to the running instance through the single-instance plugin: with an
+action the instance performs it without showing or focusing the window, without one it brings
+the window to the front. A first launch with an action starts hidden in the tray (when there is
+one) and performs the action once GPU Screen Recorder has been detected and `replay_on_start`
+has run. The actions call the same `Recorder` methods as the commands (`--toggle-replay` stops a
+replay that is `starting` or `on` and starts it otherwise); a failure is a desktop notification
+with the same sentence. Unknown arguments are ignored, and one launch performs one action.
+
 **Saved clips**: every `file-saved` also sends a desktop notification over D-Bus with the file
 name only; without a notification server nothing is shown and nothing fails. `list_recordings`
 lists both folders (missing folders are empty); `open_recording(id)` runs `xdg-open` on the file
