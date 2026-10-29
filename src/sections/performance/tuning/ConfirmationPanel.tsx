@@ -91,7 +91,9 @@ export function ConfirmationPanel({
       <p className="tuning-confirm-change">
         {changeLabel(change.what)}
         {detail !== null && <span className="tuning-confirm-detail">: {detail}</span>}
-        {(otherGpu || gpus.length > 1) && <span className="tuning-confirm-gpu"> on {name}</span>}
+        {change.what === "profile"
+          ? gpus.length > 1 && <span className="tuning-confirm-gpu"> on every GPU</span>
+          : (otherGpu || gpus.length > 1) && <span className="tuning-confirm-gpu"> on {name}</span>}
       </p>
       {snapshot !== null && change.what === "power_limit" && (
         <p className="tuning-confirm-result">
