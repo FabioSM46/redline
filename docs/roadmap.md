@@ -15,14 +15,15 @@ Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 - [x] Development pipeline ported from wow-don
 - [x] Repository in English
 
-## M1 — Performance
+## M1 — Performance (done)
 
-- App shell (D8): the four tabs, the status bar, the tray icon with close-to-tray and its
+- [x] App shell (D8): the four tabs, the status bar, the tray icon with close-to-tray and its
   fallback, single instance, and Settings → General (theme, start with the system, start
   minimised to the tray)
-- Home and Performance → Metrics: dashboard with charts over time (temperature, clocks, power,
-  usage)
-- Several GPUs on the same machine
+- [x] Home and Performance → Metrics: dashboard with charts over time (temperature, clocks,
+  power, usage) over a 1, 5 or 15 minute window, drawn with uPlot (D9)
+- [x] Several GPUs on the same machine, with a selector shown only when there is more than one
+- [x] Checked by hand on real hardware (RDNA4, GNOME on Wayland)
 
 ## M2 — Recording
 

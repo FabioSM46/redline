@@ -9,14 +9,16 @@ actually use and leaves the rest out.
 
 ## Status
 
-In development: **M0 — Foundations** is done, **M1 — Performance** is next (see the
-[roadmap](docs/roadmap.md)). Today there is:
+In development: **M0 — Foundations** and **M1 — Performance** are done, **M2 — Recording** is
+next (see the [roadmap](docs/roadmap.md)). Today there is:
 
 - GPU sensor reading, tested on an RX 9070 (RDNA4);
 - a client for the LACT daemon, verified on real hardware;
 - control of GPU Screen Recorder, verified on real hardware: an instant replay saved with desktop
   audio and microphone on two separate tracks;
-- a minimal Tauri app that shows live metrics.
+- the app shell: Home, Performance, Record and Settings tabs, a status bar, a tray icon with
+  close-to-tray, a single instance and start with the system;
+- live figures and charts over the last 1, 5 or 15 minutes, for every AMD GPU on the machine.
 
 There is no installable package yet.
 
