@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { type GpuInfo, type GpuSnapshot, pickGpuId, showGpuSelector, statusBarItems } from "./gpu.ts";
+import { type GpuInfo, type GpuSnapshot, pickGpuId, readingFor, showGpuSelector, statusBarItems } from "./gpu.ts";
 
 const igpu: GpuInfo = { id: "0000:0e:00.0", name: "Integrated GPU", pci_slot: "0000:0e:00.0" };
 const dgpu: GpuInfo = { id: "0000:03:00.0", name: "Discrete GPU", pci_slot: "0000:03:00.0" };
@@ -73,5 +73,21 @@ describe("statusBarItems", () => {
       "—",
       "—",
     ]);
+  });
+});
+
+describe("readingFor", () => {
+  it("is loading before the first reading", () => {
+    assert.deepEqual(readingFor(null, dgpu.id), { status: "loading" });
+  });
+
+  it("returns the reading taken from the same GPU", () => {
+    const state = { status: "ok" as const, snapshot: { ...empty, temp_edge_c: 41 } };
+    assert.deepEqual(readingFor({ gpuId: dgpu.id, state }, dgpu.id), state);
+  });
+
+  it("never shows another GPU's values after a switch", () => {
+    const state = { status: "ok" as const, snapshot: { ...empty, temp_edge_c: 41 } };
+    assert.deepEqual(readingFor({ gpuId: dgpu.id, state }, igpu.id), { status: "loading" });
   });
 });

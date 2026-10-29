@@ -32,6 +32,14 @@ export type SnapshotState =
   | { status: "ok"; snapshot: GpuSnapshot }
   | { status: "error"; message: string };
 
+/** A reading stored together with the id of the GPU it was read for. */
+export type StoredReading = { gpuId: string; state: SnapshotState };
+
+/** The reading to show for `gpuId`: one taken from another GPU is "loading", never its values. */
+export function readingFor(stored: StoredReading | null, gpuId: string): SnapshotState {
+  return stored?.gpuId === gpuId ? stored.state : { status: "loading" };
+}
+
 /** The selector is noise with a single GPU: it appears only when there is a choice to make. */
 export function showGpuSelector(gpus: readonly GpuInfo[]): boolean {
   return gpus.length > 1;

@@ -4,7 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
-import { type GpuInfo, type GpuSnapshot, pickGpuId, type SnapshotState } from "./gpu.ts";
+import { type GpuInfo, type GpuSnapshot, pickGpuId, readingFor, type SnapshotState, type StoredReading } from "./gpu.ts";
 
 export type GpuContextValue = {
   /** Every AMD GPU listed by the backend, sorted by PCI slot. */
@@ -39,7 +39,9 @@ export function useGpuList(): GpuListState {
   const [gpus, setGpus] = useState<GpuInfo[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
-  const [reading, setReading] = useState<SnapshotState>({ status: "loading" });
+  // Tied to the GPU it was read for: after a switch the previous GPU's values are never shown
+  // under the new name, not even for the one render before the effect runs.
+  const [reading, setReading] = useState<StoredReading | null>(null);
 
   useEffect(() => {
     invoke<GpuInfo[]>("list_gpus")
@@ -53,11 +55,10 @@ export function useGpuList(): GpuListState {
     if (!gpuId) return;
     // A reply that arrives after the selection changed belongs to the previous GPU: drop it.
     let current = true;
-    setReading({ status: "loading" });
     const read = () =>
       invoke<GpuSnapshot>("gpu_snapshot", { gpuId })
-        .then((snapshot) => current && setReading({ status: "ok", snapshot }))
-        .catch((e) => current && setReading({ status: "error", message: String(e) }));
+        .then((snapshot) => current && setReading({ gpuId, state: { status: "ok", snapshot } }))
+        .catch((e) => current && setReading({ gpuId, state: { status: "error", message: String(e) } }));
     read();
     const timer = setInterval(read, 1000);
     return () => {
@@ -70,7 +71,7 @@ export function useGpuList(): GpuListState {
   if (gpus === null) return { status: "loading" };
   const gpu = gpus.find((g) => g.id === gpuId);
   if (!gpu) return { status: "empty" };
-  return { status: "ready", value: { gpus, gpu, selectGpu: setChosen, reading } };
+  return { status: "ready", value: { gpus, gpu, selectGpu: setChosen, reading: readingFor(reading, gpu.id) } };
 }
 
 export function GpuProvider({ value, children }: { value: GpuContextValue; children: ReactNode }) {
