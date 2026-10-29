@@ -168,7 +168,9 @@ fn write_atomically(file: &Path, settings: &Settings) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let mut json = serde_json::to_vec_pretty(settings).map_err(io::Error::other)?;
     json.push(b'\n');
-    let tmp = file.with_extension("json.tmp");
+    // One temporary file per process: two instances saving at once never write into the same
+    // file (single-instance handling comes later, D8).
+    let tmp = file.with_extension(format!("json.tmp.{}", std::process::id()));
     let written = (|| {
         let mut out = fs::File::create(&tmp)?;
         out.write_all(&json)?;
@@ -285,7 +287,7 @@ mod tests {
             assert_eq!(load(&file), (wanted, Vec::new()));
         }
         // The temporary file does not survive a successful write.
-        assert!(!file.with_extension("json.tmp").exists());
+        assert_eq!(fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
     }
 
     #[test]
