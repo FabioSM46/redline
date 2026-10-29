@@ -66,13 +66,13 @@ way at once.
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│ ● Redline   Home   Performance   Record   Settings       ⏺ Replay  │
+│ ● Redline   Home   Performance   Record   Settings                 │
 ├────────────────────────────────────────────────────────────────────┤
 │                                                                    │
 │   (section content)                                                │
 │                                                                    │
 ├────────────────────────────────────────────────────────────────────┤
-│ <GPU name> · 41 °C · 32 W · 772 MHz              Replay 60 s · ON  │
+│ <GPU name> · 41 °C · 32 W · 772 MHz            ⏺ Replay 60 s · ON  │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -91,12 +91,23 @@ way at once.
     customisable key binding;
   - **Dependencies**: state of LACT and GPU Screen Recorder, with "Install" (D4);
   - **About**.
-- **Status bar**: GPU temperature and power, plus a replay indicator. It is the only fixed
-  element, so nobody has to open Home to know whether the replay is recording.
+- **Status bar**: GPU temperature and power, plus the replay indicator, which is also a
+  switch. It is the single place that shows the replay state (Home's replay switch controls the
+  same state), so nobody has to open Home to know whether the replay is recording. The tab bar
+  and the status bar are fixed; only the section content between them scrolls.
 - **Several GPUs**: a selector in the top bar, shown only when there is more than one.
 
 **Tray and lifetime.** Redline has a tray icon. Closing the window hides it to the tray: the app
-keeps running, and with it the replay. Quit is an explicit action in the tray menu. This answers
+keeps running, and with it the replay. Quit is an explicit action in the tray menu.
+
+If no tray host can be registered at startup (for example GNOME without an AppIndicator
+extension), close-to-tray is off for that session: closing the window quits the app, and "start
+minimised to the tray" is ignored, so an autostarted Redline shows its window. The app never
+runs with no window and no tray icon.
+
+Redline runs as a **single instance**. A second launch (a menu click, or autostart racing a
+manual start) does not start a second process, a second replay buffer or a second set of
+shortcuts: it brings the existing window to the front. This answers
 the earlier open question of where the replay lives while the window is closed: in the app's own
 process, not a separate service. Starting with the system is an option in Settings → General
 (off by default), and so is starting minimised to the tray.
@@ -108,6 +119,7 @@ process, not a separate service. Starting with the system is an option in Settin
   Ubuntu enables one by default, other distributions may not, and Settings says so when the
   tray is unavailable.
 - Autostart needs `tauri-plugin-autostart` (an XDG autostart entry on Linux).
+- Single-instance handling needs `tauri-plugin-single-instance`.
 - **Shortcuts under Wayland** depend on the GlobalShortcuts portal (D5). Where it exists,
   Redline registers the bindings through it; where it does not (GNOME before 48), the Shortcuts
   section shows each action's command to bind in the desktop's custom shortcuts. X11 can grab
@@ -117,7 +129,9 @@ process, not a separate service. Starting with the system is an option in Settin
   goes through GPU Screen Recorder's KMS helper and may ask for a password. Settings offers both,
   portal first.
 
-These two crates and the system package are approved by this decision; nothing else is.
+These three crates (the `tray-icon` feature of `tauri`, `tauri-plugin-autostart`,
+`tauri-plugin-single-instance`) and the system package are approved by this decision; nothing
+else is.
 
 Left out compared to AMD's software: the "Gaming" section with a game library (Steam and Lutris
 own that on Linux), the built-in browser, streaming, driver notifications and display settings.
