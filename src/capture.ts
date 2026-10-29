@@ -107,6 +107,26 @@ export const QUALITY_OPTIONS: readonly { value: string; label: string }[] = QUAL
   label: QUALITY_LABELS[value],
 }));
 
+/**
+ * The codec choices for a saved value: `CODEC_GROUPS`, plus the saved codec in the first group
+ * when it is not among them (written by hand, or added to the backend before this list), so
+ * the control never shows a value that is not the saved one.
+ */
+export function codecGroups(saved: string | null): CodecGroup[] {
+  const groups = CODEC_GROUPS.map((group) => ({ ...group, options: [...group.options] }));
+  if (!groups.some((group) => group.options.some((option) => option.value === saved))) {
+    groups[0].options.push({ value: saved, label: `${saved} (unknown)` });
+  }
+  return groups;
+}
+
+/** The quality choices for a saved value, with the same rule as `codecGroups`. */
+export function qualityOptions(saved: string): { value: string; label: string }[] {
+  const options = [...QUALITY_OPTIONS];
+  if (!options.some((option) => option.value === saved)) options.push({ value: saved, label: `${saved} (unknown)` });
+  return options;
+}
+
 /** The frame rates offered; the saved one is added when it is not among them. */
 export const FPS_PRESETS: readonly number[] = [30, 60, 90, 120, 144, 165, 240];
 
@@ -139,7 +159,10 @@ export function captureExplanation(capture: string): string {
 /** What happens after the screen changed from `before` to `after`; `null` when nothing does. */
 export function captureChangeNotice(before: string, after: string): string | null {
   if (before === after) return null;
-  return after === PORTAL
-    ? "The desktop will ask again which screen to share the next time the replay starts."
-    : "The saved desktop choice was cleared: choosing the portal again makes the desktop ask which screen to share.";
+  if (after === PORTAL) return "The desktop will ask again which screen to share the next time the replay starts.";
+  if (before === PORTAL) {
+    return "The saved desktop choice was cleared: choosing the portal again makes the desktop ask which screen to share.";
+  }
+  // Monitor to monitor: the desktop choice was already cleared when the portal was left.
+  return null;
 }

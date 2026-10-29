@@ -7,6 +7,7 @@ import {
   captureOptions,
   CODEC_GROUPS,
   CODECS,
+  codecGroups,
   FPS_MAX,
   FPS_MIN,
   FPS_PRESETS,
@@ -14,6 +15,7 @@ import {
   PORTAL,
   QUALITIES,
   QUALITY_OPTIONS,
+  qualityOptions,
 } from "./capture.ts";
 
 const RECORDER_RS = new URL("../src-tauri/crates/redline-core/src/recorder.rs", import.meta.url);
@@ -69,6 +71,30 @@ describe("QUALITY_OPTIONS", () => {
         ["ultra", "Ultra"],
       ],
     );
+  });
+});
+
+describe("codecGroups", () => {
+  it("is CODEC_GROUPS for a known or automatic codec", () => {
+    assert.deepEqual(codecGroups(null), CODEC_GROUPS);
+    assert.deepEqual(codecGroups("av1_vulkan"), CODEC_GROUPS);
+  });
+
+  it("adds an unknown saved codec to the first group, leaving CODEC_GROUPS untouched", () => {
+    const first = codecGroups("future_codec")[0].options;
+    assert.deepEqual(first[first.length - 1], { value: "future_codec", label: "future_codec (unknown)" });
+    assert.equal(CODEC_GROUPS[0].options.some((o) => o.value === "future_codec"), false);
+  });
+});
+
+describe("qualityOptions", () => {
+  it("is QUALITY_OPTIONS for a known quality", () => {
+    assert.deepEqual(qualityOptions("ultra"), [...QUALITY_OPTIONS]);
+  });
+
+  it("adds an unknown saved quality at the end", () => {
+    assert.deepEqual(qualityOptions("lossless").slice(-1), [{ value: "lossless", label: "lossless (unknown)" }]);
+    assert.equal(QUALITY_OPTIONS.length, 4);
   });
 });
 
@@ -133,8 +159,11 @@ describe("capture sentences", () => {
     assert.equal(captureChangeNotice("DP-2", "portal")?.includes("ask again"), true);
   });
 
-  it("says the portal choice was cleared when choosing a monitor", () => {
+  it("says the portal choice was cleared when leaving the portal for a monitor", () => {
     assert.equal(captureChangeNotice("portal", "DP-2")?.includes("cleared"), true);
-    assert.equal(captureChangeNotice("DP-2", "HDMI-A-1")?.includes("cleared"), true);
+  });
+
+  it("says nothing from one monitor to another: nothing about the desktop choice changed", () => {
+    assert.equal(captureChangeNotice("DP-2", "HDMI-A-1"), null);
   });
 });

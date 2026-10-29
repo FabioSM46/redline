@@ -5,9 +5,9 @@ import {
   captureChangeNotice,
   captureExplanation,
   captureOptions,
-  CODEC_GROUPS,
+  codecGroups,
   fpsOptions,
-  QUALITY_OPTIONS,
+  qualityOptions,
   type RecordingSettings,
 } from "../../capture.ts";
 import { IDLE, type Loaded, type SaveState, Setting, Value } from "./Setting.tsx";
@@ -43,29 +43,40 @@ export function Capture() {
     );
   }, []);
 
-  // Every control sends the whole `recording` object, so all four are busy while one saves: a
-  // second change never overwrites the first with stale values. Busy is `aria-disabled` plus an
-  // early return, so keyboard focus stays on the control. On failure the shown value stays the
-  // saved one and the reason sits next to it.
+  // `set_settings` takes the whole `recording` object plus `theme` and `start_minimised`, and this
+  // page owns only four of those fields. So every save first re-reads the settings and changes
+  // only its own field on that fresh copy: a value changed elsewhere since the page opened (the
+  // theme in General, the Record tab) is sent back as it is now, not as it was. The window left
+  // between that read and the write is one round trip.
+  // All four controls are busy while one saves, so a second change never races the first. Busy
+  // is `aria-disabled` plus an early return, so keyboard focus stays on the control. On failure
+  // the shown value stays the saved one and the reason sits next to it.
   const busy = Object.values(saves).some((s) => s.status === "saving");
   // Without GPU Screen Recorder nothing here has an effect: the page says what to install.
   const missing = targets.status === "ready" && !targets.value.available;
 
-  function save(field: Field, current: StoredSettings, recording: RecordingSettings) {
+  function save<F extends Field>(field: F, value: RecordingSettings[F]) {
     if (busy || missing) return;
     const setSave = (state: SaveState) => setSaves((all) => ({ ...all, [field]: state }));
     setSave({ status: "saving" });
-    const { theme, start_minimised } = current;
-    invoke<StoredSettings>("set_settings", { settings: { theme, start_minimised, recording } }).then(
-      (saved) => {
-        setSettings({ status: "ready", value: saved });
-        setSave(IDLE);
-        if (field === "capture") {
-          setCaptureNote(captureChangeNotice(current.recording.capture, saved.recording.capture));
-        }
-      },
-      (e) => setSave({ status: "error", message: String(e) }),
-    );
+    invoke<StoredSettings>("get_settings")
+      .then((fresh) => {
+        const { theme, start_minimised } = fresh;
+        const recording = { ...fresh.recording, [field]: value };
+        return invoke<StoredSettings>("set_settings", { settings: { theme, start_minimised, recording } }).then(
+          (saved) => ({ before: fresh, saved }),
+        );
+      })
+      .then(
+        ({ before, saved }) => {
+          setSettings({ status: "ready", value: saved });
+          setSave(IDLE);
+          if (field === "capture") {
+            setCaptureNote(captureChangeNotice(before.recording.capture, saved.recording.capture));
+          }
+        },
+        (e) => setSave({ status: "error", message: String(e) }),
+      );
   }
 
   const unavailableReason = targets.status === "ready" ? targets.value.unavailable_reason : null;
@@ -104,7 +115,7 @@ export function Capture() {
                 disabled={missing}
                 aria-disabled={busy}
                 onChange={(event) =>
-                  save("capture", current, { ...current.recording, capture: event.target.value })
+                  save("capture", event.target.value)
                 }
               >
                 {captureOptions(targets.value.items, current.recording.capture).map((target) => (
@@ -132,10 +143,10 @@ export function Capture() {
               disabled={missing}
               aria-disabled={busy}
               onChange={(event) =>
-                save("codec", current, { ...current.recording, codec: event.target.value || null })
+                save("codec", event.target.value || null)
               }
             >
-              {CODEC_GROUPS.map((group) => {
+              {codecGroups(current.recording.codec).map((group) => {
                 const options = group.options.map((option) => (
                   <option key={option.value ?? ""} value={option.value ?? ""}>
                     {option.label}
@@ -163,9 +174,9 @@ export function Capture() {
               value={current.recording.quality}
               disabled={missing}
               aria-disabled={busy}
-              onChange={(event) => save("quality", current, { ...current.recording, quality: event.target.value })}
+              onChange={(event) => save("quality", event.target.value)}
             >
-              {QUALITY_OPTIONS.map((option) => (
+              {qualityOptions(current.recording.quality).map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
@@ -188,7 +199,7 @@ export function Capture() {
               value={current.recording.fps}
               disabled={missing}
               aria-disabled={busy}
-              onChange={(event) => save("fps", current, { ...current.recording, fps: Number(event.target.value) })}
+              onChange={(event) => save("fps", Number(event.target.value))}
             >
               {fpsOptions(current.recording.fps).map((fps) => (
                 <option key={fps} value={fps}>
