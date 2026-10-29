@@ -307,8 +307,19 @@ impl Recorder {
     /// clears a previous error. Blocks until the process has exited.
     pub fn stop(&self) -> Result<RecorderStatus, String> {
         let _control = lock(&self.inner.control);
-        self.ensure_available()?;
+        self.stop_locked()
+    }
+
+    /// [`Recorder::stop`] with `control` already held. A running session is always stopped,
+    /// whatever the last detection said: stopping needs only our own process tree, not the
+    /// binary. With nothing running, a missing GPU Screen Recorder is the answer.
+    fn stop_locked(&self) -> Result<RecorderStatus, String> {
         let mut state = self.state();
+        if state.running.is_none() {
+            drop(state);
+            self.ensure_available()?;
+            state = self.state();
+        }
         state.generation += 1;
         let running = state.running.take();
         drop(state);
@@ -349,8 +360,10 @@ impl Recorder {
 
     /// Stops the replay when the app exits.
     pub fn shutdown(&self) {
+        // Under `control`: a start in flight finishes first and its session is stopped too.
+        let _control = lock(&self.inner.control);
         if self.state().running.is_some() {
-            let _ = self.stop();
+            let _ = self.stop_locked();
         }
     }
 
@@ -828,6 +841,42 @@ mod tests {
         assert_eq!(service.start().unwrap().replay, ReplayState::Starting);
         service.shutdown();
         assert_eq!(service.status().replay, ReplayState::Off);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_running_replay_stops_even_if_gpu_screen_recorder_disappeared() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = temp_dir("vanished");
+        let launcher = Launcher::Native(fake_gsr(&dir, LOOP));
+        let installed = Arc::new(AtomicBool::new(true));
+        let seen = Arc::clone(&installed);
+        let video_dir = dir.clone();
+        let service = Recorder::new(
+            Environment {
+                detect: Box::new(move || {
+                    if seen.load(Ordering::SeqCst) {
+                        Availability::Ready {
+                            launcher: launcher.clone(),
+                            warning: None,
+                        }
+                    } else {
+                        Availability::Missing(MISSING.to_owned())
+                    }
+                }),
+                config: Box::new(move || Ok(default_config(&video_dir))),
+                socket: Ok(dir.join("run").join("gsr.sock")),
+            },
+            Collector::default(),
+        );
+        service.start().unwrap();
+        // Uninstalled (or updated away) while the replay runs.
+        installed.store(false, Ordering::SeqCst);
+        service.detect();
+        assert!(!service.status().available);
+        assert_eq!(service.stop().unwrap().replay, ReplayState::Off);
+        // With nothing left to stop, the missing tool is the answer again.
+        assert_eq!(service.stop().unwrap_err(), MISSING);
         let _ = fs::remove_dir_all(&dir);
     }
 

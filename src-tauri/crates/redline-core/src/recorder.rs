@@ -762,11 +762,18 @@ mod tests {
         let socket = dir.join("gsr.sock");
         serve(&socket, |name| match name {
             "save-replay" => "{\"id\":1,\"result\":\"ok\",\"data\":\"/v/Replay_1.mkv\"}\n".into(),
+            "toggle-replay-recording" => "{\"id\":1,\"result\":\"ok\"}\n".into(),
             _ => "{\"id\":1,\"result\":\"error\",\"data\":\"unknown request name\"}\n".into(),
         });
         assert_eq!(
             save_replay(&socket, IPC_TIMEOUT).unwrap(),
             PathBuf::from("/v/Replay_1.mkv")
+        );
+        // The 6.1.6 name (`ipc_handlers.toggle_replay_recording` in src/cli/main.c, listed in the
+        // man page's IPC section); the reply carries no data.
+        assert_eq!(
+            ipc_request(&socket, "toggle-replay-recording", None, IPC_TIMEOUT).unwrap(),
+            None
         );
         let refused = ipc_request(&socket, "toggle-pause", None, IPC_TIMEOUT);
         assert_eq!(refused.unwrap_err().to_string(), "unknown request name");
