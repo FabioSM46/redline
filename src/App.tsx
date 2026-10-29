@@ -1,95 +1,63 @@
-import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { type ComponentType, useState } from "react";
 import "./App.css";
-import { formatValue, percentOf } from "./format.ts";
+import { GpuProvider, type GpuListState, useGpuList } from "./GpuContext.tsx";
+import { Home } from "./sections/Home.tsx";
+import { Performance } from "./sections/Performance.tsx";
+import { Record } from "./sections/Record.tsx";
+import { Settings } from "./sections/Settings.tsx";
+import { Mark, TopBar } from "./shell/TopBar.tsx";
+import { StatusBar } from "./shell/StatusBar.tsx";
+import type { TabId } from "./tabs.ts";
 
-type GpuSnapshot = {
-  temp_edge_c: number | null;
-  temp_junction_c: number | null;
-  temp_mem_c: number | null;
-  power_w: number | null;
-  power_cap_w: number | null;
-  fan_rpm: number | null;
-  sclk_mhz: number | null;
-  mclk_mhz: number | null;
-  vddgfx_mv: number | null;
-  gpu_busy_pct: number | null;
-  mem_busy_pct: number | null;
-  vram_used_mib: number | null;
-  vram_total_mib: number | null;
+/** One component per tab: each section fills its own file without touching the shell. */
+const SECTIONS: { [Tab in TabId]: ComponentType } = {
+  home: Home,
+  performance: Performance,
+  record: Record,
+  settings: Settings,
 };
 
-type GpuInfo = {
-  id: string;
-  name: string;
-  pci_slot: string;
-};
-
+/** The shell (D8): top bar with the tabs, scrolling section content, fixed status bar. */
 function App() {
-  // undefined: still listing; null: no AMD GPU found.
-  const [gpuId, setGpuId] = useState<string | null | undefined>(undefined);
-  const [snapshot, setSnapshot] = useState<GpuSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const gpus = useGpuList();
+  const [tab, setTab] = useState<TabId>("home");
 
-  // The GPU selector arrives with the app shell: until then, read the first GPU listed.
-  useEffect(() => {
-    invoke<GpuInfo[]>("list_gpus")
-      .then((gpus) => setGpuId(gpus[0]?.id ?? null))
-      .catch((e) => setError(String(e)));
-  }, []);
-
-  useEffect(() => {
-    if (!gpuId) return;
-    const read = () =>
-      invoke<GpuSnapshot>("gpu_snapshot", { gpuId })
-        .then((s) => {
-          setSnapshot(s);
-          setError(null);
-        })
-        .catch((e) => setError(String(e)));
-    read();
-    const timer = setInterval(read, 1000);
-    return () => clearInterval(timer);
-  }, [gpuId]);
-
-  if (error) {
-    return <main className="state">Cannot read the GPU: {error}</main>;
-  }
-  if (gpuId === null) {
-    return <main className="state">No AMD GPU found. Redline needs the amdgpu driver.</main>;
-  }
-  if (!snapshot) {
-    return <main className="state">Reading sensors…</main>;
+  if (gpus.status !== "ready") {
+    return (
+      <div className="shell">
+        <header className="topbar">
+          <Mark />
+        </header>
+        <main className="content">
+          <p className="state">{shellMessage(gpus)}</p>
+        </main>
+      </div>
+    );
   }
 
-  const s = snapshot;
-  const vram = percentOf(s.vram_used_mib, s.vram_total_mib);
-  const metrics: [string, string][] = [
-    ["Temperature", formatValue(s.temp_edge_c, "°C")],
-    ["Hotspot", formatValue(s.temp_junction_c, "°C")],
-    ["Memory", formatValue(s.temp_mem_c, "°C")],
-    ["Power", `${formatValue(s.power_w, "W")} / ${formatValue(s.power_cap_w, "W")}`],
-    ["Fan", formatValue(s.fan_rpm, "rpm")],
-    ["GPU clock", formatValue(s.sclk_mhz, "MHz")],
-    ["VRAM clock", formatValue(s.mclk_mhz, "MHz")],
-    ["Voltage", formatValue(s.vddgfx_mv, "mV")],
-    ["GPU usage", formatValue(s.gpu_busy_pct, "%")],
-    ["VRAM", `${formatValue(s.vram_used_mib, "MiB")} (${formatValue(vram, "%")})`],
-  ];
-
+  const Section = SECTIONS[tab];
   return (
-    <main className="dashboard">
-      <h1>Redline</h1>
-      <dl className="metrics">
-        {metrics.map(([label, value]) => (
-          <div className="metric" key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </main>
+    <GpuProvider value={gpus.value}>
+      <div className="shell">
+        <TopBar active={tab} onSelect={setTab} />
+        <main className="content">
+          <Section />
+        </main>
+        <StatusBar />
+      </div>
+    </GpuProvider>
   );
+}
+
+function shellMessage(gpus: Exclude<GpuListState, { status: "ready" }>): string {
+  switch (gpus.status) {
+    case "loading":
+      return "Looking for GPUs…";
+    case "empty":
+      return "No AMD GPU found. Redline needs the amdgpu driver.";
+    case "error":
+      return `Cannot list the GPUs: ${gpus.message}`;
+  }
 }
 
 export default App;
