@@ -3,6 +3,7 @@
   --text-sm: 13px;
   --text-md: 15px;
   --text-lg: 22px;
+  --text-xl: 34px;
   --space: 16px;
   --space-sm: 8px;
   --radius: 10px;
@@ -15,12 +16,14 @@
   --muted: #6e6e73;
   --border: #e2e2e6;
   --accent: #d7263d;
+  --high: #c2410c;
 
   --dark-bg: #141416;
   --dark-surface: #1f1f23;
   --dark-fg: #f2f2f4;
   --dark-muted: #a1a1a8;
   --dark-border: #2e2e34;
+  --dark-high: #fb923c;
 
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
@@ -36,6 +39,7 @@
     --fg: var(--dark-fg);
     --muted: var(--dark-muted);
     --border: var(--dark-border);
+    --high: var(--dark-high);
   }
 }
 
@@ -181,27 +185,55 @@ body {
   white-space: nowrap;
 }
 
-.metrics {
+.figures {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: var(--space);
   margin: 0;
 }
 
-.metric {
+.figures-primary {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.figures-secondary {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  margin-top: var(--space);
+}
+
+.figure {
   padding: var(--space);
   border-radius: var(--radius);
   background: var(--surface);
 }
 
-.metric dt {
+.figure dt {
   font-size: var(--text-sm);
   color: var(--muted);
 }
 
-.metric dd {
-  margin: 4px 0 0;
-  font-size: var(--text-lg);
-  font-weight: 600;
+.figure dd {
+  margin: calc(var(--space-sm) / 2) 0 0;
   font-variant-numeric: tabular-nums;
+}
+
+.figure-value {
+  font-weight: 600;
+}
+
+.figures-primary .figure-value {
+  font-size: var(--text-xl);
+}
+
+.figures-secondary .figure-value {
+  font-size: var(--text-lg);
+}
+
+.figure-detail {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* State colour: a temperature past its threshold (HIGH_TEMPERATURE_C in src/home.ts). */
+.figure-high {
+  color: var(--high);
 }
