@@ -1,5 +1,5 @@
-// Settings → Shortcuts (D5, D8): the commands to bind in the desktop's custom shortcuts until the
-// GlobalShortcuts portal is available.
+// Settings → Shortcuts (D5, D8, D10): the keys the GlobalShortcuts portal reports where the desktop
+// has it, and the commands to bind in the desktop's custom shortcuts everywhere else.
 
 /**
  * The executable the `.deb` installs (`/usr/bin/redline`): the Cargo package name, which is also
@@ -87,4 +87,38 @@ export function copyError(e: unknown): string {
   // DOMException is an Error; its messages often end with a full stop of their own.
   const reason = (e instanceof Error ? e.message : String(e)).trim().replace(/\.+$/, "");
   return `Not copied: ${reason || "unknown error"}. Select the command and copy it by hand.`;
+}
+
+/**
+ * The event `global_shortcuts.rs` sends with every new `PortalShortcuts` (`STATUS_EVENT` there;
+ * `shortcuts.test.ts` checks the two match).
+ */
+export const PORTAL_SHORTCUTS_EVENT = "global-shortcuts";
+
+/** One action and the keys the desktop reports for it; `trigger` is null when nothing is bound. */
+export type PortalBinding = { arg: string; trigger: string | null };
+
+/** `ShortcutsStatus` in src-tauri/src/global_shortcuts.rs. */
+export type PortalShortcuts =
+  | { state: "checking" }
+  | { state: "unavailable" }
+  | { state: "ready"; version: number; can_configure: boolean; bindings: PortalBinding[] }
+  | { state: "failed"; error: string };
+
+/** What a portal row shows for an action. */
+export type PortalRow = { arg: string; title: string; description: string; trigger: string | null };
+
+/**
+ * One row per `SHORTCUT_ACTIONS` entry, in that order, with the keys the portal reports for it.
+ * Bindings for arguments Redline does not know are ignored; a missing or blank trigger is null.
+ * A payload without a bindings list (a backend that drifted from this mirror) shows every action
+ * as unbound instead of breaking the screen.
+ */
+export function portalRows(bindings: readonly PortalBinding[] | null | undefined): PortalRow[] {
+  const reported = Array.isArray(bindings) ? bindings : [];
+  return SHORTCUT_ACTIONS.map(({ arg, title, description }) => {
+    const found = reported.find((b) => b?.arg === arg)?.trigger;
+    const trigger = typeof found === "string" ? found.trim() : null;
+    return { arg, title, description, trigger: trigger ? trigger : null };
+  });
 }

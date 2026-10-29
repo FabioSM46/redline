@@ -98,6 +98,8 @@ replay that is `starting` or `on` and starts it otherwise); a failure is a deskt
 with the same sentence. Unknown arguments are ignored, and one launch performs one action.
 Where the GlobalShortcuts portal exists, the same actions are also registered as the desktop's
 global shortcuts (D10), and a key press calls the same `actions::dispatch` a second launch does.
+Settings → Shortcuts then shows the keys the portal reports and a button for the desktop's own
+dialog, with the commands behind a disclosure; without the portal it shows the commands.
 
 **Saved clips**: every `file-saved` also sends a desktop notification over D-Bus with the file
 name only; without a notification server nothing is shown and nothing fails. `list_recordings`
