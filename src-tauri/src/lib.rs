@@ -12,10 +12,11 @@ fn list_gpus() -> Result<Vec<GpuInfo>, String> {
     sensors::list_gpus().map_err(|e| e.to_string())
 }
 
-/// The latest reading of the GPU with id `gpu_id` (its PCI slot), taken by the sampler.
+/// The latest reading of the GPU with id `gpu_id` (its PCI slot), taken by the sampler;
+/// a GPU the sampler has not recorded yet is read live.
 #[tauri::command]
 fn gpu_snapshot(gpu_id: String, sampler: State<'_, Sampler>) -> Result<GpuSnapshot, String> {
-    sampler.latest(&gpu_id)
+    sampler.latest(&gpu_id, sampler::read_live)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

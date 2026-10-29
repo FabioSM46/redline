@@ -60,29 +60,49 @@ impl Sampler {
         }
     }
 
-    /// The most recent reading of the GPU with id `id`.
-    pub fn latest(&self, id: &str) -> Result<GpuSnapshot, String> {
-        let map = self.lock();
-        let entry = map.get(id).ok_or_else(|| unknown_gpu(id))?;
-        if !entry.present {
-            return Err(format!("the GPU with id {id} is no longer present"));
+    /// The most recent reading of the GPU with id `id`. A GPU the sampler has not seen yet
+    /// (it appeared since the last round, or discovery has been failing) is read live with
+    /// `live`, so this never disagrees with `list_gpus`; `live` names the id when the GPU
+    /// does not exist. The lock is released before `live` runs.
+    pub fn latest(
+        &self,
+        id: &str,
+        live: impl FnOnce(&str) -> Result<GpuSnapshot, String>,
+    ) -> Result<GpuSnapshot, String> {
+        {
+            let map = self.lock();
+            if let Some(entry) = map.get(id) {
+                if !entry.present {
+                    return Err(format!("the GPU with id {id} is no longer present"));
+                }
+                if let Some(sample) = entry.history.latest() {
+                    return Ok(sample.snapshot.clone());
+                }
+            }
         }
-        entry
-            .history
-            .latest()
-            .map(|s| s.snapshot.clone())
-            .ok_or_else(|| unknown_gpu(id))
+        live(id)
     }
 
     /// The readings of the last `window_s` seconds (60, 300 or 900), oldest first. A GPU
-    /// that disappeared still returns what was recorded before it went away.
-    pub fn history(&self, id: &str, window_s: u64) -> Result<Vec<Sample>, String> {
+    /// that disappeared still returns what was recorded before it went away. A GPU the
+    /// sampler has not seen yet has an empty history if `live` can read it, and is an
+    /// error naming the id otherwise. The lock is released before `live` runs.
+    pub fn history(
+        &self,
+        id: &str,
+        window_s: u64,
+        live: impl FnOnce(&str) -> Result<GpuSnapshot, String>,
+    ) -> Result<Vec<Sample>, String> {
         if !WINDOWS_S.contains(&window_s) {
             return Err(format!("window_s must be 60, 300 or 900, got {window_s}"));
         }
-        let map = self.lock();
-        let entry = map.get(id).ok_or_else(|| unknown_gpu(id))?;
-        Ok(entry.history.window(window_s))
+        {
+            let map = self.lock();
+            if let Some(entry) = map.get(id) {
+                return Ok(entry.history.window(window_s));
+            }
+        }
+        live(id).map(|_| Vec::new())
     }
 
     /// A panic elsewhere must not take the history down with it: a poisoned map is
@@ -92,8 +112,11 @@ impl Sampler {
     }
 }
 
-fn unknown_gpu(id: &str) -> String {
-    format!("no AMD GPU with id {id}")
+/// A live sysfs read of one GPU, for the ids the sampler has not recorded yet.
+pub fn read_live(id: &str) -> Result<GpuSnapshot, String> {
+    AmdGpu::by_id(id)
+        .map(|gpu| gpu.snapshot())
+        .map_err(|e| e.to_string())
 }
 
 fn now_ms() -> u64 {
@@ -104,9 +127,25 @@ fn now_ms() -> u64 {
 }
 
 /// One round on the real sysfs. A failed discovery skips the round: the next one retries.
-fn sample_once(sampler: &Sampler) {
-    if let Ok(gpus) = AmdGpu::discover() {
-        sampler.tick(&gpus, now_ms());
+fn sample_once(sampler: &Sampler) -> Result<(), String> {
+    let gpus = AmdGpu::discover().map_err(|e| format!("{e:#}"))?;
+    sampler.tick(&gpus, now_ms());
+    Ok(())
+}
+
+/// Logs a discovery failure once when it starts and once when it ends, not every second:
+/// without it a sampler that records nothing would leave no trace of why.
+fn log_transition(failing: &mut bool, result: Result<(), String>) {
+    match result {
+        Err(error) if !*failing => {
+            *failing = true;
+            eprintln!("redline: GPU sampler cannot discover GPUs, retrying every second: {error}");
+        }
+        Ok(()) if *failing => {
+            *failing = false;
+            eprintln!("redline: GPU sampler discovers GPUs again");
+        }
+        _ => {}
     }
 }
 
@@ -114,7 +153,8 @@ fn sample_once(sampler: &Sampler) {
 /// before returning, so `gpu_snapshot` has a reading as soon as the window opens.
 pub fn start(app: &mut App) -> std::io::Result<()> {
     let sampler = Sampler::default();
-    sample_once(&sampler);
+    let mut failing = false;
+    log_transition(&mut failing, sample_once(&sampler));
     app.manage(sampler);
 
     let handle = app.handle().clone();
@@ -127,7 +167,7 @@ pub fn start(app: &mut App) -> std::io::Result<()> {
                 // A late round (suspend, heavy load) restarts the schedule instead of
                 // firing a burst of catch-up rounds.
                 next = (next + PERIOD).max(Instant::now());
-                sample_once(&handle.state::<Sampler>());
+                log_transition(&mut failing, sample_once(&handle.state::<Sampler>()));
             }
         })?;
     Ok(())
@@ -141,7 +181,7 @@ pub fn gpu_history(
     window_s: u64,
     sampler: State<'_, Sampler>,
 ) -> Result<Vec<Sample>, String> {
-    sampler.history(&gpu_id, window_s)
+    sampler.history(&gpu_id, window_s, read_live)
 }
 
 #[cfg(test)]
@@ -183,6 +223,20 @@ mod tests {
         sampler.tick(&gpus, now_ms);
     }
 
+    /// `live` for a sysfs tree where the GPU does not exist.
+    fn no_gpu(id: &str) -> Result<GpuSnapshot, String> {
+        Err(format!("no AMD GPU with id {id}"))
+    }
+
+    /// `live` reading the fake sysfs tree under `root`, like `read_live` on the real one.
+    fn live_in(root: &Path) -> impl Fn(&str) -> Result<GpuSnapshot, String> + '_ {
+        move |id| {
+            AmdGpu::by_id_in(&root.join("drm"), id)
+                .map(|gpu| gpu.snapshot())
+                .map_err(|e| e.to_string())
+        }
+    }
+
     const A: &str = "0000:06:00.0";
     const B: &str = "0000:0d:00.0";
 
@@ -196,9 +250,9 @@ mod tests {
             tick_at(&sampler, &root, 10_000 + i * 1000);
         }
 
-        assert_eq!(sampler.latest(A).unwrap().temp_edge_c, Some(40.0));
-        assert_eq!(sampler.latest(B).unwrap().temp_edge_c, Some(60.0));
-        let h = sampler.history(B, 60).unwrap();
+        assert_eq!(sampler.latest(A, no_gpu).unwrap().temp_edge_c, Some(40.0));
+        assert_eq!(sampler.latest(B, no_gpu).unwrap().temp_edge_c, Some(60.0));
+        let h = sampler.history(B, 60, no_gpu).unwrap();
         let ts: Vec<u64> = h.iter().map(|s| s.timestamp_ms).collect();
         assert_eq!(ts, vec![10_000, 11_000, 12_000]);
         fs::remove_dir_all(&root).unwrap();
@@ -218,7 +272,7 @@ mod tests {
         )
         .unwrap();
         tick_at(&sampler, &root, 2_000);
-        assert_eq!(sampler.latest(A).unwrap().temp_edge_c, Some(55.0));
+        assert_eq!(sampler.latest(A, no_gpu).unwrap().temp_edge_c, Some(55.0));
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -229,7 +283,7 @@ mod tests {
         let sampler = Sampler::default();
         tick_at(&sampler, &root, 1_000);
 
-        let json = serde_json::to_value(sampler.history(A, 60).unwrap()).unwrap();
+        let json = serde_json::to_value(sampler.history(A, 60, no_gpu).unwrap()).unwrap();
         assert_eq!(json[0]["snapshot"]["temp_edge_c"], 40.0);
         assert!(json[0]["snapshot"]["power_w"].is_null());
         assert!(json[0]["snapshot"]["fan_rpm"].is_null());
@@ -238,11 +292,55 @@ mod tests {
 
     #[test]
     fn unknown_id_is_an_error_that_names_it() {
+        let root = temp_root("unknown");
         let sampler = Sampler::default();
-        let err = sampler.latest("0000:ff:00.0").unwrap_err();
+        let err = sampler.latest("0000:ff:00.0", live_in(&root)).unwrap_err();
         assert!(err.contains("0000:ff:00.0"), "{err}");
-        let err = sampler.history("0000:ff:00.0", 60).unwrap_err();
+        let err = sampler
+            .history("0000:ff:00.0", 60, live_in(&root))
+            .unwrap_err();
         assert!(err.contains("0000:ff:00.0"), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_gpu_not_sampled_yet_is_read_live() {
+        let root = temp_root("live");
+        fake_card(&root, "card0", A, 40);
+        let sampler = Sampler::default();
+        tick_at(&sampler, &root, 1_000);
+        // appears between two rounds: list_gpus already returns it
+        fake_card(&root, "card1", B, 70);
+
+        let snapshot = sampler.latest(B, live_in(&root)).unwrap();
+        assert_eq!(snapshot.temp_edge_c, Some(70.0));
+        assert!(sampler.history(B, 60, live_in(&root)).unwrap().is_empty());
+        // a sampled GPU is served from its history, not read again
+        fs::write(
+            root.join("devices")
+                .join(A)
+                .join("hwmon/hwmon0/temp1_input"),
+            "99000\n",
+        )
+        .unwrap();
+        assert_eq!(
+            sampler.latest(A, live_in(&root)).unwrap().temp_edge_c,
+            Some(40.0)
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn discovery_failures_are_logged_only_on_transitions() {
+        let mut failing = false;
+        log_transition(&mut failing, Ok(()));
+        assert!(!failing);
+        log_transition(&mut failing, Err("boom".into()));
+        assert!(failing);
+        log_transition(&mut failing, Err("boom".into()));
+        assert!(failing);
+        log_transition(&mut failing, Ok(()));
+        assert!(!failing);
     }
 
     #[test]
@@ -253,10 +351,10 @@ mod tests {
         tick_at(&sampler, &root, 1_000);
 
         for w in WINDOWS_S {
-            assert_eq!(sampler.history(A, w).unwrap().len(), 1);
+            assert_eq!(sampler.history(A, w, no_gpu).unwrap().len(), 1);
         }
         for w in [0, 1, 59, 61, 120, 901, 3600, u64::MAX] {
-            let err = sampler.history(A, w).unwrap_err();
+            let err = sampler.history(A, w, no_gpu).unwrap_err();
             assert!(err.contains("window_s"), "{w}: {err}");
         }
         fs::remove_dir_all(&root).unwrap();
@@ -274,17 +372,17 @@ mod tests {
         tick_at(&sampler, &root, 2_000);
         tick_at(&sampler, &root, 3_000);
 
-        assert_eq!(sampler.history(A, 60).unwrap().len(), 3);
-        let err = sampler.latest(B).unwrap_err();
+        assert_eq!(sampler.history(A, 60, no_gpu).unwrap().len(), 3);
+        let err = sampler.latest(B, no_gpu).unwrap_err();
         assert!(err.contains(B), "{err}");
-        let kept = sampler.history(B, 60).unwrap();
+        let kept = sampler.history(B, 60, no_gpu).unwrap();
         assert_eq!(kept.len(), 1, "no new samples after it disappeared");
         assert_eq!(kept[0].timestamp_ms, 1_000);
 
         // and it is sampled again if it comes back
         fake_card(&root, "card1", B, 61);
         tick_at(&sampler, &root, 4_000);
-        assert_eq!(sampler.latest(B).unwrap().temp_edge_c, Some(61.0));
+        assert_eq!(sampler.latest(B, no_gpu).unwrap().temp_edge_c, Some(61.0));
         fs::remove_dir_all(&root).unwrap();
     }
 
@@ -297,7 +395,7 @@ mod tests {
 
         let sampler = Sampler::default();
         sampler.tick(&gpus, 1_000);
-        assert!(sampler.latest(A).is_err());
+        assert!(sampler.latest(A, no_gpu).is_err());
         fs::remove_dir_all(&root).unwrap();
     }
 }
