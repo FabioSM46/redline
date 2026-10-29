@@ -145,6 +145,7 @@ pub enum FanMode {
 
 /// One point of a fan curve.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CurvePoint {
     pub temperature_c: i32,
     pub speed_pct: f64,

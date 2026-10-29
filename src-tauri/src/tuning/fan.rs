@@ -273,6 +273,16 @@ pub(super) fn check_curve(
         .collect())
 }
 
+/// Why the firmware option `name` is missing: overdrive is off (a firmware fan LACT cannot
+/// drive), the GPU has no firmware fan at all, or this firmware does not expose that option.
+fn missing_option(name: &str, caps: &FanCapabilities) -> String {
+    match (caps.has_pmfw, caps.configurable) {
+        (true, false) => NEEDS_OVERDRIVE.to_owned(),
+        (false, _) => NO_FIRMWARE_OPTIONS.to_owned(),
+        (true, true) => format!("The firmware of this GPU does not expose the {name}."),
+    }
+}
+
 /// One firmware option inside the range the firmware reports.
 fn check_pmfw_value(
     name: &str,
@@ -282,12 +292,7 @@ fn check_pmfw_value(
     caps: &FanCapabilities,
 ) -> Result<(), String> {
     let Some(info) = info else {
-        return Err(if caps.has_pmfw {
-            NEEDS_OVERDRIVE
-        } else {
-            NO_FIRMWARE_OPTIONS
-        }
-        .to_owned());
+        return Err(missing_option(name, caps));
     };
     let Some((min, max)) = info.allowed_range else {
         return Err(format!(
@@ -355,12 +360,7 @@ fn check_pmfw(
         );
     }
     if pmfw.zero_rpm.is_some() && caps.pmfw.zero_rpm_enable.is_none() {
-        return Err(if caps.has_pmfw {
-            NEEDS_OVERDRIVE
-        } else {
-            NO_FIRMWARE_OPTIONS
-        }
-        .to_owned());
+        return Err(missing_option("zero RPM switch", caps));
     }
     if let Some(value) = pmfw.zero_rpm_threshold {
         check_pmfw_value(
@@ -669,6 +669,7 @@ mod tests {
             json!({ "mode": "auto", "speed": 50 }),
             json!({ "mode": "manual" }),
             json!({ "mode": "auto", "pmfw": { "zero_rpm_temp": 50 } }),
+            json!({ "mode": "curve", "curve": [{ "temperature_c": 40, "speed_pct": 30, "x": 1 }] }),
         ] {
             assert!(
                 serde_json::from_value::<FanSettings>(bad.clone()).is_err(),
@@ -867,6 +868,27 @@ mod tests {
                 "The firmware of this GPU does not allow changing the minimum fan speed."
                     .to_owned()
             )
+        );
+    }
+
+    #[test]
+    fn an_option_missing_with_overdrive_on_does_not_blame_overdrive() {
+        let mut caps = firmware_fan();
+        caps.pmfw.acoustic_target = None;
+        caps.pmfw.zero_rpm_enable = None;
+        assert_eq!(
+            check(
+                json!({ "mode": "auto", "pmfw": { "acoustic_target": 1500 } }),
+                &caps
+            ),
+            Err("The firmware of this GPU does not expose the acoustic target.".to_owned())
+        );
+        assert_eq!(
+            check(
+                json!({ "mode": "auto", "pmfw": { "zero_rpm": true } }),
+                &caps
+            ),
+            Err("The firmware of this GPU does not expose the zero RPM switch.".to_owned())
         );
     }
 
