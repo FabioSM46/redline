@@ -5,6 +5,9 @@ description = "Control panel for AMD GPUs on Linux"
 authors = ["FabioSM46 <124870035+FabioSM46@users.noreply.github.com>"]
 edition = "2024"
 license = "MIT"
+# The workspace also builds the `redline-probe` binary: without this key `cargo run`
+# (and so `pnpm tauri dev`) cannot choose which binary to start.
+default-run = "redline"
 
 [lib]
 # The `_lib` suffix keeps the lib name from clashing with the bin name.
