@@ -3,9 +3,32 @@
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 const AMD_VENDOR: &str = "0x1002";
+const DRM_ROOT: &str = "/sys/class/drm";
+
+/// What the UI needs to list a GPU and ask for it again by id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GpuInfo {
+    /// The PCI slot: stable across reboots and the same id LACT uses.
+    pub id: String,
+    /// `device/product_name` when the driver exposes it, otherwise `GPU <pci_slot>`.
+    pub name: String,
+    /// e.g. 0000:0d:00.0
+    pub pci_slot: String,
+}
+
+/// Every AMD GPU present, sorted by PCI slot. No GPU is an empty list, not an error.
+pub fn list_gpus() -> Result<Vec<GpuInfo>> {
+    list_gpus_in(Path::new(DRM_ROOT))
+}
+
+/// Like `list_gpus`, but on a given directory: tests pass a fake sysfs tree.
+pub fn list_gpus_in(drm: &Path) -> Result<Vec<GpuInfo>> {
+    Ok(AmdGpu::discover_in(drm)?.iter().map(AmdGpu::info).collect())
+}
 
 #[derive(Debug, Clone)]
 pub struct AmdGpu {
@@ -34,15 +57,20 @@ pub struct GpuSnapshot {
 }
 
 impl AmdGpu {
-    /// Returns every AMD GPU present (card0, card1, ...).
+    /// Returns every AMD GPU present, sorted by PCI slot (`read_dir` order is not stable).
     pub fn discover() -> Result<Vec<AmdGpu>> {
-        Self::discover_in(Path::new("/sys/class/drm"))
+        Self::discover_in(Path::new(DRM_ROOT))
     }
 
     /// Like `discover`, but on a given directory: tests pass a fake sysfs tree.
+    /// A missing directory means no GPU, not an error.
     pub fn discover_in(drm: &Path) -> Result<Vec<AmdGpu>> {
         let mut gpus = Vec::new();
-        let entries = fs::read_dir(drm).with_context(|| format!("reading {}", drm.display()))?;
+        let entries = match fs::read_dir(drm) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(gpus),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", drm.display())),
+        };
         for entry in entries {
             let path = entry?.path();
             let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -68,13 +96,44 @@ impl AmdGpu {
                 pci_slot,
             });
         }
+        gpus.sort_by(|a, b| a.pci_slot.cmp(&b.pci_slot));
         Ok(gpus)
     }
 
+    /// The first GPU by PCI slot. The app asks by id instead; this is for the probe CLI.
     pub fn first() -> Result<AmdGpu> {
         match Self::discover()?.into_iter().next() {
             Some(gpu) => Ok(gpu),
-            None => bail!("no AMD GPU found in /sys/class/drm"),
+            None => bail!("no AMD GPU found in {DRM_ROOT}"),
+        }
+    }
+
+    /// The GPU whose id (PCI slot) is `id`.
+    pub fn by_id(id: &str) -> Result<AmdGpu> {
+        Self::by_id_in(Path::new(DRM_ROOT), id)
+    }
+
+    /// Like `by_id`, but on a given directory: tests pass a fake sysfs tree.
+    pub fn by_id_in(drm: &Path, id: &str) -> Result<AmdGpu> {
+        match Self::discover_in(drm)?
+            .into_iter()
+            .find(|gpu| gpu.pci_slot == id)
+        {
+            Some(gpu) => Ok(gpu),
+            None => bail!("no AMD GPU with id {id}"),
+        }
+    }
+
+    /// Id and display name. Redline adds no brand name of its own: the name is either
+    /// the driver's `product_name` or a neutral fallback.
+    pub fn info(&self) -> GpuInfo {
+        let name = read_trim(&self.device.join("product_name"))
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| format!("GPU {}", self.pci_slot));
+        GpuInfo {
+            id: self.pci_slot.clone(),
+            name,
+            pci_slot: self.pci_slot.clone(),
         }
     }
 
@@ -173,6 +232,84 @@ mod tests {
         let gpus = AmdGpu::discover_in(&root.join("drm")).unwrap();
         assert_eq!(gpus.len(), 1);
         assert_eq!(gpus[0].pci_slot, "0000:0d:00.0");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Two AMD cards (the higher slot created first) and one non-AMD card.
+    fn two_amd_one_other(root: &Path) {
+        fake_card(
+            root,
+            "card0",
+            "0000:0d:00.0",
+            AMD_VENDOR,
+            &[("product_name", "Discrete Test Card")],
+        );
+        fake_card(root, "card1", "0000:00:02.0", "0x8086", &[]);
+        fake_card(
+            root,
+            "card2",
+            "0000:06:00.0",
+            AMD_VENDOR,
+            &[("product_name", "")],
+        );
+    }
+
+    #[test]
+    fn lists_amd_gpus_sorted_by_pci_slot_with_names() {
+        let root = temp_root("list");
+        two_amd_one_other(&root);
+
+        let gpus = list_gpus_in(&root.join("drm")).unwrap();
+        assert_eq!(
+            gpus,
+            vec![
+                GpuInfo {
+                    id: "0000:06:00.0".into(),
+                    name: "GPU 0000:06:00.0".into(),
+                    pci_slot: "0000:06:00.0".into(),
+                },
+                GpuInfo {
+                    id: "0000:0d:00.0".into(),
+                    name: "Discrete Test Card".into(),
+                    pci_slot: "0000:0d:00.0".into(),
+                },
+            ]
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn name_falls_back_when_product_name_is_missing() {
+        let root = temp_root("noname");
+        fake_card(&root, "card1", "0000:0d:00.0", AMD_VENDOR, &[]);
+
+        let gpus = list_gpus_in(&root.join("drm")).unwrap();
+        assert_eq!(gpus[0].name, "GPU 0000:0d:00.0");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn no_gpu_is_an_empty_list() {
+        let root = temp_root("empty");
+        fake_card(&root, "card0", "0000:00:02.0", "0x8086", &[]);
+        assert!(list_gpus_in(&root.join("drm")).unwrap().is_empty());
+        assert!(list_gpus_in(&root.join("missing")).unwrap().is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn looks_up_a_gpu_by_id() {
+        let root = temp_root("byid");
+        two_amd_one_other(&root);
+
+        let gpu = AmdGpu::by_id_in(&root.join("drm"), "0000:0d:00.0").unwrap();
+        assert_eq!(gpu.pci_slot, "0000:0d:00.0");
+        assert_eq!(gpu.info().name, "Discrete Test Card");
+
+        let err = AmdGpu::by_id_in(&root.join("drm"), "0000:00:02.0").unwrap_err();
+        assert!(err.to_string().contains("0000:00:02.0"), "{err}");
+        let err = AmdGpu::by_id_in(&root.join("drm"), "0000:ff:00.0").unwrap_err();
+        assert!(err.to_string().contains("0000:ff:00.0"), "{err}");
         fs::remove_dir_all(&root).unwrap();
     }
 

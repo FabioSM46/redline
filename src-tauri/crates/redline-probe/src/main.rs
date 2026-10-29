@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use redline_core::lact::LactClient;
 use redline_core::recorder::{self, AudioTrack, Launcher, ReplayConfig, ReplaySession};
-use redline_core::sensors::{AmdGpu, GpuSnapshot};
+use redline_core::sensors::{self, AmdGpu, GpuSnapshot};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -21,8 +21,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// AMD GPUs found in sysfs, with their id and name
+    Gpus {
+        #[arg(long)]
+        json: bool,
+    },
     /// GPU sensors read from sysfs
     Sensors {
+        /// GPU id (PCI slot) from `gpus`; defaults to the first one
+        #[arg(long)]
+        gpu: Option<String>,
         /// Refresh every second
         #[arg(long)]
         watch: bool,
@@ -56,7 +64,8 @@ enum Cmd {
 
 fn main() -> Result<()> {
     match Cli::parse().cmd {
-        Cmd::Sensors { watch, json } => sensors(watch, json),
+        Cmd::Gpus { json } => gpus(json),
+        Cmd::Sensors { gpu, watch, json } => sensors(gpu.as_deref(), watch, json),
         Cmd::Lact { what } => lact(&what),
         Cmd::Audio => audio(),
         Cmd::Replay {
@@ -70,8 +79,25 @@ fn main() -> Result<()> {
     }
 }
 
-fn sensors(watch: bool, json: bool) -> Result<()> {
-    let gpu = AmdGpu::first()?;
+fn gpus(json: bool) -> Result<()> {
+    let gpus = sensors::list_gpus()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&gpus)?);
+    } else if gpus.is_empty() {
+        eprintln!("no AMD GPU found");
+    } else {
+        for gpu in &gpus {
+            println!("{}  {}", gpu.id, gpu.name);
+        }
+    }
+    Ok(())
+}
+
+fn sensors(gpu: Option<&str>, watch: bool, json: bool) -> Result<()> {
+    let gpu = match gpu {
+        Some(id) => AmdGpu::by_id(id)?,
+        None => AmdGpu::first()?,
+    };
     eprintln!("GPU {} ({})", gpu.pci_slot, gpu.device.display());
     loop {
         let s = gpu.snapshot();
