@@ -842,3 +842,30 @@ body {
 .shortcut-later {
   margin: var(--space-sm) 0 0;
 }
+
+/* The keys the GlobalShortcuts portal reports (D10). */
+.shortcut-trigger {
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Settings → Shortcuts: the commands, behind a disclosure once the portal has the keys. */
+.settings-advanced > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.settings-advanced > summary:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
+.settings-advanced[open] > summary {
+  margin-bottom: var(--space);
+}

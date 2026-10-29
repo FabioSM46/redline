@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { copyError, copyText, EXECUTABLE, SHORTCUT_ACTIONS, shortcutCommand } from "./shortcuts.ts";
+import {
+  copyError,
+  copyText,
+  EXECUTABLE,
+  PORTAL_SHORTCUTS_EVENT,
+  portalRows,
+  SHORTCUT_ACTIONS,
+  shortcutCommand,
+} from "./shortcuts.ts";
 
 const ACTIONS_RS = new URL("../src-tauri/src/actions.rs", import.meta.url);
+const GLOBAL_SHORTCUTS_RS = new URL("../src-tauri/src/global_shortcuts.rs", import.meta.url);
 const CARGO_TOML = new URL("../src-tauri/Cargo.toml", import.meta.url);
 const TAURI_CONFS = ["tauri.conf.json", "tauri.linux.conf.json", "tauri.release.linux.conf.json"].map(
   (name) => new URL(`../src-tauri/${name}`, import.meta.url),
@@ -124,5 +133,53 @@ describe("copyError", () => {
     assert.equal(copyError("blocked"), "Not copied: blocked. Select the command and copy it by hand.");
     assert.equal(copyError(new Error("Write permission denied.")), "Not copied: Write permission denied. Select the command and copy it by hand.");
     assert.equal(copyError(new Error("")), "Not copied: unknown error. Select the command and copy it by hand.");
+  });
+});
+
+describe("PORTAL_SHORTCUTS_EVENT", () => {
+  it("is STATUS_EVENT in global_shortcuts.rs", () => {
+    const source = readFileSync(GLOBAL_SHORTCUTS_RS, "utf8");
+    assert.equal(source.includes(`pub const STATUS_EVENT: &str = "${PORTAL_SHORTCUTS_EVENT}";`), true);
+  });
+});
+
+describe("portalRows", () => {
+  it("has one row per action, in the actions' order, whatever the portal's order", () => {
+    const rows = portalRows([
+      { arg: "--toggle-recording", trigger: "Ctrl+Alt+R" },
+      { arg: "--save-replay", trigger: "Ctrl+Alt+S" },
+    ]);
+    assert.deepEqual(
+      rows.map((r) => [r.arg, r.trigger]),
+      [
+        ["--save-replay", "Ctrl+Alt+S"],
+        ["--toggle-replay", null],
+        ["--toggle-recording", "Ctrl+Alt+R"],
+      ],
+    );
+    assert.deepEqual(
+      rows.map((r) => r.title),
+      SHORTCUT_ACTIONS.map((a) => a.title),
+    );
+  });
+
+  it("treats blank triggers as unbound and ignores unknown arguments", () => {
+    const rows = portalRows([
+      { arg: "--save-replay", trigger: "  " },
+      { arg: "--unknown", trigger: "Ctrl+X" },
+    ]);
+    assert.equal(rows.length, SHORTCUT_ACTIONS.length);
+    assert.equal(
+      rows.every((r) => r.trigger === null),
+      true,
+    );
+    assert.equal(
+      portalRows([]).every((r) => r.trigger === null),
+      true,
+    );
+  });
+
+  it("trims the desktop's description", () => {
+    assert.equal(portalRows([{ arg: "--save-replay", trigger: " Super+F9 " }])[0].trigger, "Super+F9");
   });
 });
