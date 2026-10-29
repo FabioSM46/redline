@@ -91,6 +91,10 @@ pub fn run() {
             tuning::set_power_limit,
             tuning::tuning_confirm,
             tuning::tuning_revert,
+            tuning::profiles::list_profiles,
+            tuning::profiles::create_profile,
+            tuning::profiles::activate_profile,
+            tuning::profiles::delete_profile,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
