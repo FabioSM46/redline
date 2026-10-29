@@ -58,7 +58,84 @@ Redline's license.
 Everything in the repository is written in English: code, comments, user-facing strings,
 documentation, skills, issue templates, issues, PRs and commit messages.
 
+## D8 — UI layout, tray and autostart (2026-10-29)
+
+Four sections in a tab bar at the top, as in AMD's Windows software, plus a status bar that is
+always visible. Four entries do not justify a sidebar, and people coming from Windows find their
+way at once.
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│ ● Redline   Home   Performance   Record   Settings                 │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│   (section content)                                                │
+│                                                                    │
+├────────────────────────────────────────────────────────────────────┤
+│ <GPU name> · 41 °C · 32 W · 772 MHz            ⏺ Replay 60 s · ON  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+- **Home**: the GPU state in a few large figures (temperature, power, clock, usage, VRAM), the
+  replay switch and the latest saved clips. It answers one question: "is everything fine?".
+- **Performance**, in two parts:
+  - **Metrics**: charts over time (1, 5 or 15 minute window) and the MangoHud overlay choice;
+  - **Tuning**: fan, power limit and profiles, with LACT's mandatory confirmation. Undervolt and
+    clocks sit under "Advanced".
+- **Record**: replay (length, audio tracks, folder), recording, and below them the gallery of
+  saved files.
+- **Settings**:
+  - **General**: theme, start with the system, start minimised to the tray;
+  - **Capture**: which screen to record (monitor or portal), codec, quality, frame rate;
+  - **Shortcuts**: every action (save replay, start/stop recording, toggle replay, ...) has a
+    customisable key binding;
+  - **Dependencies**: state of LACT and GPU Screen Recorder, with "Install" (D4);
+  - **About**.
+- **Status bar**: GPU temperature and power, plus the replay indicator, which is also a
+  switch. It is the single place that shows the replay state (Home's replay switch controls the
+  same state), so nobody has to open Home to know whether the replay is recording. The tab bar
+  and the status bar are fixed; only the section content between them scrolls.
+- **Several GPUs**: a selector in the top bar, shown only when there is more than one.
+
+**Tray and lifetime.** Redline has a tray icon. Closing the window hides it to the tray: the app
+keeps running, and with it the replay. Quit is an explicit action in the tray menu.
+
+If no tray host can be registered at startup (for example GNOME without an AppIndicator
+extension), close-to-tray is off for that session: closing the window quits the app, and "start
+minimised to the tray" is ignored, so an autostarted Redline shows its window. The app never
+runs with no window and no tray icon.
+
+Redline runs as a **single instance**. A second launch (a menu click, or autostart racing a
+manual start) does not start a second process, a second replay buffer or a second set of
+shortcuts: it brings the existing window to the front. This answers
+the earlier open question of where the replay lives while the window is closed: in the app's own
+process, not a separate service. Starting with the system is an option in Settings → General
+(off by default), and so is starting minimised to the tray.
+
+**Technical consequences**, for whoever implements it:
+
+- The tray needs Tauri's `tray-icon` feature, and the `.deb` must depend on
+  `libayatana-appindicator3-1`. On GNOME the icon shows only with an AppIndicator extension;
+  Ubuntu enables one by default, other distributions may not, and Settings says so when the
+  tray is unavailable.
+- Autostart needs `tauri-plugin-autostart` (an XDG autostart entry on Linux).
+- Single-instance handling needs `tauri-plugin-single-instance`.
+- **Shortcuts under Wayland** depend on the GlobalShortcuts portal (D5). Where it exists,
+  Redline registers the bindings through it; where it does not (GNOME before 48), the Shortcuts
+  section shows each action's command to bind in the desktop's custom shortcuts. X11 can grab
+  keys directly.
+- **Choosing the screen**: with portal capture, changing the screen means discarding the saved
+  portal session so the desktop asks again; recording a named monitor directly (`-w <monitor>`)
+  goes through GPU Screen Recorder's KMS helper and may ask for a password. Settings offers both,
+  portal first.
+
+These three crates (the `tray-icon` feature of `tauri`, `tauri-plugin-autostart`,
+`tauri-plugin-single-instance`) and the system package are approved by this decision; nothing
+else is.
+
+Left out compared to AMD's software: the "Gaming" section with a game library (Steam and Lutris
+own that on Linux), the built-in browser, streaming, driver notifications and display settings.
+
 ## Open
 
 - How the overlay arrives: a MangoHud configuration managed by Redline, or an overlay of its own.
-- Where the replay lives while the app is closed: a systemd user service or a process of the app.

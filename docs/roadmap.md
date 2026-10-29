@@ -17,14 +17,20 @@ Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 
 ## M1 — Performance
 
-- Dashboard with charts over time (temperature, clocks, power, usage)
+- App shell (D8): the four tabs, the status bar, the tray icon with close-to-tray and its
+  fallback, single instance, and Settings → General (theme, start with the system, start
+  minimised to the tray)
+- Home and Performance → Metrics: dashboard with charts over time (temperature, clocks, power,
+  usage)
 - Several GPUs on the same machine
 
 ## M2 — Recording
 
 - Instant replay from the app, with a choice of audio tracks
 - Recording started and stopped from the app
-- Commands for desktop shortcuts (D5)
+- Settings → Shortcuts: customisable key bindings, through the GlobalShortcuts portal where
+  available and desktop commands elsewhere (D5, D8)
+- Settings → Capture: choice of the screen to record, codec and quality
 - Notification with the saved file
 
 ## M3 — Tuning
