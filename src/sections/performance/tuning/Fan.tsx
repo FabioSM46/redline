@@ -142,8 +142,9 @@ export function FanBlock({ gpuId, status, fan, locked, apply }: TuningBlockProps
                 disabled={locked || !changed || problem !== null}
                 onClick={send}
               >
-                Apply
+                {offered.length > 1 ? "Apply" : "Back to automatic"}
               </button>
+              {offered.length > 1 && (
               <button
                 type="button"
                 className="button"
@@ -155,6 +156,7 @@ export function FanBlock({ gpuId, status, fan, locked, apply }: TuningBlockProps
               >
                 Discard
               </button>
+              )}
             </div>
           </div>
         )}

@@ -124,7 +124,10 @@ export function curveProblem(curve: readonly CurvePoint[], rules: CurveRules): s
     const [low, high] = [points[i - 1], points[i]];
     if (low.temperature_c === high.temperature_c) return `The curve has two points at ${low.temperature_c} °C.`;
     if (high.speed_pct < low.speed_pct) {
-      return `The fan must not slow down as the temperature rises: ${high.temperature_c} °C is below ${low.temperature_c} °C.`;
+      return (
+        `The fan must not slow down as the temperature rises: ${percent(high.speed_pct)} at ${high.temperature_c} °C ` +
+        `is below ${percent(low.speed_pct)} at ${low.temperature_c} °C.`
+      );
     }
   }
   return null;
@@ -289,11 +292,16 @@ export type FanDraft = {
   pmfw: PmfwDraft;
 };
 
-/** The draft the block starts from: what LACT has now, automatic when its mode is unknown. */
+/**
+ * The draft the block starts from: what LACT has now. Automatic when its mode is unknown, or is
+ * one this GPU cannot be set to now (LACT drives the fan but `curve_rules` is gone): the draft is
+ * always a mode the selector offers, so the block can hand the fan back to the firmware.
+ */
 export function initialDraft(fan: FanStatus): FanDraft {
   const rules = fan.curve_rules;
+  const current = currentSetting(fan);
   return {
-    setting: currentSetting(fan) ?? "auto",
+    setting: current !== null && offeredSettings(rules).includes(current) ? current : "auto",
     staticSpeed:
       rules === null ? null : snapSpeed(fan.static_speed ?? (rules.speed.min_pct + rules.speed.max_pct) / 2, rules),
     curve: rules === null ? null : initialCurve(fan.curve, rules),

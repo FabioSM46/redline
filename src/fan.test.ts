@@ -126,7 +126,10 @@ describe("curveProblem", () => {
     assert.equal(/whole percent/.test(curveProblem(curve([30, 20.5], [50, 30], [60, 40], [70, 60], [80, 80]), firmware) ?? ""), true);
     assert.equal(curveProblem(curve([30, 20.5]), free), null);
     assert.equal(/two points at 30/.test(curveProblem(curve([30, 20], [30, 30]), free) ?? ""), true);
-    assert.equal(/slow down/.test(curveProblem(curve([30, 50], [60, 40]), free) ?? ""), true);
+    assert.equal(
+      curveProblem(curve([30, 50], [60, 40]), free),
+      "The fan must not slow down as the temperature rises: 40 % at 60 °C is below 50 % at 30 °C.",
+    );
     assert.equal(/whole degrees/.test(curveProblem(curve([30.5, 50]), free) ?? ""), true);
   });
 });
@@ -266,6 +269,15 @@ describe("firmware options", () => {
 });
 
 describe("fanSettings", () => {
+  it("starts on automatic when LACT drives the fan in a mode the GPU no longer offers", () => {
+    const stranded = { ...fan, control_enabled: true, mode: "static" as const, static_speed: 40, curve_rules: null };
+    const draft = initialDraft(stranded);
+    assert.equal(draft.setting, "auto");
+    assert.equal(draftChanged(draft, stranded), true);
+    assert.deepEqual(fanSettings(draft, stranded), { settings: { mode: "auto" } });
+    assert.equal(initialDraft({ ...fan, control_enabled: true, mode: "curve" }).setting, "curve");
+  });
+
   it("starts from what LACT has, with nothing to apply", () => {
     const draft = initialDraft(fan);
     assert.equal(draft.setting, "auto");
