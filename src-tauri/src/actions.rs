@@ -13,17 +13,28 @@
 //!   (`autostart::start_hidden`) and performs the action once GPU Screen Recorder has been
 //!   detected and `replay_on_start` has run (`recorder::init`).
 //!
-//! The actions call the same [`Recorder`] methods as the interface's commands. A failure (GPU
-//! Screen Recorder missing, the replay off or still starting) becomes a desktop notification:
-//! the window may be hidden and the user is in a game. Unknown arguments are ignored.
+//! The actions call the same [`Recorder`] methods as the interface's commands. Their outcome
+//! becomes a desktop notification, because the window may be hidden and the user is in a game
+//! (#64): "Replay on" / "Replay off", "Recording started" / "Recording stopped" (with the file
+//! name), and every failure (GPU Screen Recorder missing, the replay off or still starting).
+//! Saving a replay says nothing here: its "Replay saved" comes from the `file-saved` event, as
+//! for every saved file. The same actions started from the interface do not notify: they call
+//! the recorder's commands, not [`perform`].
+//!
+//! Every notification of an action goes to one [`SHORTCUT_NOTIFICATION`] slot, so a new one
+//! replaces the previous one instead of piling up; the "Recording saved" notification uses the
+//! same slot, so stopping a recording with a shortcut leaves one notification, not two.
+//! [`perform`] (blocking) and [`dispatch`] (on its own thread) are the entry points for every
+//! source of an action: the command line here, the GlobalShortcuts portal (#65). Unknown
+//! arguments are ignored.
 
 use std::ffi::OsStr;
 use std::thread;
 
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::desktop;
-use crate::recorder::Recorder;
+use crate::desktop::{self, NotificationSlot};
+use crate::recorder::{Recorder, ReplayState};
 use crate::tray;
 
 /// What a launch argument asks the running instance to do.
@@ -59,6 +70,42 @@ pub const ACTION_ARGS: [ActionArg; 3] = [
 
 /// Shown before the error when the recorder is not there at all.
 const NOT_READY: &str = "Redline is still starting: try again in a moment.";
+
+/// The one notification every action shows, success or failure, and "Recording saved": each
+/// replaces the previous one.
+pub static SHORTCUT_NOTIFICATION: NotificationSlot = NotificationSlot::new();
+
+/// What an action's notification says. `body` is plain text: it is escaped when shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    pub summary: &'static str,
+    pub body: String,
+}
+
+/// What a successful action did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Done {
+    /// The replay was saved; the `file-saved` event notifies it.
+    Saved,
+    /// The replay was started (`starting` or `on`) or stopped (`off`).
+    Replay(ReplayState),
+    /// A recording was started, or stopped with the name of the file it saved.
+    Recording { on: bool, file: Option<String> },
+}
+
+impl Done {
+    /// The notification for this outcome, if it has one.
+    fn notice(self) -> Option<Notice> {
+        let (summary, body) = match self {
+            Done::Saved => return None,
+            Done::Replay(ReplayState::Off) => ("Replay off", String::new()),
+            Done::Replay(_) => ("Replay on", String::new()),
+            Done::Recording { on: true, .. } => ("Recording started", String::new()),
+            Done::Recording { on: false, file } => ("Recording stopped", file.unwrap_or_default()),
+        };
+        Some(Notice { summary, body })
+    }
+}
 
 impl Action {
     /// The notification summary when the action fails.
@@ -115,6 +162,13 @@ pub fn on_second_launch<R: Runtime>(app: &AppHandle<R>, argv: &[String]) {
         }
         SecondLaunch::Act(action) => action,
     };
+    dispatch(app, action);
+}
+
+/// Performs `action` on its own thread and notifies its outcome ([`perform`]): for a caller
+/// that must not wait, such as the single-instance callback or a portal signal (#65). Before
+/// the recorder exists the action fails with "still starting".
+pub fn dispatch<R: Runtime>(app: &AppHandle<R>, action: Action) {
     let service = app
         .try_state::<Recorder>()
         .map(|service| service.inner().clone());
@@ -123,42 +177,61 @@ pub fn on_second_launch<R: Runtime>(app: &AppHandle<R>, argv: &[String]) {
             .name("redline-action".into())
             .spawn(move || match service {
                 Some(service) => perform(&service, action),
-                None => notify_failure(action, NOT_READY),
+                None => show(failure(action, NOT_READY)),
             });
     if let Err(error) = spawned {
         eprintln!("redline: the launch action did not start ({error})");
     }
 }
 
-/// Performs `action` and reports a failure with a desktop notification. Blocking: saving waits
-/// for the file, stopping waits for the process.
+/// Performs `action` and notifies its outcome in [`SHORTCUT_NOTIFICATION`]: the new state of
+/// the replay or the recording, or the failure. Blocking: saving waits for the file, stopping
+/// waits for the process. Only for actions from outside the window (command line, shortcuts):
+/// the interface shows the state itself and calls the recorder directly.
 pub fn perform(service: &Recorder, action: Action) {
-    perform_with(service, action, notify_failure);
+    perform_with(service, action, show);
 }
 
-fn perform_with(service: &Recorder, action: Action, on_failure: impl FnOnce(Action, &str)) {
-    if let Err(error) = run(service, action) {
-        on_failure(action, &error);
+fn perform_with(service: &Recorder, action: Action, notify: impl FnOnce(Notice)) {
+    let notice = match run(service, action) {
+        Ok(done) => done.notice(),
+        Err(error) => Some(failure(action, &error)),
+    };
+    if let Some(notice) = notice {
+        notify(notice);
     }
 }
 
 /// The same [`Recorder`] methods the interface's commands call.
-fn run(service: &Recorder, action: Action) -> Result<(), String> {
+fn run(service: &Recorder, action: Action) -> Result<Done, String> {
     match action {
-        Action::SaveReplay => service.save(),
-        Action::ToggleReplay => service.toggle_replay().map(|_| ()),
-        Action::ToggleRecording => service.toggle_recording().map(|_| ()),
+        Action::SaveReplay => service.save().map(|()| Done::Saved),
+        Action::ToggleReplay => service
+            .toggle_replay()
+            .map(|status| Done::Replay(status.replay)),
+        Action::ToggleRecording => {
+            service
+                .toggle_recording_with_file()
+                .map(|(status, file)| Done::Recording {
+                    on: status.recording,
+                    file,
+                })
+        }
     }
 }
 
-fn notify_failure(action: Action, error: &str) {
-    // Also on stderr: without a notification server the notification shows nothing.
+/// The notice of a failed action. Also on stderr: without a notification server the
+/// notification shows nothing.
+fn failure(action: Action, error: &str) -> Notice {
     eprintln!("redline: {}: {error}", action.failure_summary());
-    desktop::notify(
-        desktop::APP_NAME,
-        action.failure_summary(),
-        &desktop::escape_markup(error),
-    );
+    Notice {
+        summary: action.failure_summary(),
+        body: error.to_owned(),
+    }
+}
+
+fn show(notice: Notice) {
+    SHORTCUT_NOTIFICATION.show(notice.summary, &desktop::escape_markup(&notice.body));
 }
 
 #[cfg(test)]
@@ -300,11 +373,96 @@ mod tests {
         // Detection has run by the time an action arrives (see `recorder::init`).
         assert!(!service.status().available);
         for accepted in ACTION_ARGS {
-            let mut reported = None;
-            perform_with(&service, accepted.action, |action, error| {
-                reported = Some((action, error.to_owned()));
-            });
-            assert_eq!(reported, Some((accepted.action, MISSING.to_owned())));
+            let mut reported = Vec::new();
+            perform_with(&service, accepted.action, |notice| reported.push(notice));
+            assert_eq!(
+                reported,
+                [Notice {
+                    summary: accepted.action.failure_summary(),
+                    body: MISSING.to_owned(),
+                }]
+            );
+        }
+    }
+
+    fn notice(summary: &'static str, body: &str) -> Option<Notice> {
+        Some(Notice {
+            summary,
+            body: body.to_owned(),
+        })
+    }
+
+    #[test]
+    fn toggling_the_replay_says_its_new_state() {
+        // A start is `starting` first (the portal may still be asking for the screen): on.
+        assert_eq!(
+            Done::Replay(ReplayState::Starting).notice(),
+            notice("Replay on", "")
+        );
+        assert_eq!(
+            Done::Replay(ReplayState::On).notice(),
+            notice("Replay on", "")
+        );
+        assert_eq!(
+            Done::Replay(ReplayState::Off).notice(),
+            notice("Replay off", "")
+        );
+    }
+
+    #[test]
+    fn toggling_a_recording_says_started_or_stopped_with_the_file() {
+        assert_eq!(
+            Done::Recording {
+                on: true,
+                file: None
+            }
+            .notice(),
+            notice("Recording started", "")
+        );
+        assert_eq!(
+            Done::Recording {
+                on: false,
+                file: Some("Video_2026-01-01_10-00-00.mkv".to_owned())
+            }
+            .notice(),
+            notice("Recording stopped", "Video_2026-01-01_10-00-00.mkv")
+        );
+        // A stop that did not learn the name still says it stopped.
+        assert_eq!(
+            Done::Recording {
+                on: false,
+                file: None
+            }
+            .notice(),
+            notice("Recording stopped", "")
+        );
+    }
+
+    #[test]
+    fn a_saved_replay_is_left_to_the_saved_file_notification() {
+        assert_eq!(Done::Saved.notice(), None);
+    }
+
+    #[test]
+    fn success_and_failure_summaries_never_coincide() {
+        let successes: Vec<_> = [
+            Done::Replay(ReplayState::On),
+            Done::Replay(ReplayState::Off),
+            Done::Recording {
+                on: true,
+                file: None,
+            },
+            Done::Recording {
+                on: false,
+                file: None,
+            },
+        ]
+        .into_iter()
+        .filter_map(|done| done.notice().map(|notice| notice.summary))
+        .collect();
+        assert_eq!(successes.len(), 4);
+        for accepted in ACTION_ARGS {
+            assert!(!successes.contains(&accepted.action.failure_summary()));
         }
     }
 
