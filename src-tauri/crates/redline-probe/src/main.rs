@@ -200,10 +200,12 @@ fn replay(
     });
     let config = ReplayConfig {
         capture,
+        portal_token: None,
         fps,
         replay_seconds: seconds,
         container: "mkv".into(),
         codec: None,
+        quality: recorder::DEFAULT_QUALITY.into(),
         replay_dir: base.join("Replay"),
         recording_dir: base.join("Recordings"),
         audio: tracks

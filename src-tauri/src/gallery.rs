@@ -24,11 +24,11 @@ use std::thread;
 use std::time::UNIX_EPOCH;
 
 use redline_core::media;
-use redline_core::recorder::ReplayConfig;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::recorder::{self, FileKind, FileSaved};
+use crate::recorder::{FileKind, FileSaved};
+use crate::settings::{self, RecordingSettings};
 use crate::{desktop, thumbnails};
 
 /// The extensions of the containers GPU Screen Recorder can write.
@@ -56,24 +56,41 @@ pub struct Folders {
     pub recording: PathBuf,
 }
 
-impl From<&ReplayConfig> for Folders {
-    fn from(config: &ReplayConfig) -> Self {
+impl From<&RecordingSettings> for Folders {
+    fn from(recording: &RecordingSettings) -> Self {
         Self {
-            replay: config.replay_dir.clone(),
-            recording: config.recording_dir.clone(),
+            replay: recording.replay_dir.clone(),
+            recording: recording.recording_dir.clone(),
         }
     }
 }
 
-/// The replay and recording folders, from the same source the recorder uses. The only place
-/// the gallery reads them: when the recording settings land (#29), this is the line to change.
+/// The replay and recording folders, from the recording settings as they are now (they can
+/// change while the app runs), so the same folders the recorder writes to. Without a settings
+/// state, the settings' defaults under the video folder. The only place the gallery reads them.
 pub fn folders<R: Runtime>(app: &AppHandle<R>) -> Result<Folders, String> {
-    let paths = app.path();
-    let video_dir = paths
-        .video_dir()
-        .or_else(|_| paths.home_dir().map(|home| home.join("Videos")))
-        .map_err(|_| NO_FOLDER.to_owned())?;
-    Ok(Folders::from(&recorder::default_config(&video_dir)))
+    let recording = match settings::recording_settings(app) {
+        Some(recording) => recording,
+        None => {
+            let paths = app.path();
+            let video_dir = paths
+                .video_dir()
+                .or_else(|_| paths.home_dir().map(|home| home.join("Videos")))
+                .map_err(|_| NO_FOLDER.to_owned())?;
+            RecordingSettings::defaults(&video_dir)
+        }
+    };
+    folders_of(&recording)
+}
+
+/// The folders of `recording`. The settings accept only absolute folders, so a relative one is a
+/// default built without a video folder.
+fn folders_of(recording: &RecordingSettings) -> Result<Folders, String> {
+    if recording.replay_dir.is_absolute() && recording.recording_dir.is_absolute() {
+        Ok(Folders::from(recording))
+    } else {
+        Err(NO_FOLDER.to_owned())
+    }
 }
 
 /// A clip found in a folder, before its duration is read.
@@ -490,14 +507,27 @@ mod tests {
     }
 
     #[test]
-    fn the_folders_come_from_the_recorder_config() {
-        let config = recorder::default_config(Path::new("/redline-test/Videos"));
+    fn the_folders_come_from_the_recording_settings() {
+        let mut recording = RecordingSettings::defaults(Path::new("/redline-test/Videos"));
         assert_eq!(
-            Folders::from(&config),
-            Folders {
+            folders_of(&recording),
+            Ok(Folders {
                 replay: PathBuf::from("/redline-test/Videos/Redline/Replays"),
                 recording: PathBuf::from("/redline-test/Videos/Redline/Recordings"),
-            }
+            })
         );
+        // Folders chosen in the settings are the ones listed.
+        recording.replay_dir = PathBuf::from("/games/replays");
+        recording.recording_dir = PathBuf::from("/games/recordings");
+        assert_eq!(
+            folders_of(&recording),
+            Ok(Folders {
+                replay: PathBuf::from("/games/replays"),
+                recording: PathBuf::from("/games/recordings"),
+            })
+        );
+        // Defaults built without a video folder are relative: no folder to look in.
+        let without = RecordingSettings::defaults(Path::new(""));
+        assert_eq!(folders_of(&without), Err(NO_FOLDER.to_owned()));
     }
 }
