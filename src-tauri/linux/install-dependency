@@ -41,6 +41,12 @@ debian-13 lact-${LACT_VERSION}-0.amd64.debian-13.deb 44f25c6e95ad6d0fb869b36ae10
 GSR_ID="com.dec05eba.gpu_screen_recorder"
 FLATHUB_REPO="https://dl.flathub.org/repo/flathub.flatpakrepo"
 
+# Every step is bounded, so a stuck download or package manager cannot hold the install (and
+# Redline's single install slot) forever: Redline cannot stop a root process, this script can.
+STEP_TIMEOUT=1800
+# apt waits this long for another package manager to release the dpkg lock, then fails.
+APT=(apt-get -o DPkg::Lock::Timeout=300)
+
 DRY_RUN=0
 OS_RELEASE=/etc/os-release
 DOWNLOADS=
@@ -51,12 +57,13 @@ fail() {
   exit "${2:-1}"
 }
 
-# Runs a command that changes the system, with its output on stderr; prints it in a dry run.
+# Runs a command that changes the system, with its output on stderr and killed after
+# STEP_TIMEOUT seconds; prints it in a dry run.
 run() {
   if [ "$DRY_RUN" -eq 1 ]; then
     say run "$*"
   else
-    "$@" >&2
+    timeout --kill-after=30 "$STEP_TIMEOUT" "$@" >&2
   fi
 }
 
@@ -75,8 +82,8 @@ package_manager() {
 install_packages() {
   case "$(package_manager)" in
     apt-get)
-      run apt-get update
-      run env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+      run "${APT[@]}" update
+      run env DEBIAN_FRONTEND=noninteractive "${APT[@]}" install -y "$@"
       ;;
     dnf) run dnf install -y "$@" ;;
     pacman) run pacman -S --needed --noconfirm "$@" ;;
@@ -137,8 +144,8 @@ install_lact() {
   say progress "Installing LACT ${LACT_VERSION}"
   # The .deb's own dependencies come from the distribution: refresh the index first (a
   # failing third-party source must not stop the install), and never wait for a question.
-  run apt-get update || true
-  run env DEBIAN_FRONTEND=noninteractive apt-get install -y "$DOWNLOADS/$deb" ||
+  run "${APT[@]}" update || true
+  run env DEBIAN_FRONTEND=noninteractive "${APT[@]}" install -y "$DOWNLOADS/$deb" ||
     fail "apt could not install LACT."
   say progress "Starting the LACT daemon"
   run systemctl enable --now lactd || fail "LACT is installed, but its daemon did not start."

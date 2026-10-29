@@ -70,8 +70,8 @@ sha=$(awk '{ print $3 }' <<<"$deb_line")
 assert_contains "downloads the pinned .deb over https, redirects included" "$OUT" "run curl -fsSL --proto =https --proto-redir =https -o"
 assert_contains "from the pinned release" "$OUT" "/releases/download/v0.10.1/lact-0.10.1-0.amd64.ubuntu-2404.deb"
 assert_contains "checks the pinned checksum" "$OUT" "sha256sum -c ($sha lact-0.10.1-0.amd64.ubuntu-2404.deb)"
-assert_contains "refreshes the package index first" "$OUT" "run apt-get update"
-assert_contains "apt installs the downloaded file without questions" "$OUT" "run env DEBIAN_FRONTEND=noninteractive apt-get install -y /"
+assert_contains "refreshes the package index first" "$OUT" "run apt-get -o DPkg::Lock::Timeout=300 update"
+assert_contains "apt installs the downloaded file without questions" "$OUT" "run env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y /"
 assert_contains "enables lactd" "$OUT" "run systemctl enable --now lactd"
 assert_eq "the last line says it is done" "progress Done" "$(tail -n 1 <<<"$OUT")"
 assert_not_contains "every line is a protocol line" "$OUT" $'\n=='
@@ -109,7 +109,7 @@ assert_contains "installs flatpak first when it is missing" "$OUT" "run pacman -
 
 echo "== ffmpeg"
 dry_run "$apt_path" ffmpeg
-assert_contains "apt" "$OUT" "run env DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg"
+assert_contains "apt" "$OUT" "run env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y ffmpeg"
 dry_run "$(make_path dnf dnf)" ffmpeg
 assert_contains "dnf installs Fedora's ffmpeg-free" "$OUT" "run dnf install -y ffmpeg-free"
 dry_run "$(make_path pacman pacman)" ffmpeg
@@ -142,6 +142,16 @@ assert_eq "install-deps.sh pins nothing of its own" "" "$(grep -nE 'VERSION=|htt
 assert_contains "install-deps.sh runs the helper" "$(cat "$ROOT/scripts/install-deps.sh")" "src-tauri/linux/install-dependency"
 out=$(PATH="$(make_path wrapper pacman)" bash "$ROOT/scripts/install-deps.sh" --dry-run ffmpeg 2>/dev/null)
 assert_contains "install-deps.sh passes --dry-run through" "$out" "run pacman -S --needed --noconfirm ffmpeg"
+os_release 'ID=arch'
+out=$(PATH="$(make_path wrapper-all pacman)" REDLINE_OS_RELEASE="$TMP/os-release" bash "$ROOT/scripts/install-deps.sh" --dry-run 2>/dev/null)
+assert_eq "install-deps.sh skips an unsupported component and goes on" 0 $?
+assert_contains "the unsupported LACT is reported" "$out" "error The guided install of LACT needs apt"
+assert_contains "the components after it still run" "$out" "run flatpak install -y --noninteractive --system flathub"
+assert_contains "all of them" "$out" "run pacman -S --needed --noconfirm ffmpeg"
+out=$(PATH="$(make_path wrapper-bad pacman)" bash "$ROOT/scripts/install-deps.sh" --dry-run nonsense ffmpeg 2>/dev/null)
+assert_eq "install-deps.sh stops on any other failure" 2 $?
+assert_not_contains "without running the rest" "$out" "run pacman"
+assert_contains "every real step is bounded" "$(cat "$HELPER")" 'timeout --kill-after=30 "$STEP_TIMEOUT" "$@"' 
 
 echo "== Packaging"
 assert_eq "the helper is executable in git" 100755 "$(git -C "$ROOT" ls-files -s src-tauri/linux/install-dependency | awk '{ print $1 }')"

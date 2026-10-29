@@ -154,6 +154,11 @@ impl Job {
     fn run(&self, id: DependencyId, emit: &dyn Fn(&InstallEvent)) -> InstallEvent {
         let event = |stage, message| InstallEvent { id, stage, message };
         let child = Command::new(&self.pkexec)
+            // pkexec's own messages are matched by their English text in `pkexec_failure`:
+            // without this a localized session would turn a refusal into its raw line.
+            .env("LC_ALL", "C")
+            .env("LANG", "C")
+            .env_remove("LANGUAGE")
             .arg(&self.helper)
             .arg(id.helper_arg())
             .stdin(Stdio::null())
@@ -486,6 +491,17 @@ mod tests {
         let (_, result) = install(&setup.installer(), DependencyId::Lact);
         assert_eq!(result.stage, InstallStage::Failed);
         assert_eq!(result.message.as_deref(), Some(NOT_AUTHORIZED));
+    }
+
+    #[test]
+    fn pkexec_runs_in_the_c_locale_so_its_messages_can_be_matched() {
+        let setup = Setup::new(
+            "locale",
+            None,
+            "echo \"progress $LC_ALL $LANG ${LANGUAGE:-unset}\"",
+        );
+        let (events, _) = install(&setup.installer(), DependencyId::Ffmpeg);
+        assert_eq!(events[0], progress(DependencyId::Ffmpeg, "C C unset"));
     }
 
     #[test]

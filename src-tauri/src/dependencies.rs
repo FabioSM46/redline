@@ -34,6 +34,10 @@ use crate::tuning::{self, Lact, Tuning};
 pub const TOOL_TIMEOUT: Duration = Duration::from_secs(5);
 const FLATPAK: &str = "flatpak";
 const FFMPEG: &str = "ffmpeg";
+/// `flatpak info` did not answer in time (or could not run), so whether the recorder is
+/// installed as a Flatpak is unknown.
+pub const FLATPAK_UNANSWERED: &str = "Could not check whether GPU Screen Recorder is installed: \
+    Flatpak did not answer in time. Check again before installing it.";
 /// ffmpeg is on PATH but `ffmpeg -version` failed, hung or printed something unexpected.
 pub const FFMPEG_UNREADABLE: &str =
     "Could not read the ffmpeg version: previews of clips may not work.";
@@ -189,9 +193,12 @@ fn gpu_screen_recorder_status(search_path: &OsStr, timeout: Duration) -> Depende
     let version = if let Some(native) = find_program(gsr::NATIVE_BINARY, search_path) {
         run(&native, &["--version"], timeout).map(|out| first_line(&out))
     } else if let Some(flatpak) = find_program(FLATPAK, search_path) {
-        match run(&flatpak, &["info", FLATPAK_ID], timeout) {
-            Some(out) => Some(flatpak_version(&out)),
-            None => return missing(id, verified, GSR_MISSING),
+        match run_outcome(&flatpak, &["info", FLATPAK_ID], timeout) {
+            Run::Output(out) => Some(flatpak_version(&out)),
+            // flatpak's own answer: the app is not installed.
+            Run::Exited => return missing(id, verified, GSR_MISSING),
+            // No answer is not "missing": say so, rather than send the user to install it again.
+            Run::Unanswered => return missing(id, verified, FLATPAK_UNANSWERED),
         }
     } else {
         return missing(id, verified, GSR_MISSING);
@@ -245,45 +252,69 @@ fn ffmpeg_version(text: &str) -> Option<String> {
     }
 }
 
+/// How a tool run ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Run {
+    /// Exited with success; its stdout.
+    Output(String),
+    /// Exited with a failure status: the tool's own answer.
+    Exited,
+    /// Could not be started, was killed after the timeout, or its output could not be read.
+    Unanswered,
+}
+
 /// Runs `program` with `args` in the C locale and returns its stdout when it exits with
 /// success within `timeout`; after that it is killed and reaped. `None` for a failure.
 fn run(program: &Path, args: &[&str], timeout: Duration) -> Option<String> {
-    let mut child = Command::new(program)
+    match run_outcome(program, args, timeout) {
+        Run::Output(text) => Some(text),
+        Run::Exited | Run::Unanswered => None,
+    }
+}
+
+/// [`run`], telling a tool that answered with a failure from one that did not answer.
+fn run_outcome(program: &Path, args: &[&str], timeout: Duration) -> Run {
+    let Ok(mut child) = Command::new(program)
         .args(args)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .ok()?;
+    else {
+        return Run::Unanswered;
+    };
     // Read while waiting, so a long output cannot fill the pipe and stall the tool. The text
     // comes back over a channel: a process the tool leaves behind may keep the pipe open, and
     // the reader is then never joined, only abandoned.
-    let mut stdout = child.stdout.take()?;
+    let Some(mut stdout) = child.stdout.take() else {
+        return Run::Unanswered;
+    };
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let mut text = String::new();
         let _ = sender.send(stdout.read_to_string(&mut text).ok().map(|_| text));
     });
     let deadline = Instant::now() + timeout;
-    let success = loop {
+    loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status.success(),
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => return Run::Exited,
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break false;
+                return Run::Unanswered;
             }
         }
-    };
-    if !success {
-        return None;
     }
     // The tool has exited: its output is complete unless something it started still holds the
     // pipe, and that is waited for only until the deadline (plus a moment for the last read).
     let left = deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(100);
-    receiver.recv_timeout(left).ok().flatten()
+    match receiver.recv_timeout(left).ok().flatten() {
+        Some(text) => Run::Output(text),
+        None => Run::Unanswered,
+    }
 }
 
 /// The search path of this process.
@@ -548,6 +579,21 @@ mod tests {
         let dep = setup.get(DependencyId::GpuScreenRecorder);
         assert!(!dep.installed);
         assert_eq!(dep.hint.as_deref(), Some(GSR_MISSING));
+    }
+
+    #[test]
+    fn a_flatpak_that_does_not_answer_is_not_called_missing() {
+        let setup = Setup::new("gsr-flatpak-hangs");
+        setup.tool(FLATPAK, "[ \"$1\" = info ] && exec sleep 30");
+        let dep = status(
+            &setup.lact(),
+            setup.bin().as_os_str(),
+            Duration::from_millis(200),
+            false,
+        )
+        .remove(1);
+        assert!(!dep.installed);
+        assert_eq!(dep.hint.as_deref(), Some(FLATPAK_UNANSWERED));
     }
 
     #[test]

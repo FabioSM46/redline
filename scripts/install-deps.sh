@@ -18,9 +18,17 @@ if [ "${1:-}" = --dry-run ]; then
 fi
 [ $# -gt 0 ] || set -- lact gpu-screen-recorder ffmpeg
 
+# A component this system does not support (the helper's exit code 3, for example LACT without
+# apt) is skipped; any other failure stops the run with the helper's code.
 for component in "$@"; do
   echo "==> $component" >&2
-  bash "$HELPER" "${options[@]}" "$component"
+  status=0
+  bash "$HELPER" "${options[@]}" "$component" || status=$?
+  case $status in
+    0) ;;
+    3) echo "  skipped: not supported on this system" >&2 ;;
+    *) exit "$status" ;;
+  esac
 done
 
 echo "Done. If this is the first Flatpak install, log out and back in to see the apps in the menu." >&2
