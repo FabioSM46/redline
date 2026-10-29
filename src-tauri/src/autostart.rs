@@ -10,7 +10,7 @@
 //!
 //! The main window is declared invisible in `tauri.conf.json` (no flash at startup):
 //! [`show_main_window_unless_hidden_start`] shows it in `setup`, unless [`start_hidden`] says
-//! that an autostart launch stays in the tray.
+//! that an autostart launch, or a launch with a command-line action, stays in the tray.
 
 use std::ffi::OsStr;
 
@@ -18,6 +18,7 @@ use tauri::plugin::TauriPlugin;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_autostart::{AutoLaunchManager, ManagerExt};
 
+use crate::actions;
 use crate::settings::{self, SettingsState};
 use crate::tray;
 
@@ -45,10 +46,14 @@ pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     write(&*app.autolaunch(), enabled)
 }
 
-/// Whether the app starts with the window hidden and only the tray icon: only when the
-/// autostart entry launched it (`args` without the program name), `start_minimised` was read and
-/// is on, and something shows the tray icon right now. `tray_available` is asked last: it queries
-/// the session bus, and a manual launch must not wait for it.
+/// Whether the app starts with the window hidden and only the tray icon, from `args` without the
+/// program name: when something shows the tray icon right now and either
+/// - the autostart entry launched it and `start_minimised` was read and is on, or
+/// - the launch asks for an action (`redline --save-replay`, see `actions.rs`): a shortcut pressed
+///   in a game must not open a window over it, whatever `start_minimised` says.
+///
+/// `tray_available` is asked last: it queries the session bus, and a manual launch must not wait
+/// for it.
 ///
 /// It is asked once, with no retries: if the shell has not registered its tray host yet, the
 /// window opens. An extra window closes with one click; a hidden window with no icon could not
@@ -63,10 +68,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    let args: Vec<S> = args.into_iter().collect();
     let autostarted = args
-        .into_iter()
+        .iter()
         .any(|arg| arg.as_ref() == OsStr::new(AUTOSTART_ARG));
-    autostarted && start_minimised == Some(true) && tray_available()
+    let action = actions::requested(&args).is_some();
+    (action || (autostarted && start_minimised == Some(true))) && tray_available()
 }
 
 /// Shows the main window, invisible at startup, unless [`start_hidden`] says to stay in the
@@ -167,6 +174,32 @@ mod tests {
         assert!(!start_hidden(["--autostart=1"], Some(true), || true));
         assert!(!start_hidden(["--AUTOSTART"], Some(true), || true));
         assert!(!start_hidden(["--other"], Some(true), || true));
+    }
+
+    #[test]
+    fn a_launch_with_an_action_starts_hidden_when_there_is_a_tray() {
+        for args in [
+            &["--save-replay"][..],
+            &["--toggle-replay"][..],
+            &["--toggle-recording"][..],
+            &[AUTOSTART_ARG, "--save-replay"][..],
+            &["--unknown", "--toggle-recording"][..],
+        ] {
+            // Whatever start_minimised says: a shortcut must not open a window over a game.
+            for start_minimised in [Some(true), Some(false), None] {
+                assert!(
+                    start_hidden(args, start_minimised, || true),
+                    "{args:?} {start_minimised:?}"
+                );
+                // No tray icon: the window, or the app could not be reached.
+                assert!(
+                    !start_hidden(args, start_minimised, || false),
+                    "{args:?} {start_minimised:?}"
+                );
+            }
+        }
+        // Unknown arguments alone change nothing.
+        assert!(!start_hidden(["--save-replay=1"], Some(false), || true));
     }
 
     #[test]

@@ -29,8 +29,9 @@
 //!   built from `settings::RecordingSettings`; [`settings_changed`] restarts a running replay.
 //! - gallery and notifications (#31): subscribe to [`Events::file_saved`]; the folders come from
 //!   `settings::recording_settings`.
-//! - command-line actions (#32): call [`Recorder::start`], [`Recorder::stop`], [`Recorder::save`],
-//!   [`Recorder::toggle_recording`] from the single-instance callback, as the commands do.
+//! - command-line actions (#32, done): `actions.rs` calls [`Recorder::save`],
+//!   [`Recorder::toggle_replay`] and [`Recorder::toggle_recording`]; the action of a first launch
+//!   runs after [`init`]'s detection and `replay_on_start`.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -346,6 +347,23 @@ impl Recorder {
         match &status.error {
             Some(error) => Err(error.clone()),
             None => Ok(status),
+        }
+    }
+
+    /// Stops the replay when it is starting or on, starts it otherwise (off, or in error): one
+    /// decision under `control`, so two quick presses of a shortcut never both start it. Fails
+    /// like [`Recorder::start`] and [`Recorder::stop`].
+    pub fn toggle_replay(&self) -> Result<RecorderStatus, String> {
+        let _control = lock(&self.inner.control);
+        let replay_runs = self
+            .state()
+            .running
+            .as_ref()
+            .is_some_and(Running::is_replay);
+        if replay_runs {
+            self.stop_locked()
+        } else {
+            self.start_locked()
         }
     }
 
@@ -734,8 +752,10 @@ fn exit_message(exit: std::process::ExitStatus, last_error: Option<String>) -> S
 
 /// Registers the service as managed state and detects GPU Screen Recorder in the background.
 /// Starts the replay too when `replay_on_start` is set (also when the window starts hidden).
-/// Needs `settings::init` to have run.
-pub fn init<R: Runtime>(app: &AppHandle<R>) {
+/// Needs `settings::init` to have run. `then` runs on the same background thread once detection
+/// and `replay_on_start` are done: the action of a launch like `redline --toggle-replay` (#32),
+/// which must act on the replay `replay_on_start` started, not race with it.
+pub fn init<R: Runtime>(app: &AppHandle<R>, then: impl FnOnce(&Recorder) + Send + 'static) {
     let paths = app.path();
     let handle = app.clone();
     let config: Source<ReplayConfig> = Box::new(move || {
@@ -786,9 +806,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
             if replay_on_start && let Err(error) = service.start() {
                 eprintln!("redline: the replay did not start with the app: {error}");
             }
+            then(&service);
         });
     if let Err(error) = spawned {
-        eprintln!("redline: GPU Screen Recorder detection did not start ({error})");
+        eprintln!(
+            "redline: GPU Screen Recorder detection did not start ({error}); no launch action"
+        );
     }
 }
 
@@ -1254,6 +1277,30 @@ mod tests {
     }
 
     #[test]
+    fn toggling_the_replay_starts_it_stops_it_and_never_replaces_a_recording() {
+        let dir = temp_dir("toggle-replay");
+        // No IPC server: the replay stays starting, which a toggle stops like `on`.
+        let (service, _) = service(&dir, LOOP);
+        assert_eq!(
+            service.toggle_replay().unwrap().replay,
+            ReplayState::Starting
+        );
+        assert_eq!(service.toggle_replay().unwrap().replay, ReplayState::Off);
+        assert_eq!(
+            service.toggle_replay().unwrap().replay,
+            ReplayState::Starting
+        );
+        assert_eq!(service.toggle_replay().unwrap().replay, ReplayState::Off);
+
+        // A recording without the replay: the toggle refuses to start the replay over it.
+        assert!(service.toggle_recording().unwrap().recording);
+        assert_eq!(service.toggle_replay().unwrap_err(), RECORDING_RUNS);
+        assert!(service.status().recording);
+        assert!(!service.toggle_recording().unwrap().recording);
+        service.shutdown();
+    }
+
+    #[test]
     fn saving_before_capture_runs_is_refused() {
         let dir = temp_dir("starting");
         // No IPC server: gsr is still waiting for the screen.
@@ -1364,6 +1411,7 @@ mod tests {
         assert_eq!(service.save().unwrap_err(), MISSING);
         assert_eq!(service.stop().unwrap_err(), MISSING);
         assert_eq!(service.toggle_recording().unwrap_err(), MISSING);
+        assert_eq!(service.toggle_replay().unwrap_err(), MISSING);
         assert_eq!(service.launcher().unwrap_err(), MISSING);
         assert!(events.saw(|status| status.unavailable_reason.is_some()));
         // The status still says off: a missing tool is not a replay error.
