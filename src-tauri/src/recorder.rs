@@ -577,14 +577,13 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
             .try_state::<SettingsState>()
             .ok_or_else(|| "The settings are not available: restart the app.".to_owned())?;
         let recording = state.current().recording;
-        // Empty when the system has no video folder and no home (see `settings::init`).
-        if recording.replay_dir.as_os_str().is_empty() {
+        // The settings only accept absolute folders, so a relative one is a default built on an
+        // empty video folder: the system has no video folder and no home (see `settings::init`).
+        if !recording.replay_dir.is_absolute() {
             return Err(NO_VIDEO_FOLDER.to_owned());
         }
         Ok(recording.replay_config(state.portal_token()))
     });
-    let replay_on_start =
-        settings::recording_settings(app).is_some_and(|recording| recording.replay_on_start);
     // The runtime folder ($XDG_RUNTIME_DIR) is private to the user and cleared at logout; the
     // pid keeps two Redline processes (no single instance without a session bus) apart.
     let socket_name = format!("gsr-{}.sock", std::process::id());
@@ -604,10 +603,20 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
         AppEvents(app.clone()),
     );
     app.manage(service.clone());
+    let handle_for_start = app.clone();
     let spawned = thread::Builder::new()
         .name("redline-recorder-detect".into())
         .spawn(move || {
             service.detect();
+            // Read here rather than in `init`: by now `settings::init` has run whatever the
+            // order in `setup`, and a missing settings state is said, not swallowed.
+            let replay_on_start = match settings::recording_settings(&handle_for_start) {
+                Some(recording) => recording.replay_on_start,
+                None => {
+                    eprintln!("redline: no settings, replay_on_start is ignored");
+                    false
+                }
+            };
             if replay_on_start && let Err(error) = service.start() {
                 eprintln!("redline: the replay did not start with the app: {error}");
             }

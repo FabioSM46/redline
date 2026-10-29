@@ -366,13 +366,21 @@ pub fn set_settings<R: Runtime>(
         &current,
         settings,
     )?;
-    let recording_changed = saved.recording != current.recording;
+    let recording_changed = needs_restart(&current.recording, &saved.recording);
     *current = saved.clone();
     drop(current);
     if recording_changed {
         crate::recorder::settings_changed(&app);
     }
     Ok(saved)
+}
+
+/// Whether a running replay must restart: something that reaches GPU Screen Recorder changed.
+/// `replay_on_start` matters only at the next app start, and restarting would drop the buffer.
+fn needs_restart(before: &RecordingSettings, after: &RecordingSettings) -> bool {
+    let mut after = after.clone();
+    after.replay_on_start = before.replay_on_start;
+    after != *before
 }
 
 /// Validates an update, saves it and, when `capture` changed, deletes the portal session token.
@@ -936,6 +944,20 @@ mod tests {
         let mut wanted = saved.clone();
         wanted.recording.capture = "portal".into();
         assert!(apply(&file, videos(), Some(&token), &saved, update(&wanted)).is_ok());
+    }
+
+    #[test]
+    fn only_changes_that_reach_the_process_restart_the_replay() {
+        let before = defaults().recording;
+        let mut after = before.clone();
+        after.replay_on_start = true;
+        assert!(!needs_restart(&before, &after));
+        after.replay_seconds = 30;
+        assert!(needs_restart(&before, &after));
+        let mut after = before.clone();
+        after.capture = "DP-2".into();
+        assert!(needs_restart(&before, &after));
+        assert!(!needs_restart(&before, &before));
     }
 
     #[test]
