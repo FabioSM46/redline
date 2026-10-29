@@ -40,7 +40,7 @@ enum Cmd {
     },
     /// Query the LACT daemon
     Lact {
-        #[arg(value_parser = ["ping", "devices", "info", "stats"])]
+        #[arg(value_parser = ["ping", "system", "devices", "info", "stats", "config", "profiles"])]
         what: String,
     },
     /// Audio sources available to GPU Screen Recorder
@@ -177,16 +177,19 @@ fn lact(what: &str) -> Result<()> {
     let id = || -> Result<String> {
         // LACT identifies the GPU as "VENDOR:DEVICE-SUBVENDOR:SUBDEVICE-PCI_SLOT"
         let devices = client.list_devices()?;
-        Ok(devices[0]["id"].as_str().unwrap_or_default().to_owned())
+        Ok(devices.first().map(|d| d.id.clone()).unwrap_or_default())
     };
     let out = match what {
         "ping" => {
             client.ping()?;
             serde_json::json!("pong")
         }
-        "devices" => client.list_devices()?,
-        "info" => client.device_info(&id()?)?,
-        "stats" => client.device_stats(&id()?)?,
+        "system" => serde_json::to_value(client.system_info()?)?,
+        "devices" => serde_json::to_value(client.list_devices()?)?,
+        "info" => serde_json::to_value(client.device_info(&id()?)?)?,
+        "stats" => serde_json::to_value(client.device_stats(&id()?)?)?,
+        "config" => serde_json::to_value(client.get_gpu_config(&id()?)?)?,
+        "profiles" => serde_json::to_value(client.list_profiles()?)?,
         _ => unreachable!(),
     };
     println!("{}", serde_json::to_string_pretty(&out)?);
