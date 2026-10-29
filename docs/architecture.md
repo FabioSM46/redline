@@ -20,16 +20,17 @@
 | `sensors` | Finds AMD GPUs in `/sys/class/drm`, reads temperatures, power, fan, clocks, voltage, usage and VRAM | prototype, tested on RDNA4 |
 | `history` | Ring buffer of timestamped `GpuSnapshot`s: 900 samples (15 minutes at 1 Hz), `push`, `latest` and `window(seconds)` in chronological order. Pure: no clock, no sysfs | tested with synthetic samples |
 | `lact` | Client of the `lactd` socket: devices, statistics, power cap, confirming or reverting changes | prototype, verified on real hardware |
-| `recorder` | Starts GPU Screen Recorder in replay mode with its IPC socket, saves the replay over IPC, stops it with signals sent only to the process tree it started, one audio track per source. Verified against GPU Screen Recorder 6.1.6 (`VERIFIED_VERSION`) | replay verified on real hardware; IPC, process tree and stdout parsing tested with fakes |
+| `recorder` | Starts GPU Screen Recorder in replay mode with its IPC socket, saves the replay over IPC, stops it with signals sent only to the process tree it started, one audio track per source. Lists audio devices, applications playing audio and monitors; holds the allowed `-k`, `-q`, `-f`, `-r` values (`CODECS`, `QUALITIES`, `FPS`, `REPLAY_SECONDS`). Verified against GPU Screen Recorder 6.1.6 (`VERIFIED_VERSION`) | replay verified on real hardware; IPC, process tree and stdout parsing tested with fakes |
 
 ## Tauri app modules (`src-tauri/src/`)
 
 | Module | Responsibility | Commands |
 |---|---|---|
 | `sampler` | Background thread started in `setup`: discovers the AMD GPUs and reads them once per second into one `history` buffer per GPU id (see "Statistics" below) | `gpu_snapshot`, `gpu_history` |
-| `settings` | `Settings { theme: "system" \| "light" \| "dark", start_minimised }` in `settings.json` inside `app_config_dir()`. A missing file means the defaults (`system`, `false`); an unreadable or invalid file means the defaults plus a line on stderr, and a single bad field falls back to its own default. Writes are atomic (temporary file + `rename`) | `get_settings`, `set_settings` |
+| `settings` | `Settings { theme: "system" \| "light" \| "dark", start_minimised, recording }` in `settings.json` inside `app_config_dir()`. `recording { replay_seconds, audio_tracks, replay_dir, recording_dir, capture, codec, quality, fps, replay_on_start }`; the folders default to `<video folder>/Redline/{Replays,Recordings}`. A missing file means the defaults; an unreadable or invalid file means the defaults plus a line on stderr, and a single bad field (also inside `recording`) falls back to its own default. Writes are atomic (temporary file + `rename`). `set_settings` without `recording` keeps the saved one; an invalid `recording` is refused with every reason. A new `capture` deletes the portal session token (`portal-session-token` in `app_data_dir()`), a recording change restarts a running replay. Other modules read the recording settings with `settings::recording_settings(app)` | `get_settings`, `set_settings` |
 | `autostart` | Starting with the system through `tauri-plugin-autostart` (an XDG autostart entry), used only by the backend: the frontend has no `autostart:*` permission. The entry launches the app with `--autostart`. The operating system is the only source of truth: the state is not stored in `settings.json` and is read back after every write | `get_autostart`, `set_autostart` |
-| `recorder` | The instant replay service: at most one replay session for the whole app, in the app process (D8). `RecorderStatus { available, unavailable_reason, replay: "off" \| "starting" \| "on" \| "error", recording, replay_seconds, error, warning }`, sent again as the `recorder-state` event on every change; `file-saved { kind: "replay" \| "recording", file_name, saved_at_ms }` for every file GPU Screen Recorder saves (the name only, never the path). Stopped on app exit | `recorder_status`, `replay_start`, `replay_stop`, `replay_save` |
+| `recorder` | The instant replay service: at most one replay session for the whole app, in the app process (D8). `RecorderStatus { available, unavailable_reason, replay: "off" \| "starting" \| "on" \| "error", recording, replay_seconds, error, warning }`, sent again as the `recorder-state` event on every change; `file-saved { kind: "replay" \| "recording", file_name, saved_at_ms }` for every file GPU Screen Recorder saves (the name only, never the path). Its `ReplayConfig` comes from the recording settings; `replay_on_start` starts it with the app. Stopped on app exit | `recorder_status`, `replay_start`, `replay_stop`, `replay_save` |
+| `sources` | What the recording settings can choose from, as `{ available, unavailable_reason, items: [{ id, label }] }`: audio sources (`default_output`, `default_input`, `device:<name>`, then running applications as `app:<name>`) and capture targets (`portal` first, then monitors by name). Without GPU Screen Recorder: `available: false` and what to install | `list_audio_sources`, `list_capture_targets` |
 
 ## Flows
 
@@ -53,8 +54,11 @@ Without confirmation `lactd` reverts to the previous values by itself.
 
 **Replay**: the `recorder` app module starts GPU Screen Recorder (the native binary on PATH,
 otherwise the Flatpak) with the buffer in RAM, one audio track per chosen source (`-a` repeated)
-and `-ipc <socket>`, the socket in `$XDG_RUNTIME_DIR/redline/` (shared with the Flatpak sandbox
-through `--filesystem`). The replay is `starting` until GPU Screen Recorder answers on the socket,
+and `-ipc <socket>`, everything else from the recording settings. With portal capture the
+session is restored from Redline's own token file (`-portal-session-token-filepath`), and changing
+`capture` deletes it so the desktop asks again. The socket is in `$XDG_RUNTIME_DIR/redline/` (shared with the Flatpak sandbox
+through `--filesystem`, as is the token's folder). The Flatpak has a private `/tmp`, so an output
+folder under `/tmp` is refused with its name. The replay is `starting` until GPU Screen Recorder answers on the socket,
 which it does only once capture runs (with the portal: after the user has picked a screen), then
 `on`. Saving is the IPC `save-replay` request; GPU Screen Recorder writes the path of the saved
 file to stdout and the backend sends `file-saved` with the file name. Stopping is SIGINT to the

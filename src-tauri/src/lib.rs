@@ -2,6 +2,7 @@ mod autostart;
 mod recorder;
 mod sampler;
 mod settings;
+mod sources;
 mod tray;
 
 use redline_core::sensors::{self, GpuInfo, GpuSnapshot};
@@ -54,6 +55,8 @@ pub fn run() {
             recorder::replay_start,
             recorder::replay_stop,
             recorder::replay_save,
+            sources::list_audio_sources,
+            sources::list_capture_targets,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

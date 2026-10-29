@@ -14,13 +14,13 @@
 //! Any exit we did not ask for → `error`; stopping → `off`.
 //!
 //! Extension points for the issues built on this one:
-//! - settings (#29): [`Environment::config`] is the single source of the [`ReplayConfig`];
-//!   [`default_config`] holds today's fixed defaults.
+//! - settings (#29, done): [`Environment::config`] is the single source of the [`ReplayConfig`],
+//!   built from `settings::RecordingSettings`; [`settings_changed`] restarts a running replay.
 //! - recording (#30): [`RecorderStatus::recording`] and [`FileKind::Recording`] exist already;
 //!   requests to the running process go through its IPC socket ([`Running::socket`]), stopping
 //!   through [`Recorder::stop`].
-//! - gallery and notifications (#31): subscribe to [`Events::file_saved`] (the folders are in the
-//!   config).
+//! - gallery and notifications (#31): subscribe to [`Events::file_saved`]; the folders come from
+//!   `settings::recording_settings`.
 //! - command-line actions (#32): call [`Recorder::start`], [`Recorder::stop`], [`Recorder::save`]
 //!   from the single-instance callback, as the commands do.
 
@@ -29,11 +29,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use redline_core::recorder::{
-    self, AudioTrack, Launcher, Output, ReadyProbe, ReplayConfig, ReplaySession,
-};
+use redline_core::recorder::{self, Launcher, Output, ReadyProbe, ReplayConfig, ReplaySession};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+
+use crate::settings::{self, SettingsState};
 
 pub const STATE_EVENT: &str = "recorder-state";
 pub const FILE_SAVED_EVENT: &str = "file-saved";
@@ -47,13 +47,7 @@ pub const MISSING: &str = "GPU Screen Recorder is not installed. Install it from
 const NOT_RUNNING: &str = "The replay is off: start it first.";
 const STILL_STARTING: &str =
     "The replay is still starting: GPU Screen Recorder is waiting for the screen to capture.";
-
-/// Defaults used until the recording settings exist (#29).
-const DEFAULT_REPLAY_SECONDS: u32 = 60;
-const DEFAULT_FPS: u32 = 60;
-const VIDEO_SUBFOLDER: &str = "Redline";
-const REPLAY_FOLDER: &str = "Replays";
-const RECORDING_FOLDER: &str = "Recordings";
+const NO_VIDEO_FOLDER: &str = "No video folder to save replays in.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -144,31 +138,12 @@ pub fn detect() -> Availability {
     }
 }
 
-/// The replay settings until the recording settings land (#29): portal capture, 60 s, 60 fps,
-/// mkv, desktop audio and microphone on two tracks, folders under the user's video folder.
-pub fn default_config(video_dir: &Path) -> ReplayConfig {
-    let base = video_dir.join(VIDEO_SUBFOLDER);
-    ReplayConfig {
-        capture: "portal".into(),
-        fps: DEFAULT_FPS,
-        replay_seconds: DEFAULT_REPLAY_SECONDS,
-        container: "mkv".into(),
-        codec: None,
-        replay_dir: base.join(REPLAY_FOLDER),
-        recording_dir: base.join(RECORDING_FOLDER),
-        audio: vec![
-            AudioTrack::single("default_output"),
-            AudioTrack::single("default_input"),
-        ],
-    }
-}
-
 type Source<T> = Box<dyn Fn() -> Result<T, String> + Send + Sync>;
 
 /// What the service needs from its surroundings; tests pass a fake process.
 pub struct Environment {
     pub detect: Box<dyn Fn() -> Availability + Send + Sync>,
-    /// The settings of the next replay (#29 replaces this source).
+    /// The settings of the next replay: the recording settings.
     pub config: Source<ReplayConfig>,
     /// Where the session's IPC socket goes; private to this app instance.
     pub socket: Result<PathBuf, String>,
@@ -253,6 +228,11 @@ impl Recorder {
     /// sentence that says what to install when GPU Screen Recorder is missing.
     pub fn start(&self) -> Result<RecorderStatus, String> {
         let _control = lock(&self.inner.control);
+        self.start_locked()
+    }
+
+    /// [`Recorder::start`] with `control` already held.
+    fn start_locked(&self) -> Result<RecorderStatus, String> {
         if self.state().running.is_some() {
             return Ok(self.state().status.clone());
         }
@@ -356,6 +336,42 @@ impl Recorder {
         recorder::save_replay(&socket, SAVE_TIMEOUT)
             .map(|_| ())
             .map_err(|error| format!("Could not save the replay: {error:#}"))
+    }
+
+    /// Applies changed settings: a running replay (starting or on) restarts with them; otherwise
+    /// the status shows the length of the next replay.
+    pub fn reconfigure(&self) -> Result<RecorderStatus, String> {
+        let _control = lock(&self.inner.control);
+        if self.state().running.is_some() {
+            self.stop_locked()?;
+            return self.start_locked();
+        }
+        let Ok(config) = (self.inner.env.config)() else {
+            return Ok(self.state().status.clone());
+        };
+        let mut state = self.state();
+        let changed = state.status.replay_seconds != config.replay_seconds;
+        state.status.replay_seconds = config.replay_seconds;
+        let status = state.status.clone();
+        drop(state);
+        if changed {
+            self.inner.events.state(&status);
+        }
+        Ok(status)
+    }
+
+    /// The GPU Screen Recorder to run, for the listing commands; the sentence that says what to
+    /// install when it is missing.
+    pub fn launcher(&self) -> Result<Launcher, String> {
+        let _control = lock(&self.inner.control);
+        let known = self.state().availability.clone();
+        match known {
+            Some(Availability::Ready { launcher, .. }) => Ok(launcher),
+            _ => match self.refresh_availability() {
+                Availability::Ready { launcher, .. } => Ok(launcher),
+                Availability::Missing(reason) => Err(reason),
+            },
+        }
     }
 
     /// Stops the replay when the app exits.
@@ -551,15 +567,24 @@ fn exit_message(exit: std::process::ExitStatus, last_error: Option<String>) -> S
 }
 
 /// Registers the service as managed state and detects GPU Screen Recorder in the background.
+/// Starts the replay too when `replay_on_start` is set (also when the window starts hidden).
+/// Needs `settings::init` to have run.
 pub fn init<R: Runtime>(app: &AppHandle<R>) {
     let paths = app.path();
-    let video_dir = paths
-        .video_dir()
-        .or_else(|_| paths.home_dir().map(|home| home.join("Videos")));
-    let config: Source<ReplayConfig> = Box::new(move || match &video_dir {
-        Ok(dir) => Ok(default_config(dir)),
-        Err(_) => Err("No video folder to save replays in.".to_owned()),
+    let handle = app.clone();
+    let config: Source<ReplayConfig> = Box::new(move || {
+        let state = handle
+            .try_state::<SettingsState>()
+            .ok_or_else(|| "The settings are not available: restart the app.".to_owned())?;
+        let recording = state.current().recording;
+        // Empty when the system has no video folder and no home (see `settings::init`).
+        if recording.replay_dir.as_os_str().is_empty() {
+            return Err(NO_VIDEO_FOLDER.to_owned());
+        }
+        Ok(recording.replay_config(state.portal_token()))
     });
+    let replay_on_start =
+        settings::recording_settings(app).is_some_and(|recording| recording.replay_on_start);
     // The runtime folder ($XDG_RUNTIME_DIR) is private to the user and cleared at logout; the
     // pid keeps two Redline processes (no single instance without a session bus) apart.
     let socket_name = format!("gsr-{}.sock", std::process::id());
@@ -581,9 +606,35 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
     app.manage(service.clone());
     let spawned = thread::Builder::new()
         .name("redline-recorder-detect".into())
-        .spawn(move || service.detect());
+        .spawn(move || {
+            service.detect();
+            if replay_on_start && let Err(error) = service.start() {
+                eprintln!("redline: the replay did not start with the app: {error}");
+            }
+        });
     if let Err(error) = spawned {
         eprintln!("redline: GPU Screen Recorder detection did not start ({error})");
+    }
+}
+
+/// Applies changed recording settings in the background: restarting a running replay waits for
+/// the process to exit.
+pub fn settings_changed<R: Runtime>(app: &AppHandle<R>) {
+    let Some(service) = app
+        .try_state::<Recorder>()
+        .map(|service| service.inner().clone())
+    else {
+        return;
+    };
+    let spawned = thread::Builder::new()
+        .name("redline-replay-reconfigure".into())
+        .spawn(move || {
+            if let Err(error) = service.reconfigure() {
+                eprintln!("redline: the replay did not restart with the new settings: {error}");
+            }
+        });
+    if let Err(error) = spawned {
+        eprintln!("redline: the replay restart did not start ({error})");
     }
 }
 
@@ -658,6 +709,13 @@ mod tests {
         }
     }
 
+    const DEFAULT_REPLAY_SECONDS: u32 = 60;
+
+    /// The default recording settings with the folders under `video_dir`.
+    fn test_config(video_dir: &Path) -> ReplayConfig {
+        settings::RecordingSettings::defaults(video_dir).replay_config(None)
+    }
+
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("redline-replay-{name}-{}", std::process::id()));
@@ -711,7 +769,7 @@ mod tests {
                     launcher: launcher.clone(),
                     warning: None,
                 }),
-                config: Box::new(move || Ok(default_config(&video_dir))),
+                config: Box::new(move || Ok(test_config(&video_dir))),
                 socket: Ok(dir.join("run").join("gsr.sock")),
             },
             events.clone(),
@@ -786,6 +844,61 @@ mod tests {
     }
 
     #[test]
+    fn a_settings_change_restarts_a_running_replay_with_the_new_settings() {
+        let dir = temp_dir("reconfigure");
+        let launcher = Launcher::Native(fake_gsr(&dir, LOOP));
+        let seconds = Arc::new(Mutex::new(60));
+        let source = Arc::clone(&seconds);
+        let video_dir = dir.clone();
+        let events = Collector::default();
+        let service = Recorder::new(
+            Environment {
+                detect: Box::new(move || Availability::Ready {
+                    launcher: launcher.clone(),
+                    warning: None,
+                }),
+                config: Box::new(move || {
+                    let mut config = test_config(&video_dir);
+                    config.replay_seconds = *lock(&source);
+                    Ok(config)
+                }),
+                socket: Ok(dir.join("run").join("gsr.sock")),
+            },
+            events.clone(),
+        );
+        assert_eq!(
+            service.launcher(),
+            Ok(Launcher::Native(dir.join("fake-gsr")))
+        );
+
+        // Off: only the length shown for the next replay changes.
+        *lock(&seconds) = 90;
+        let status = service.reconfigure().unwrap();
+        assert_eq!(
+            (status.replay, status.replay_seconds),
+            (ReplayState::Off, 90)
+        );
+        assert!(events.saw(|status| status.replay_seconds == 90));
+
+        // Running: stopped and started again with the new settings.
+        service.start().unwrap();
+        *lock(&seconds) = 120;
+        let status = service.reconfigure().unwrap();
+        assert_eq!(
+            (status.replay, status.replay_seconds),
+            (ReplayState::Starting, 120)
+        );
+        let replays: Vec<_> = lock(&events.states).iter().map(|s| s.replay).collect();
+        assert!(
+            replays.ends_with(&[ReplayState::Off, ReplayState::Starting]),
+            "{replays:?}"
+        );
+        service.shutdown();
+        assert_eq!(service.status().replay, ReplayState::Off);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn saving_before_capture_runs_is_refused() {
         let dir = temp_dir("starting");
         // No IPC server: gsr is still waiting for the screen.
@@ -820,7 +933,7 @@ mod tests {
         let body = format!("echo $$ > \"$out/../pid\"\n{LOOP}");
         let (service, _) = service(&dir, &body);
         service.start().unwrap();
-        let pid_file = dir.join(VIDEO_SUBFOLDER).join("pid");
+        let pid_file = dir.join("Redline").join("pid");
         wait_until("the pid", || {
             fs::read_to_string(&pid_file).is_ok_and(|pid| pid.ends_with('\n'))
         });
@@ -864,7 +977,7 @@ mod tests {
                         Availability::Missing(MISSING.to_owned())
                     }
                 }),
-                config: Box::new(move || Ok(default_config(&video_dir))),
+                config: Box::new(move || Ok(test_config(&video_dir))),
                 socket: Ok(dir.join("run").join("gsr.sock")),
             },
             Collector::default(),
@@ -886,7 +999,7 @@ mod tests {
         let service = Recorder::new(
             Environment {
                 detect: Box::new(|| Availability::Missing(MISSING.to_owned())),
-                config: Box::new(|| Ok(default_config(Path::new("/videos")))),
+                config: Box::new(|| Ok(test_config(Path::new("/videos")))),
                 socket: Ok(PathBuf::from("/nowhere/gsr.sock")),
             },
             events.clone(),
@@ -898,6 +1011,7 @@ mod tests {
         assert_eq!(service.start().unwrap_err(), MISSING);
         assert_eq!(service.save().unwrap_err(), MISSING);
         assert_eq!(service.stop().unwrap_err(), MISSING);
+        assert_eq!(service.launcher().unwrap_err(), MISSING);
         assert!(events.saw(|status| status.unavailable_reason.is_some()));
         // The status still says off: a missing tool is not a replay error.
         assert_eq!(service.status().replay, ReplayState::Off);
@@ -984,21 +1098,6 @@ mod tests {
         assert_eq!(saved("/elsewhere/Video_1.mkv").kind, FileKind::Recording);
         assert_eq!(saved("/elsewhere/Replay_1.mkv").kind, FileKind::Replay);
         assert!(file_saved(Path::new("/"), replays, recordings, 1).is_none());
-    }
-
-    #[test]
-    fn the_defaults_live_under_the_video_folder() {
-        let config = default_config(Path::new("/videos"));
-        assert_eq!(config.capture, "portal");
-        assert_eq!((config.replay_seconds, config.fps), (60, 60));
-        assert_eq!(config.container, "mkv");
-        assert_eq!(config.replay_dir, Path::new("/videos/Redline/Replays"));
-        assert_eq!(
-            config.recording_dir,
-            Path::new("/videos/Redline/Recordings")
-        );
-        let tracks: Vec<_> = config.audio.iter().map(|track| track.0.clone()).collect();
-        assert_eq!(tracks, [vec!["default_output"], vec!["default_input"]]);
     }
 
     #[test]
