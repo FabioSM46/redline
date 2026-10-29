@@ -88,14 +88,19 @@ pub fn run() {
             global_shortcuts::global_shortcuts_status,
             global_shortcuts::global_shortcuts_configure,
             tuning::tuning_status,
+            tuning::set_power_limit,
+            tuning::tuning_confirm,
+            tuning::tuning_revert,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
         .run(|app, event| {
             // Every way out (tray Quit, closing the window without a tray) ends here: the
-            // replay process must not outlive the app.
+            // replay process must not outlive the app, nor an unconfirmed tuning change.
             if let tauri::RunEvent::Exit = event {
                 recorder::shutdown(app);
+                // A tuning change still waiting for confirmation is reverted.
+                tuning::shutdown(app);
             }
         });
 }

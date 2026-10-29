@@ -21,6 +21,8 @@
 //! | `device_stats` | `{ id }` | [`DeviceStats`] |
 //! | `get_gpu_config` | `{ id }` | `Option<`[`GpuConfig`]`>` (`null` = never configured) |
 //! | `list_profiles` | `{ include_state: false }` | [`ProfilesInfo`] |
+//! | `set_power_cap` | `{ id, cap }` (`cap: null` = default) | seconds until lactd reverts |
+//! | `confirm_pending_config` | `{ command: "confirm" \| "revert" }` | — |
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -437,13 +439,23 @@ impl LactClient {
         self.call("list_profiles", Some(json!({ "include_state": false })))
     }
 
-    /// Sets the power cap in watts (`None` = default).
-    /// LACT applies the change pending confirmation: follow it with `confirm_pending`,
-    /// otherwise after a few seconds the daemon reverts to the previous values.
-    pub fn set_power_cap(&self, id: &str, watts: Option<f64>) -> LactResult<Value> {
-        self.request("set_power_cap", Some(json!({ "id": id, "cap": watts })))
+    /// Sets the power cap in watts (`None` = default) and returns how many seconds LACT waits
+    /// for [`confirm_pending`](Self::confirm_pending) before it reverts the change by itself.
+    ///
+    /// In 0.10.1 every setter goes through `edit_gpu_config`: it refuses with "There is an
+    /// unconfirmed configuration change pending" while any change (on any GPU) is pending,
+    /// applies the new configuration, and answers with `apply_settings_timer` (seconds, 5 by
+    /// default, set in `/etc/lact/config.yaml`). Without `confirm` before that timer, lactd
+    /// restores the previous configuration on its own.
+    pub fn set_power_cap(&self, id: &str, watts: Option<f64>) -> LactResult<u64> {
+        self.call("set_power_cap", Some(json!({ "id": id, "cap": watts })))
     }
 
+    /// `confirm_pending_config` with `confirm` (keep and save the pending change) or `revert`
+    /// (restore the previous configuration). lactd 0.10.1 holds a single pending change for the
+    /// whole daemon, so the request names no GPU; it answers an error when nothing is pending
+    /// any more ("No pending config changes", or "Could not confirm config" when its own timer
+    /// settled the change a moment earlier).
     pub fn confirm_pending(&self, confirm: bool) -> LactResult<()> {
         let command = if confirm { "confirm" } else { "revert" };
         self.request(
@@ -676,6 +688,52 @@ mod tests {
         assert_eq!(devices[0].name.as_deref(), Some("AMD Radeon RX 9070 XT"));
         let request: Value = serde_json::from_str(&server.join().unwrap()).unwrap();
         assert_eq!(request, json!({ "command": "list_devices" }));
+    }
+
+    /// Answers one request with `answer` and returns the request line it read.
+    fn answer_once(listener: UnixListener, answer: &'static str) -> thread::JoinHandle<Value> {
+        thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let mut stream = stream;
+            writeln!(stream, "{answer}").unwrap();
+            serde_json::from_str(&line).unwrap()
+        })
+    }
+
+    #[test]
+    fn the_setter_and_the_confirmation_use_the_0_10_1_request_shapes() {
+        let dir = temp("setters");
+        let socket = dir.0.join("lactd.sock");
+        let client = LactClient::new(&socket).with_timeout(Duration::from_secs(2));
+
+        // `set_power_cap` answers `apply_settings_timer`, in seconds.
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"ok","data":5}"#,
+        );
+        assert_eq!(
+            client.set_power_cap("x-0000:0d:00.0", Some(250.0)).unwrap(),
+            5
+        );
+        assert_eq!(
+            server.join().unwrap(),
+            json!({ "command": "set_power_cap", "args": { "id": "x-0000:0d:00.0", "cap": 250.0 } })
+        );
+        std::fs::remove_file(&socket).unwrap();
+
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"ok","data":null}"#,
+        );
+        client.confirm_pending(false).unwrap();
+        assert_eq!(
+            server.join().unwrap(),
+            json!({ "command": "confirm_pending_config", "args": { "command": "revert" } })
+        );
     }
 
     #[test]
