@@ -5,14 +5,21 @@
 //! off. The icon counts as available only while something on the session bus shows it.
 //!
 //! Close to tray is always on when the tray is available (D8, no option): [`on_window_event`]
-//! hides the main window instead of closing it. Without a visible icon the close quits the app,
-//! so there is never a hidden window with no icon to bring it back.
+//! hides the main window instead of closing it. Without a visible icon the close quits the app.
+//! While the window is hidden a watchdog asks again every [`WATCHDOG_INTERVAL`]: if the host
+//! goes away (shell restart, AppIndicator extension turned off) the window comes back, so a
+//! hidden window with no icon to bring it back lasts at most one interval.
+//!
+//! The session bus connection is opened once, when the icon is created (setup), and kept: the
+//! close path and the watchdog only make the property call, bounded by a 200 ms timeout.
 //!
 //! The `.deb` depends on `libayatana-appindicator3-1` without a `depends` entry in
 //! `tauri.conf.json`: Tauri's bundler adds it whenever the `tray-icon` feature is on, and an
 //! explicit entry would list it twice (`dpkg-deb -f <deb> Depends`).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuBuilder, MenuEvent};
@@ -25,26 +32,37 @@ const TRAY_ID: &str = "main";
 const MENU_SHOW: &str = "show";
 const MENU_QUIT: &str = "quit";
 const TOOLTIP: &str = "Redline";
+/// How often the watchdog checks that a hidden window still has a visible tray icon.
+const WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Whether the tray icon was created. Managed state, read by [`app_status`] and by the close
-/// handling.
+/// Whether the tray icon was created, and the session bus connection used to ask whether it is
+/// shown. Managed state, read by [`app_status`], the close handling and the watchdog.
 #[derive(Debug, Default)]
-pub struct TrayStatus(AtomicBool);
+pub struct TrayStatus {
+    created: AtomicBool,
+    /// The shared `GDBusConnection` of the session bus, null when there is none. Its reference
+    /// is kept for the life of the process and never released.
+    bus: AtomicPtr<c_void>,
+}
 
 impl TrayStatus {
     /// Whether the icon exists and something shows it right now: only then can the window hide.
     /// The host is asked on every call, not once at startup: the shell can register it after an
     /// autostarted Redline, or go away while it runs.
     pub fn available(&self) -> bool {
-        self.created() && linux::status_notifier_host_present()
+        if !self.created() {
+            return false;
+        }
+        let bus = self.bus.load(Ordering::Acquire);
+        !bus.is_null() && linux::status_notifier_host_registered(bus)
     }
 
     fn created(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
+        self.created.load(Ordering::Relaxed)
     }
 
     fn set_created(&self, created: bool) {
-        self.0.store(created, Ordering::Relaxed);
+        self.created.store(created, Ordering::Relaxed);
     }
 }
 
@@ -55,12 +73,14 @@ pub struct AppStatus {
 }
 
 /// The app's lifetime state for the interface: `{ "tray_available": bool }`, read at every call.
-/// `async` so the session bus query never runs on the main thread.
-#[tauri::command(async)]
-pub fn app_status(app: AppHandle) -> AppStatus {
-    AppStatus {
-        tray_available: tray_available(&app),
-    }
+/// The session bus query is a blocking FFI call: it runs on the blocking pool, never on the main
+/// thread or an async worker.
+#[tauri::command]
+pub async fn app_status(app: AppHandle) -> AppStatus {
+    let tray_available = tauri::async_runtime::spawn_blocking(move || tray_available(&app))
+        .await
+        .unwrap_or(false);
+    AppStatus { tray_available }
 }
 
 /// Whether the tray icon exists and is shown right now; `false` before [`create`] has run.
@@ -69,8 +89,9 @@ pub fn tray_available<R: Runtime>(app: &AppHandle<R>) -> bool {
         .is_some_and(|status| status.available())
 }
 
-/// Registers [`TrayStatus`], then creates the tray icon and records whether it exists. Never
-/// fails: without an icon the app works as before, with the window's close quitting it.
+/// Registers [`TrayStatus`], then creates the tray icon, records whether it exists and starts
+/// the watchdog. Never fails: without an icon the app works as before, with the window's close
+/// quitting it.
 pub fn create<R: Runtime>(app: &AppHandle<R>) {
     app.manage(TrayStatus::default());
     let created = match build(app) {
@@ -84,7 +105,44 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) {
             false
         }
     };
-    app.state::<TrayStatus>().set_created(created);
+    let status = app.state::<TrayStatus>();
+    status.set_created(created);
+    if !created {
+        return;
+    }
+    // The only connect, at startup: AppIndicator has just asked GIO for the same shared
+    // connection, so this normally returns at once. Null means "never available".
+    status.bus.store(linux::session_bus(), Ordering::Release);
+    spawn_watchdog(app.clone());
+}
+
+/// Every [`WATCHDOG_INTERVAL`], brings the hidden main window back if the tray icon is no longer
+/// shown. Runs for the life of the process; only started when the icon exists.
+fn spawn_watchdog<R: Runtime>(app: AppHandle<R>) {
+    let spawned = std::thread::Builder::new()
+        .name("redline-tray-watchdog".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(WATCHDOG_INTERVAL);
+                let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
+                    continue;
+                };
+                // Unreadable visibility counts as visible: nothing to restore.
+                let visible = window.is_visible().unwrap_or(true);
+                if restore_hidden_window(visible, || tray_available(&app)) {
+                    show_main_window(&app);
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        eprintln!("redline: the tray watchdog did not start ({error})");
+    }
+}
+
+/// Whether the watchdog shows the main window again: only when it is hidden and the tray icon
+/// is not shown. The tray is asked only for a hidden window.
+pub fn restore_hidden_window(visible: bool, tray_available: impl FnOnce() -> bool) -> bool {
+    !visible && !tray_available()
 }
 
 fn build<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -205,7 +263,6 @@ mod linux {
         fn g_variant_is_of_type(value: *mut c_void, variant_type: *const c_void) -> c_int;
         fn g_variant_get_boolean(value: *mut c_void) -> c_int;
         fn g_variant_unref(value: *mut c_void);
-        fn g_object_unref(object: *mut c_void);
     }
 
     /// Whether one of the AppIndicator libraries actually loads: a file that is present but has
@@ -218,25 +275,31 @@ mod linux {
         })
     }
 
-    /// `Properties.Get("org.kde.StatusNotifierWatcher", "IsStatusNotifierHostRegistered")` on
-    /// the session bus. A watcher with no registered host owns the name but shows nothing, and
-    /// with no watcher the call fails, so one call answers both questions. Every error (no bus,
-    /// timeout, unexpected reply) means "no": the close quits.
+    /// The shared session bus connection, or null when there is none. The only call without a
+    /// timeout: GIO may try `$XDG_RUNTIME_DIR/bus` and X11 autolaunch, so it is made once, in
+    /// setup, and the connection is reused.
     ///
     /// There is no shortcut on `DBUS_SESSION_BUS_ADDRESS`: when it is missing GIO tries
     /// `$XDG_RUNTIME_DIR/bus` before X11 autolaunch, so a missing variable does not mean "no
     /// bus" and checking it would give false negatives (autostart, launchers that drop it).
-    pub fn status_notifier_host_present() -> bool {
+    pub fn session_bus() -> *mut c_void {
+        // SAFETY: a plain GIO call; the returned reference (or null) is owned by the caller.
+        unsafe { g_bus_get_sync(G_BUS_TYPE_SESSION, ptr::null_mut(), ptr::null_mut()) }
+    }
+
+    /// `Properties.Get("org.kde.StatusNotifierWatcher", "IsStatusNotifierHostRegistered")` on
+    /// `bus`. A watcher with no registered host owns the name but shows nothing, and
+    /// with no watcher the call fails, so one call answers both questions. Every error (closed
+    /// connection, 200 ms timeout, unexpected reply) means "no": the close quits.
+    ///
+    /// `bus` must be a live `GDBusConnection` reference, as returned by [`session_bus`].
+    pub fn status_notifier_host_registered(bus: *mut c_void) -> bool {
         // SAFETY: plain GIO calls with valid NUL-terminated strings. `g_variant_new_tuple`
         // sinks the floating strings, `g_dbus_connection_call_sync` sinks the floating tuple,
         // and every returned reference is released exactly once. GIO checks the reply against
         // the `(v)` type before returning it; the boxed value is checked to be a boolean before
-        // it is read.
+        // it is read. `bus` is borrowed: the caller keeps its reference.
         unsafe {
-            let bus = g_bus_get_sync(G_BUS_TYPE_SESSION, ptr::null_mut(), ptr::null_mut());
-            if bus.is_null() {
-                return false;
-            }
             let arguments = [
                 g_variant_new_string(c"org.kde.StatusNotifierWatcher".as_ptr()),
                 g_variant_new_string(c"IsStatusNotifierHostRegistered".as_ptr()),
@@ -255,7 +318,6 @@ mod linux {
                 ptr::null_mut(),
                 ptr::null_mut(),
             );
-            g_object_unref(bus);
             if reply.is_null() {
                 return false;
             }
@@ -287,6 +349,14 @@ mod tests {
     }
 
     #[test]
+    fn the_watchdog_restores_only_a_hidden_window_without_a_tray_icon() {
+        assert!(restore_hidden_window(false, || false));
+        assert!(!restore_hidden_window(false, || true));
+        // A visible window is left alone, and the tray is not even asked.
+        assert!(!restore_hidden_window(true, || panic!("tray asked")));
+    }
+
+    #[test]
     fn a_tray_icon_that_was_not_created_is_never_available() {
         let status = TrayStatus::default();
         assert!(!status.created());
@@ -310,6 +380,17 @@ mod tests {
     #[test]
     fn the_linux_probes_answer_without_crashing() {
         let _ = linux::appindicator_loads();
-        let _ = linux::status_notifier_host_present();
+        let bus = linux::session_bus();
+        if !bus.is_null() {
+            let _ = linux::status_notifier_host_registered(bus);
+        }
+    }
+
+    #[test]
+    fn a_created_icon_without_a_session_bus_is_not_available() {
+        let status = TrayStatus::default();
+        status.set_created(true);
+        // `bus` is still null: answers false without any bus call.
+        assert!(!status.available());
     }
 }
