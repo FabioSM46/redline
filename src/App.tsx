@@ -8,7 +8,7 @@ import { Record } from "./sections/Record.tsx";
 import { Settings } from "./sections/Settings.tsx";
 import { Mark, TopBar } from "./shell/TopBar.tsx";
 import { StatusBar } from "./shell/StatusBar.tsx";
-import type { SectionProps, TabId } from "./tabs.ts";
+import type { Navigate, SectionProps, SettingsTabId, TabId } from "./tabs.ts";
 
 /** One component per tab: each section fills its own file without touching the shell. */
 const SECTIONS: { [Tab in TabId]: ComponentType<SectionProps> } = {
@@ -22,6 +22,12 @@ const SECTIONS: { [Tab in TabId]: ComponentType<SectionProps> } = {
 function App() {
   const gpus = useGpuList();
   const [tab, setTab] = useState<TabId>("home");
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId | undefined>(undefined);
+  // Every tab change goes through here, so a page asked for once is not reopened later.
+  const navigate: Navigate = (next, page) => {
+    setSettingsTab(page);
+    setTab(next);
+  };
 
   if (gpus.status !== "ready") {
     return (
@@ -41,9 +47,9 @@ function App() {
     <GpuProvider value={gpus.value}>
       <RecorderProvider>
         <div className="shell">
-          <TopBar active={tab} onSelect={setTab} />
+          <TopBar active={tab} onSelect={(next) => navigate(next)} />
           <main className="content">
-            <Section navigate={setTab} />
+            <Section navigate={navigate} settingsTab={settingsTab} />
           </main>
           <StatusBar />
         </div>
