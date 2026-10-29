@@ -3,7 +3,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use redline_core::lact::LactClient;
-use redline_core::recorder::{self, AudioTrack, Launcher, ReplayConfig, ReplaySession};
+use redline_core::recorder::{self, AudioTrack, Launcher, Output, ReplayConfig, ReplaySession};
 use redline_core::sensors::{self, AmdGpu, GpuSnapshot};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -158,11 +158,11 @@ fn lact(what: &str) -> Result<()> {
 fn audio() -> Result<()> {
     let launcher = Launcher::detect()?;
     println!("Devices ({launcher:?}):");
-    for (name, desc) in recorder::list_audio_devices(launcher)? {
+    for (name, desc) in recorder::list_audio_devices(&launcher)? {
         println!("  {name:<40} {desc}");
     }
     println!("Applications (use app:<name>):");
-    for app in recorder::list_application_audio(launcher)? {
+    for app in recorder::list_application_audio(&launcher)? {
         println!("  {app}");
     }
     Ok(())
@@ -193,8 +193,24 @@ fn replay(
     };
 
     let launcher = Launcher::detect()?;
+    let version = launcher.version().ok();
+    if let Some(notice) = recorder::version_notice(version.as_deref()) {
+        eprintln!("{notice}");
+    }
+    // The IPC socket lives in the user's runtime folder, as in the app.
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let socket = runtime
+        .join("redline-probe")
+        .join(format!("gsr-{}.sock", std::process::id()));
     eprintln!("Starting gsr ({launcher:?}), buffer {seconds}s, audio tracks: {tracks:?}");
-    let mut session = ReplaySession::start(launcher, &config)?;
+    let (saved_tx, saved) = mpsc::channel();
+    let mut session = ReplaySession::start(&launcher, &config, &socket, move |output| {
+        let _ = saved_tx.send(output);
+    })?;
+    let mut ready = session.ready_probe();
+    let mut announced = false;
     eprintln!("Commands: [s]+Enter save replay, [r]+Enter start/stop recording, [q]+Enter quit");
 
     let (tx, keys) = mpsc::channel();
@@ -207,17 +223,30 @@ fn replay(
     });
 
     loop {
-        while let Ok(path) = session.saved.try_recv() {
-            println!("saved: {}", path.display());
-            let _ = tracks_summary(&path);
+        while let Ok(output) = saved.try_recv() {
+            print_output(&output);
         }
-        if !session.is_running() {
-            eprintln!("gsr has exited");
+        if !announced && ready.poll() {
+            eprintln!("capture running");
+            announced = true;
+        }
+        if let Some(status) = session.try_exit()? {
+            eprintln!("gsr has exited ({status})");
+            if let Some(error) = session.last_error() {
+                eprintln!("last error: {error}");
+            }
             return Ok(());
         }
         match keys.recv_timeout(Duration::from_millis(200)) {
-            Ok(k) if k == "s" => session.save_replay()?,
-            Ok(k) if k == "r" => session.toggle_recording()?,
+            Ok(k) if k == "s" => match session.save_replay(Duration::from_secs(30)) {
+                Ok(path) => eprintln!("save confirmed: {}", path.display()),
+                Err(error) => eprintln!("save failed: {error}"),
+            },
+            Ok(k) if k == "r" => {
+                if let Err(error) = session.toggle_recording() {
+                    eprintln!("recording toggle failed: {error}");
+                }
+            }
             Ok(k) if k == "q" => break,
             Ok(_) | Err(RecvTimeoutError::Timeout) => {}
             // stdin closed (EOF, or no terminal): nobody can send commands any more,
@@ -228,12 +257,23 @@ fn replay(
             }
         }
     }
-    session.stop()?;
+    let status = session.stop()?;
+    eprintln!("gsr stopped ({status})");
     // gsr may write the last path while it shuts down
-    while let Ok(path) = session.saved.recv_timeout(Duration::from_millis(500)) {
-        println!("saved: {}", path.display());
+    while let Ok(output) = saved.recv_timeout(Duration::from_millis(500)) {
+        print_output(&output);
     }
     Ok(())
+}
+
+fn print_output(output: &Output) {
+    match output {
+        Output::Saved(path) => {
+            println!("saved: {}", path.display());
+            let _ = tracks_summary(path);
+        }
+        Output::Failed(message) => println!("gsr error: {message}"),
+    }
 }
 
 fn tracks(file: &Path) -> Result<()> {
