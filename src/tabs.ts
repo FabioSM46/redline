@@ -23,3 +23,6 @@ export const SETTINGS_TABS = [
 ] as const;
 
 export type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"];
+
+/** What the shell gives every section: Home's "Show all" opens the Record tab with it. */
+export type SectionProps = { navigate: (tab: TabId) => void };
