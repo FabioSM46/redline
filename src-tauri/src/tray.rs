@@ -28,7 +28,10 @@ use tauri::{AppHandle, Manager, Runtime, Window, WindowEvent};
 
 /// The label of the main window (the one in `tauri.conf.json`, which declares no `label`).
 pub const MAIN_WINDOW: &str = "main";
-const TRAY_ID: &str = "main";
+/// On Linux `tray-icon` writes the icon to `$XDG_RUNTIME_DIR/tray-icon/tray-icon-<id>-<n>.png`
+/// and deletes that file when its tray is dropped, so the ID must be one no other app would
+/// pick: with a generic `"main"`, another app quitting deletes our icon (issue #83).
+const TRAY_ID: &str = "redline";
 const MENU_SHOW: &str = "show";
 const MENU_QUIT: &str = "quit";
 const TOOLTIP: &str = "Redline";
@@ -336,6 +339,13 @@ mod linux {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tray_id_is_specific_to_redline() {
+        // The ID names the icon file other tray-icon apps share a folder with.
+        assert_eq!(TRAY_ID, "redline");
+        assert_ne!(TRAY_ID, MAIN_WINDOW);
+    }
 
     #[test]
     fn only_the_main_window_hides_and_only_with_a_tray_icon() {
