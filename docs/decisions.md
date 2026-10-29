@@ -204,6 +204,34 @@ unsafe code than two one-shot calls; X11 key grabs (out of scope for #65).
 
 `ashpd` is the only crate this decision approves.
 
+## D11 — Overdrive through LACT, on explicit confirmation (2026-10-29)
+
+Overdrive is the `0x4000` bit of the `amdgpu.ppfeaturemask` kernel parameter: RDNA3/4 need it
+for the firmware fan curve, older GPUs for clocks and voltages. Until now the rule was "the app
+explains it, it does not set it". Decided with the user when M3 was specified (overdrive option
+B, #56): **Redline may ask `lactd` to enable or disable it, after an explicit confirmation**.
+
+- lactd, which already runs as root, does the work with its own requests `enable_overdrive` /
+  `disable_overdrive` (verified against `lact-daemon/src/system.rs` at `v0.10.1`): it writes or
+  removes `/etc/modprobe.d/99-amdgpu-overdrive.conf` and regenerates the initramfs
+  (`update-initramfs`, `mkinitcpio` or `dracut`, by distribution), or uses `rpm-ostree kargs` on
+  Fedora Atomic. `system_info.amdgpu_params_configurator` says which; without one (NixOS) LACT
+  cannot do it and Redline says how to set the parameter by hand.
+- Redline never writes system files, never edits kernel parameters itself, never runs as root and
+  never reboots the machine.
+- The confirmation is a handshake in the backend, not only a dialog: `prepare_enable_overdrive`
+  (or `prepare_disable_overdrive`) returns the steps lactd will take, that a reboot is needed and
+  a single-use token valid for five minutes; `enable_overdrive(token)` (or
+  `disable_overdrive(token)`) refuses any call without the token of the latest plan for the same
+  action. The UI shows the plan and sends the token only when the user confirms.
+- It is not a pending change: lactd has nothing to confirm or revert, and the running kernel keeps
+  its value until the reboot. `tuning_status.overdrive_enabled` keeps reading the live value;
+  `reboot_pending` says it was changed in this session. lactd allows one change per daemon start.
+
+Rejected: writing the modprobe file or the boot arguments from Redline (it would need root);
+keeping overdrive manual-only (the fan curve, the main M3 feature on RDNA3/4, would need the user
+to edit boot files by hand).
+
 ## Open
 
 - How the overlay arrives: a MangoHud configuration managed by Redline, or an overlay of its own.
