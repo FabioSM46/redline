@@ -41,9 +41,12 @@ use redline_core::lact::{
 use redline_core::thumbnail::find_program;
 use serde::Serialize;
 use std::ffi::OsString;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{App, AppHandle, Emitter, Manager, Runtime, State};
+
+pub mod fan;
 
 /// The binary every LACT package installs (GUI, CLI and the daemon itself).
 const LACT_BINARY: &str = "lact";
@@ -101,6 +104,7 @@ pub struct TuningStatus {
 #[serde(rename_all = "snake_case")]
 pub enum TuningChange {
     PowerLimit,
+    Fan,
 }
 
 /// A change lactd has applied and will revert unless the user confirms it: the payload of
@@ -149,7 +153,8 @@ pub enum FanMode {
 }
 
 /// One point of a fan curve.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CurvePoint {
     pub temperature_c: i32,
     pub speed_pct: f64,
@@ -177,6 +182,9 @@ pub struct FanStatus {
     /// The temperatures a firmware (PMFW) curve point may use.
     pub temperature_range: Option<TemperatureRange>,
     pub pmfw: PmfwStatus,
+    /// What a fixed speed or a curve must respect (`set_fan` checks exactly these); `null` when
+    /// neither can be set.
+    pub curve_rules: Option<fan::CurveRules>,
 }
 
 /// A firmware fan value and the range it may be set to (`min`/`max` are `null` when the
@@ -236,6 +244,8 @@ pub fn version_notice(version: &str) -> Option<String> {
 pub struct Lact {
     client: LactClient,
     search_path: OsString,
+    /// Where the DRM cards are read (the firmware fan curve); tests pass a fake tree.
+    drm: PathBuf,
 }
 
 impl Lact {
@@ -243,7 +253,15 @@ impl Lact {
         Lact {
             client,
             search_path,
+            drm: PathBuf::from(redline_core::sensors::DRM_ROOT),
         }
+    }
+
+    /// The same, reading the DRM cards from `drm` instead of sysfs.
+    #[cfg(test)]
+    pub fn with_drm_root(mut self, drm: impl Into<PathBuf>) -> Self {
+        self.drm = drm.into();
+        self
     }
 
     /// The system's `lactd` socket and the process PATH.
@@ -358,6 +376,9 @@ impl Lact {
             info.has(&DeviceFlag::ConfigurableFanControl),
             &stats,
         ));
+        if let Some(fan) = status.fan.as_mut() {
+            self.add_fan_capabilities(fan, gpu_id, &info, &stats);
+        }
         status.profile = self
             .client
             .list_profiles()
@@ -423,6 +444,7 @@ fn fan_status(configurable: bool, stats: &DeviceStats) -> FanStatus {
             .temperature_range
             .map(|(min_c, max_c)| TemperatureRange { min_c, max_c }),
         pmfw: pmfw_status(&fan.pmfw_info),
+        curve_rules: None,
     }
 }
 
@@ -1579,5 +1601,228 @@ mod tests {
     fn the_version_notice_is_empty_only_for_the_verified_version() {
         assert_eq!(version_notice(VERIFIED_VERSION), None);
         assert!(version_notice("0.10.0").is_some());
+    }
+
+    /// A fake sysfs tree with GPU B (`<dir>/drm/card1 -> <dir>/devices/<slot>`) and, when given,
+    /// its firmware fan curve.
+    fn fake_drm(dir: &Path, fan_curve: Option<&str>) -> PathBuf {
+        let device = dir.join("devices").join(SLOT_B);
+        fs::create_dir_all(device.join("hwmon/hwmon3")).unwrap();
+        fs::write(device.join("vendor"), "0x1002\n").unwrap();
+        if let Some(curve) = fan_curve {
+            fs::create_dir_all(device.join("gpu_od/fan_ctrl")).unwrap();
+            fs::write(device.join("gpu_od/fan_ctrl/fan_curve"), curve).unwrap();
+        }
+        let card = dir.join("drm/card1");
+        fs::create_dir_all(&card).unwrap();
+        std::os::unix::fs::symlink(&device, card.join("device")).unwrap();
+        dir.join("drm")
+    }
+
+    const FAN_CURVE: &str = "OD_FAN_CURVE:\n0: 0C 0%\n1: 0C 0%\n2: 0C 0%\n3: 0C 0%\n4: 0C 0%\n\
+        OD_RANGE:\nFAN_CURVE(hotspot temp): 25C 100C\nFAN_CURVE(fan speed): 15% 100%\n";
+
+    /// lactd 0.10.1 with GPU B's firmware fan, overdrive on or off; every `set_fan_control`
+    /// lands in `requests`.
+    fn fan_lactd(overdrive: bool, requests: Arc<Mutex<Vec<Value>>>) -> Box<Handler> {
+        let read = two_gpus(VERIFIED_VERSION);
+        Box::new(move |command, args| match command {
+            "device_info" if overdrive => json!({
+                "driver": "amdgpu", "flags": ["HasPmfw", "ConfigurableFanControl"]
+            }),
+            "device_stats" if args["id"] == GPU_B => {
+                let mut stats = stats_for(317.0);
+                if overdrive {
+                    stats["fan"]["temperature_range"] = json!([25, 100]);
+                    stats["fan"]["pmfw_info"] = json!({
+                        "acoustic_limit": { "current": 2450, "allowed_range": [500, 3200] },
+                        "zero_rpm_enable": true,
+                        "zero_rpm_temperature": { "current": 50, "allowed_range": [25, 100] }
+                    });
+                }
+                stats
+            }
+            "get_gpu_config" => json!({
+                "fan_control_enabled": false,
+                "pmfw_options": { "acoustic_limit": 2800 },
+                "power_cap": 317.0
+            }),
+            "set_fan_control" => {
+                requests.lock().unwrap().push(args.clone());
+                json!(5)
+            }
+            "confirm_pending_config" => {
+                requests.lock().unwrap().push(json!(args["command"]));
+                Value::Null
+            }
+            _ => read(command, args),
+        })
+    }
+
+    struct FanService {
+        _setup: Setup,
+        requests: Arc<Mutex<Vec<Value>>>,
+        events: Arc<Collected>,
+        tuning: Tuning,
+        _lactd: FakeLactd,
+    }
+
+    impl FanService {
+        fn start(name: &str, overdrive: bool) -> Self {
+            let setup = Setup::new(name);
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let lactd = FakeLactd::start(&setup.socket(), fan_lactd(overdrive, requests.clone()));
+            let drm = fake_drm(&setup.dir, overdrive.then_some(FAN_CURVE));
+            let events = Arc::new(Collected::default());
+            let tuning = Tuning::new(
+                setup.lact(true).with_drm_root(drm),
+                Arc::new(ManualClock::default()),
+                events.clone(),
+            );
+            FanService {
+                _setup: setup,
+                requests,
+                events,
+                tuning,
+                _lactd: lactd,
+            }
+        }
+
+        fn requests(&self) -> Vec<Value> {
+            std::mem::take(&mut *self.requests.lock().unwrap())
+        }
+    }
+
+    fn fan_settings(value: Value) -> fan::FanSettings {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn a_fan_curve_goes_to_lactd_as_a_pending_change() {
+        let service = FanService::start("fan-curve", true);
+
+        // The status reports the rules the setter applies: five points, the firmware's ranges.
+        let rules = service
+            .tuning
+            .status(SLOT_B)
+            .fan
+            .unwrap()
+            .curve_rules
+            .unwrap();
+        assert_eq!(rules.points, Some(5));
+        assert_eq!(
+            rules.temperature,
+            TemperatureRange {
+                min_c: 25,
+                max_c: 100
+            }
+        );
+        assert_eq!(rules.speed.min_pct, 15);
+
+        let settings = fan_settings(json!({
+            "mode": "curve",
+            "curve": [
+                { "temperature_c": 85, "speed_pct": 100 },
+                { "temperature_c": 40, "speed_pct": 20 },
+                { "temperature_c": 50, "speed_pct": 30 },
+                { "temperature_c": 60, "speed_pct": 50 },
+                { "temperature_c": 70, "speed_pct": 75 }
+            ],
+            "pmfw": { "zero_rpm": false }
+        }));
+        let change = service.tuning.set_fan(SLOT_B, &settings).unwrap();
+        assert_eq!(change.what, TuningChange::Fan);
+        assert_eq!(change.deadline_ms, 5_000);
+        assert_eq!(
+            service.events.take(),
+            vec![json!({
+                "event": PENDING_EVENT, "gpu_id": SLOT_B, "what": "fan", "deadline_ms": 5_000
+            })]
+        );
+        // LACT's own fan request, with the stored acoustic limit kept next to the new option.
+        let request = service.requests().remove(0);
+        assert_eq!(request["id"], GPU_B);
+        assert_eq!(request["enabled"], true);
+        assert_eq!(request["mode"], "curve");
+        assert_eq!(request["static_speed"], Value::Null);
+        let curve = request["curve"].as_object().unwrap();
+        assert_eq!(
+            curve.keys().collect::<Vec<_>>(),
+            vec!["40", "50", "60", "70", "85"]
+        );
+        assert_eq!(curve["85"], 1.0);
+        assert_eq!(request["pmfw"]["acoustic_limit"], 2800);
+        assert_eq!(request["pmfw"]["zero_rpm"], false);
+
+        // Confirmed like any other change.
+        assert_eq!(service.tuning.settle(SLOT_B, true), Ok(Outcome::Confirmed));
+        assert_eq!(service.requests(), vec![json!("confirm")]);
+    }
+
+    #[test]
+    fn auto_hands_the_fan_back_to_the_firmware() {
+        let service = FanService::start("fan-auto", true);
+        service
+            .tuning
+            .set_fan(
+                SLOT_B,
+                &fan_settings(json!({ "mode": "auto", "pmfw": { "acoustic_limit": 3000 } })),
+            )
+            .unwrap();
+        let request = service.requests().remove(0);
+        assert_eq!(request["enabled"], false);
+        assert_eq!(request["mode"], Value::Null);
+        assert_eq!(request["pmfw"]["acoustic_limit"], 3000);
+    }
+
+    #[test]
+    fn with_overdrive_off_the_fan_is_refused_before_lactd() {
+        let service = FanService::start("fan-off", false);
+        let fan = service.tuning.status(SLOT_B).fan.unwrap();
+        assert!(!fan.configurable);
+        assert_eq!(fan.curve_rules, None);
+        for settings in [
+            json!({ "mode": "static", "static_speed": 60 }),
+            json!({ "mode": "auto", "pmfw": { "zero_rpm": false } }),
+        ] {
+            assert_eq!(
+                service.tuning.set_fan(SLOT_B, &fan_settings(settings)),
+                Err(fan::NEEDS_OVERDRIVE.to_owned())
+            );
+        }
+        let error = service
+            .tuning
+            .set_fan(
+                SLOT_B,
+                &fan_settings(json!({ "mode": "curve", "curve": [
+                    { "temperature_c": 40, "speed_pct": 30 }
+                ] })),
+            )
+            .unwrap_err();
+        assert_eq!(error, fan::NEEDS_OVERDRIVE);
+        assert_eq!(service.requests(), Vec::<Value>::new());
+        assert_eq!(service.events.take(), Vec::<Value>::new());
+        assert_eq!(service.tuning.pending(SLOT_B), None);
+    }
+
+    #[test]
+    fn a_wrong_curve_is_refused_with_the_problem_named() {
+        let service = FanService::start("fan-bad", true);
+        let error = service
+            .tuning
+            .set_fan(
+                SLOT_B,
+                &fan_settings(json!({ "mode": "curve", "curve": [
+                    { "temperature_c": 40, "speed_pct": 30 },
+                    { "temperature_c": 80, "speed_pct": 100 }
+                ] })),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "This GPU's firmware fan curve has exactly 5 points; this curve has 2."
+        );
+        assert_eq!(service.requests(), Vec::<Value>::new());
+        assert_eq!(service.events.take(), Vec::<Value>::new());
     }
 }
