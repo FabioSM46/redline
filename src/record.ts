@@ -1,10 +1,9 @@
 // The Record tab: replay length, audio tracks, folders, the recording timer and the gallery
 // figures. Pure functions, tested in record.test.ts.
 //
-// REPLAY_SECONDS_MIN/MAX MIRROR `redline-core::recorder::REPLAY_SECONDS`, and the default folder
-// names MIRROR `VIDEO_SUBFOLDER`, `REPLAY_FOLDER` and `RECORDING_FOLDER` in
-// src-tauri/src/settings.rs. The backend is the authority; `record.test.ts` reads both Rust files
-// and fails when they drift apart.
+// REPLAY_SECONDS_MIN/MAX MIRROR `redline-core::recorder::REPLAY_SECONDS`. The backend is the
+// authority; `record.test.ts` reads the Rust file and fails when they drift apart. The default
+// folders are not mirrored: the `recording_defaults` command returns them.
 
 /** `redline-core::recorder::REPLAY_SECONDS`. */
 export const REPLAY_SECONDS_MIN = 2;
@@ -85,21 +84,6 @@ export function removeTrack(tracks: AudioTracks, index: number): string[][] {
 
 // ---------------------------------------------------------------------------------------------
 // Folders
-
-/** `VIDEO_SUBFOLDER`, `REPLAY_FOLDER` and `RECORDING_FOLDER` in src-tauri/src/settings.rs. */
-export const VIDEO_SUBFOLDER = "Redline";
-export const REPLAY_FOLDER = "Replays";
-export const RECORDING_FOLDER = "Recordings";
-
-/**
- * The default folder of `kind` under the video folder, as `RecordingSettings::defaults` builds
- * it. Null when there is no video folder (the backend would build a relative path then).
- */
-export function defaultFolder(videoDir: string | null, kind: "replay" | "recording"): string | null {
-  if (videoDir === null || !videoDir.startsWith("/")) return null;
-  const base = videoDir.replace(/\/+$/, "");
-  return `${base}/${VIDEO_SUBFOLDER}/${kind === "replay" ? REPLAY_FOLDER : RECORDING_FOLDER}`;
-}
 
 /** Why a folder typed by the user cannot be saved, or null when it can be sent. */
 export function folderProblem(text: string): string | null {

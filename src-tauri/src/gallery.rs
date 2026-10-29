@@ -255,12 +255,23 @@ pub fn notification_text(file: &FileSaved) -> (&'static str, String) {
 /// Shows "Replay saved" / "Recording saved" for `file`, on its own thread: the caller is the
 /// thread reading GPU Screen Recorder's output, and the D-Bus call may wait. Without a
 /// notification server nothing happens.
+///
+/// Neither piles up (#64). "Recording saved" takes the place of the shortcut notification: a
+/// shortcut that stops a recording also says "Recording stopped" with the file name, and the
+/// two are one. "Replay saved" has its own slot: a save replaces the previous save, not a
+/// "Replay off" or a failure.
 pub fn notify_saved(file: &FileSaved) {
     let (summary, body) = notification_text(file);
+    let kind = file.kind;
     let spawned = thread::Builder::new()
         .name("redline-notify".into())
-        .spawn(move || {
-            desktop::notify(desktop::APP_NAME, summary, &body);
+        .spawn(move || match kind {
+            FileKind::Recording => {
+                desktop::SHORTCUT_NOTIFICATION.show(summary, &body);
+            }
+            FileKind::Replay => {
+                desktop::REPLAY_SAVED_NOTIFICATION.show(summary, &body);
+            }
         });
     if let Err(error) = spawned {
         eprintln!("redline: the saved-file notification did not start ({error})");
