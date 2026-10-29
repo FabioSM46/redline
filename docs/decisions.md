@@ -118,7 +118,11 @@ process, not a separate service. Starting with the system is an option in Settin
   `libayatana-appindicator3-1`. On GNOME the icon shows only with an AppIndicator extension;
   Ubuntu enables one by default, other distributions may not, and Settings says so when the
   tray is unavailable.
-- Autostart needs `tauri-plugin-autostart` (an XDG autostart entry on Linux).
+- Autostart needs `tauri-plugin-autostart` (an XDG autostart entry on Linux). The entry
+  launches the app with the `--autostart` argument, which is how the app tells a login start
+  from a manual one: "start minimised to the tray" applies only to a launch with `--autostart`.
+  Whether the entry exists is read from the operating system every time, never stored in the
+  settings file.
 - Single-instance handling needs `tauri-plugin-single-instance`.
 - **Shortcuts under Wayland** depend on the GlobalShortcuts portal (D5). Where it exists,
   Redline registers the bindings through it; where it does not (GNOME before 48), the Shortcuts
