@@ -7,42 +7,43 @@ metadata:
 ---
 
 
-# process-pr — correzione di una PR
+# process-pr — PR remediation
 
-Trigger: `/process-pr <numero-pr>` oppure `/process-pr` (usa la PR del branch corrente).
+Trigger: `/process-pr <pr-number>` or `/process-pr` (uses the current branch's PR).
 
-## Scopo
+## Purpose
 
-Un ciclo di correzione per conflitti, CI rossa e feedback di review. Può avviarlo l'utente o un
-orchestratore.
+A remediation cycle for conflicts, failing CI and review feedback. It can be started by the user or
+by an orchestrator.
 
-Il percorso passivo (`pr-labeler.yml`) copre il caso normale. Questa skill serve quando vuoi un
-risultato adesso.
+The passive path (`pr-labeler.yml`) covers the normal case. This skill is for when you want a
+result now.
 
-**Tutto il lavoro avviene in un `git worktree`**, mai nella cartella principale. Se esiste già un
-worktree per il branch della PR (da un `/dev-issue` o `/process-pr` non ripulito), si riusa.
+**All work happens in a `git worktree`**, never in the main directory. If a worktree already
+exists for the PR's branch (from a `/dev-issue` or `/process-pr` run that was not cleaned up), it is
+reused.
 
-## Tempi reali — leggere prima di toccare il polling
+## Timing reality — read before touching the polling
 
-Il job di review DeepSeek ha un budget di `DEEPSEEK_REQUEST_TIMEOUT_SECONDS` (2700) ×
-(`DEEPSEEK_MAX_RETRIES` (1) + 1) = 90 minuti, sotto un `timeout-minutes: 100` con 10 minuti
-riservati a setup e pubblicazione. I tempi reali dipendono dalla dimensione del diff; il limite
-del diff è 90,000 caratteri, e una PR vicina al limite può usare buona parte del budget.
-**Un'attesa più corta del budget non "controlla": scade e riporta uno stato vecchio.**
-`DEEPSEEK_WAIT_SECONDS` qui sotto è 5700 (95 minuti), copre il budget e finisce prima del
-limite del job; non abbassarlo senza cambiare prima il workflow.
+The DeepSeek review job has a budget of `DEEPSEEK_REQUEST_TIMEOUT_SECONDS` (2700) ×
+(`DEEPSEEK_MAX_RETRIES` (1) + 1) = 90 minutes, under a `timeout-minutes: 100` with 10 minutes
+reserved for setup and posting. Real run times depend on the diff size; the diff cap is 90,000
+characters, and a PR close to the cap can use a good part of the budget.
+**A wait shorter than the budget does not "poll": it times out and reports stale state.**
+`DEEPSEEK_WAIT_SECONDS` below is 5700 (95 minutes); it covers the budget and ends before the job
+cap. Do not lower it without changing the workflow first.
 
-Il budget di round è `MAX_ROUNDS: "1"` (in `.github/workflows/deepseek-pr-review.yml`). Una sola
-review completa (Mode A) è automatica; le risposte nei thread (Mode B) non consumano budget e
-continuano senza limite. Quindi l'esecuzione normale di questa skill è **un solo passaggio**.
+The round budget is `MAX_ROUNDS: "1"` (in `.github/workflows/deepseek-pr-review.yml`). Exactly one
+full review (Mode A) is automatic; thread replies (Mode B) do not spend the budget and continue
+without limit. So the normal execution of this skill is **a single pass**.
 
-I run `pull_request` usano il merge ref, quindi il workflow che gira è la copia del **branch
-base**. Per diagnosticare il comportamento della review leggi la versione di
-`deepseek-pr-review.yml` sulla base reale della PR.
+`pull_request` runs use the merge ref, so the workflow that runs is the **base branch's** copy.
+To diagnose review behaviour, read the version of `deepseek-pr-review.yml` on the PR's actual
+base.
 
 ## Workflow
 
-### Passo 0: setup comune
+### Step 0: Common setup
 
 ```bash
 set -euo pipefail
@@ -52,17 +53,17 @@ DEEPSEEK_WAIT_SECONDS=5700
 POLL_INTERVAL=30
 ```
 
-### Passo 1: numero della PR
+### Step 1: PR number
 
-Se l'utente l'ha dato, usalo. Altrimenti cerca la PR del branch corrente:
+If the user provided one, use it. Otherwise find the PR for the current branch:
 
 ```bash
 gh pr list --head "$(git branch --show-current)" --json number --jq '.[0].number'
 ```
 
-Se non c'è nessuna PR, esci con un errore.
+If there is no PR, exit with an error.
 
-### Passo 2: creare o riusare il worktree e rilevare le aree
+### Step 2: Create or reuse the worktree and detect the areas
 
 ```bash
 PR_META=$(gh pr view <pr-number> --json headRefName,baseRefName,state)
@@ -72,8 +73,8 @@ BASE_BRANCH=$(echo "$PR_META" | jq -er '.baseRefName | select(length > 0)')
 git fetch origin "$BRANCH" "$BASE_BRANCH"
 REMOTE_HEAD=$(git rev-parse "origin/$BRANCH")
 
-# Riusa un worktree già aperto per questo branch.
-# substr() e non $2: i percorsi dei worktree possono contenere spazi.
+# Reuse a worktree already checked out for this branch.
+# substr() rather than $2: worktree paths can contain spaces.
 WORKTREE_DIR=$(git worktree list --porcelain | awk -v b="refs/heads/$BRANCH" '
   /^worktree /{wt=substr($0,10)}
   /^branch /{if (substr($0,8)==b) {print wt; exit}}')
@@ -114,46 +115,45 @@ pnpm install --frozen-lockfile
 [ "$(git rev-parse --show-toplevel)" = "$WORKTREE_DIR" ] || { echo "NOT in worktree — abort"; exit 1; }
 ```
 
-**Rileva ogni area toccata, non solo la prima.** La classificazione è la stessa di
-`scripts/changed-areas.sh`, che è anche quella della CI:
+**Detect every touched area, not just the first.** The classification is the one in
+`scripts/changed-areas.sh`, which is also the one CI uses:
 
 ```bash
 AREAS=$(gh pr view <pr-number> --json files --jq '.files[].path' | bash scripts/changed-areas.sh)
 echo "$AREAS"   # backend=true|false, frontend=true|false
 ```
 
-**Ogni PR esegue la suite di automazione**, anche quelle solo di documentazione. I test
-dell'automazione leggono file di tutto il repo, quindi nessun selettore di percorso li esenta.
-Se una PR modifica una skill, rigenera anche gli adapter.
+**Every PR runs the automation suite**, including documentation-only ones. The automation tests
+read files across the whole repo, so no path selector exempts them. If a PR changes a skill, also
+regenerate the adapters.
 
-**Gate — rispecchiano `.github/workflows/ci.yml`. Eseguine uno per area rilevata:**
+**Gates — they mirror `.github/workflows/ci.yml`. Run one per detected area:**
 
-Esegui ogni catena così com'è e prendi il suo exit status come verdetto. Passarla a `head` o
-`tail` restituisce il successo del pager invece di quello del gate; `/dev-issue` Passo 6 spiega
-il perché.
+Run each chain as it is written and take its exit status as the verdict. Piping it into `head` or
+`tail` returns the pager's success instead of the gate's; `/dev-issue` Step 6 explains why.
 
-| Area | Comando (da `$WORKTREE_DIR`) |
-| ---- | ---------------------------- |
+| Area | Command (from `$WORKTREE_DIR`) |
+| ---- | ------------------------------ |
 | `backend` | `cd src-tauri && cargo fmt --all --check && cargo clippy --all-targets --locked -- -D warnings && cargo build --locked && cargo test --locked` |
 | `frontend` | `pnpm install --frozen-lockfile && pnpm build && pnpm test` |
-| Ogni PR | tutta la suite `scripts/test/*.test.sh` (con il glob, mai riscrivendo la lista) più `python3 .github/scripts/test_deepseek_review.py`, con un flag di fallimento così che un test rosso sia lo stato di uscita del blocco, come in `/dev-issue` Passo 6 |
+| Every PR | the full `scripts/test/*.test.sh` suite (glob it, never retype the list) plus `python3 .github/scripts/test_deepseek_review.py`, under a failure flag so a red test is the block's exit status, as in `/dev-issue` Step 6 |
 
-La formattazione è il gate saltato più spesso e quello che arrossa più spesso la CI.
+Formatting is the gate most often skipped and the one that most often reddens CI.
 
-#### Passo 2b: allinearsi alla base attuale
+#### Step 2b: Reconcile the current base
 
-Fallo a ogni esecuzione. Se la punta attuale della base non è antenata della testa della PR,
-fai merge della base nella testa senza rebase né force-push, risolvi i conflitti, esegui tutti i
-gate delle aree coinvolte e fai push. Questo invalida anche una CI vecchia su una PR figlia
-tecnicamente mergiabile dopo che la sua base di feature è avanzata.
+Do this on every remediation run. If the current base tip is not an ancestor of the PR head, merge
+the base into the head without rebasing or force-pushing, resolve the conflicts, run every gate of
+the affected areas and push. This also invalidates stale CI on a technically mergeable child PR
+after its feature base advances.
 
 ```bash
 BASE_HEAD=$(git rev-parse "origin/$BASE_BRANCH")
 if ! git merge-base --is-ancestor "$BASE_HEAD" HEAD; then
   [ "$(git rev-parse "origin/$BRANCH")" = "$REMOTE_HEAD" ] || exit 1
   git merge --no-ff --no-commit "origin/$BASE_BRANCH"
-  # Risolvi i conflitti; se l'intento è ambiguo, interrompi e fermati senza pubblicare.
-  # Esegui tutti i gate coinvolti, poi:
+  # Resolve conflicts; if their intent is ambiguous, abort and stop without publishing.
+  # Run every affected gate, then:
   git add -A
   git commit -m "fix: reconcile ${BASE_BRANCH} on PR #<pr-number>"
   bash scripts/check-publication-privacy.sh "origin/$BASE_BRANCH" HEAD
@@ -163,40 +163,39 @@ if ! git merge-base --is-ancestor "$BASE_HEAD" HEAD; then
 fi
 ```
 
-Dopo questo push serve una CI nuova. I commit della base sono già stati revisionati nelle loro
-PR, quindi non aspettare una review automatica che non può partire a budget esaurito.
+After this push, fresh CI is required. The base commits were already reviewed on their own PRs, so
+do not wait for an automatic review that cannot start once the budget is spent.
 
-### Passo 3: stato della PR
+### Step 3: PR status
 
 ```bash
 bash scripts/gh-automation.sh pr-status <pr-number>
 ```
 
-Valuta l'intera regola congelata di READY TO MERGE e stampa una riga `[FAIL]` per ogni
-condizione non soddisfatta. Le condizioni sono **sette**, tutte necessarie:
+This evaluates the full frozen READY TO MERGE rule and prints a `[FAIL]` line for each unmet
+condition. There are **seven** conditions, all required:
 
-1. Thread di review non risolti (e non obsoleti) = 0
-2. Nessuna review che richiede modifiche
-3. Nessun check di CI fallito
-4. Nessun check di CI in corso
-5. Nessun check obbligatorio *mancante*: il check stabile `ci-gate` deve aver girato con successo
+1. Unresolved (non-outdated) review threads = 0
+2. No review requesting changes
+3. No failing CI checks
+4. No pending CI checks
+5. No *missing* required check: the stable `ci-gate` check must have run and succeeded
 6. `mergeable == MERGEABLE`
-7. DeepSeek ha finito (verdetto pulito, round esauriti o esenzione `NO_DEEPSEEK_REVIEW`), senza
-   finding non letti nel corpo di una review (si chiudono con la label `DEEPSEEK_REVIEW_READ`)
+7. DeepSeek has finished (clean verdict, rounds exhausted or `NO_DEEPSEEK_REVIEW` exemption), with
+   no unread findings in a review body (cleared with the `DEEPSEEK_REVIEW_READ` label)
 
-Le condizioni 5 e 6 esistono perché **una PR in conflitto non esegue nessun check**: senza niente
-di rosso, una lettura ingenua la direbbe verde. Un conflitto è una correzione da fare, non
-un'attesa: il Passo 2b fa merge della base attuale nella testa della PR così che la CI possa
-ripartire.
+Conditions 5 and 6 exist because **a conflicting PR runs no checks at all**: with nothing red, a
+naive read would call it green. A conflict is actionable remediation, not a wait; Step 2b merges
+the current base into the PR head so CI can run again.
 
-L'helper fallisce in modo chiuso: un valore illeggibile conta come fallimento, mai come successo.
+The helper fails closed: an unreadable value counts as failure, never as success.
 
-### Passo 4: gestire il round di review DeepSeek (nel worktree)
+### Step 4: Process the DeepSeek review round (in the worktree)
 
-Con `MAX_ROUNDS: "1"` è un **solo passaggio**. Ripeti 4a–4e solo se `max_rounds` viene alzato
-nel workflow o dopo un `pr-deepseek-force-review` esplicito. Limite di sicurezza: **5 iterazioni**.
+With `MAX_ROUNDS: "1"` this is a **single pass**. Repeat 4a–4e only if `max_rounds` is raised in
+the workflow or after an explicit `pr-deepseek-force-review`. Safety cap: **5 iterations**.
 
-#### 4a — Leggere lo stato di DeepSeek
+#### 4a — Read the DeepSeek state
 
 ```bash
 ROUNDS=$(bash scripts/gh-automation.sh pr-deepseek-rounds <pr-number>) || true
@@ -204,8 +203,8 @@ if ! echo "$ROUNDS" | jq -e '.' >/dev/null 2>&1; then
   echo "ERROR: pr-deepseek-rounds returned invalid JSON. Raw output: ${ROUNDS:0:200}"
   exit 1
 fi
-# L'helper riporta errori di configurazione/API come {"error":...} con uscita non zero,
-# quindi un conteggio a zero significa sempre "nessuna review", mai "lettura fallita".
+# The helper reports configuration/API failures as {"error":...} with a non-zero exit,
+# so a zero count always means "no reviews", never "lookup failed".
 if echo "$ROUNDS" | jq -e '.error' >/dev/null 2>&1; then
   echo "ERROR: pr-deepseek-rounds failed: $(echo "$ROUNDS" | jq -r '.error')"
   exit 1
@@ -218,20 +217,20 @@ ROUND_CAP=$(echo "$ROUNDS" | jq -r '.max_rounds')
 echo "DeepSeek state: rounds=$BOT_REVIEW_COUNT/$ROUND_CAP complete=$REVIEW_COMPLETE exhausted=$ROUNDS_EXHAUSTED"
 ```
 
-**Guardia**: se `review_complete=true` o `review_rounds_exhausted=true` non c'è un round da
-aspettare. Salta 4b e vai a 4c: un round già arrivato ha comunque thread da gestire.
+**Guard**: if `review_complete=true` or `review_rounds_exhausted=true`, there is no round to wait
+for. Skip 4b and go to 4c: a round that already landed still has threads to address.
 
-#### 4b — Aspettare la review (solo se non ne è arrivata nessuna)
+#### 4b — Wait for the review (only if none has landed)
 
-Solo quando `PREV_REVIEW_ID` è `0`.
+Only when `PREV_REVIEW_ID` is `0`.
 
 ```bash
 START_TIME=$(date +%s)
 while true; do
   sleep "$POLL_INTERVAL"
 
-  # Il controllo della scadenza va PRIMA di ogni guardia che può fare `continue`:
-  # un helper che fallisce sempre altrimenti girerebbe all'infinito.
+  # The deadline check goes FIRST, before any guard that can `continue`:
+  # otherwise a persistently failing helper would loop forever.
   ELAPSED=$(($(date +%s) - START_TIME))
   if [ "$ELAPSED" -ge "$DEEPSEEK_WAIT_SECONDS" ]; then
     echo "Timeout (${DEEPSEEK_WAIT_SECONDS}s) waiting for DeepSeek — the job may be approaching its own 100-minute cap."
@@ -250,7 +249,7 @@ while true; do
   fi
   NEW_ID=$(echo "$CURRENT" | jq -r '.latest_review_id')
 
-  # Prima un nuovo ID di review: anche una review con review_complete=true porta feedback.
+  # A new review ID first: even a review with review_complete=true carries feedback.
   if [ "$NEW_ID" != "0" ] && [ "$NEW_ID" != "$PREV_REVIEW_ID" ]; then
     echo "DeepSeek review arrived (id=$NEW_ID)"
     PREV_REVIEW_ID="$NEW_ID"
@@ -267,13 +266,13 @@ while true; do
 done
 ```
 
-Un timeout qui è un segnale vero. Un job cancellato dal limite di 100 minuti non produce **nessun
-output**, e `pr-status-json` conta `CANCELLED` come fallito: la PR resta su `needs-work` senza
-niente nel log che spieghi perché. Se è successo, dillo esplicitamente.
+A timeout here is a real signal. A job cancelled by the 100-minute cap produces **no output at
+all**, and `pr-status-json` counts `CANCELLED` as failing: the PR stays at `needs-work` with
+nothing in the log explaining why. If that happened, say so explicitly.
 
-#### 4c — Gestire il feedback del round
+#### 4c — Address the round's feedback
 
-1. **Leggi i thread non risolti e non obsoleti**:
+1. **Fetch the unresolved, non-outdated threads**:
 
    ```bash
    bash scripts/gh-automation.sh pr-comments <pr-number>
@@ -283,30 +282,29 @@ niente nel log che spieghi perché. Se è successo, dillo esplicitamente.
      --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false) | {id, comments: [.comments.nodes[] | {databaseId, body}]}'
    ```
 
-2. **Correggi ogni thread** (file sotto `$WORKTREE_DIR/`):
-   - bug o suggerimento valido → implementalo
-   - domanda → rispondi
-   - dettaglio da meno di 5 minuti → correggilo e basta
-   - fuori scope → rispondi spiegando perché; non ignorarlo in silenzio
+2. **Fix every thread** (files under `$WORKTREE_DIR/`):
+   - valid bug or suggestion → implement it
+   - question → answer it
+   - nitpick under 5 minutes → just fix it
+   - out of scope → reply explaining why; do not silently ignore it
 
-   **Ordine di pubblicazione:** prepara le risposte nei punti 3–5, ma non inviare risposte, non
-   risolvere thread, non pubblicare la verifica del corpo e non scrivere `DEEPSEEK_REVIEW_READ`
-   finché il Passo 4e non ha fatto push di ogni correzione e verificato la testa remota. Una
-   correzione che esiste solo nel worktree non è arrivata.
+   **Publication order:** prepare the dispositions in items 3–5, but do not send replies, resolve
+   threads, post the body audit or write `DEEPSEEK_REVIEW_READ` until Step 4e has pushed every
+   fix and verified the remote head. A fix that exists only in the worktree has not landed.
 
-3. **Prepara una risposta per ogni thread**, anche quelli su cui non hai agito. Annota ID del
-   commento, ID del thread e testo per il Passo 4f; nessuna scrittura su GitHub per ora.
+3. **Prepare a reply for every thread**, including the ones you did not act on. Record the comment
+   ID, thread ID and text for Step 4f; no GitHub writes yet.
 
-4. **Prepara la risoluzione** solo dei thread la cui correzione sarà arrivata o il cui punto è
-   davvero gestito. Annota la decisione per il Passo 4f.
+4. **Prepare to resolve** only the threads whose fix will have landed or whose point is genuinely
+   addressed. Record the decision for Step 4f.
 
-   Un thread il cui suggerimento hai **respinto** si può risolvere, ma solo dopo una risposta
-   che riporta le prove: quella risposta è l'intera traccia di audit. Mai risolvere un thread a
-   cui non hai risposto.
+   A thread whose suggestion you **rejected** may be resolved, but only after a reply that states
+   the evidence: that reply is the whole audit trail. Never resolve a thread you have not
+   answered.
 
-5. **I finding nel corpo della review** non creano thread e non si possono risolvere. Leggi i
-   corpi completi delle review DeepSeek recenti, non solo i thread, e leggi ogni finding prima di
-   decidere se riconoscerli:
+5. **Findings in the review body** create no thread and cannot be resolved. Fetch the complete
+   bodies of the recent DeepSeek reviews, not just the threads, and read every finding before
+   deciding whether to acknowledge them:
 
    ```bash
    ACK_STATE=$(bash scripts/gh-automation.sh pr-deepseek-rounds <pr-number>)
@@ -325,31 +323,30 @@ niente nel log che spieghi perché. Se è successo, dillo esplicitamente.
      | {databaseId, submittedAt, state, body}'
    ```
 
-   Correggi nel codice ogni punto valido. Un punto respinto richiede prove concrete dal diff, da
-   un test o da un comportamento misurato: un disaccordo senza prove non è una risposta. Se un
-   finding non è chiaro o non ha prove né in un senso né nell'altro, lascialo non riconosciuto e
-   segnala il blocco.
+   Address every valid point in code. A rejected point needs concrete evidence from the diff, a
+   test or a measured behaviour: disagreement without evidence is not a disposition. If a finding
+   is unclear or has no evidence either way, leave it unacknowledged and report the block.
 
-   Annota una risposta per ogni finding del corpo per il Passo 4f. Mai usare
-   `NO_DEEPSEEK_REVIEW`: quell'esenzione resta solo umana.
+   Record one disposition per body finding for Step 4f. Never use `NO_DEEPSEEK_REVIEW`: that
+   exemption remains human-only.
 
-#### 4d — Correggere la CI
+#### 4d — Fix CI
 
 ```bash
 bash scripts/gh-automation.sh pr-status <pr-number>
 ```
 
-Se la CI fallisce, leggi i log (`gh run view <run-id> --log-failed`), correggi, poi esegui il gate
-del Passo 2 per **ogni** area coinvolta prima del push.
+If CI is failing, read the logs (`gh run view <run-id> --log-failed`), fix it, then run the Step 2
+gate for **every** affected area before pushing.
 
-Se il problema è di infrastruttura (runner, mirror di pacchetti, token scaduto), segnalalo e
-fermati. Non nasconderlo con modifiche al codice.
+If the problem is infrastructure (runner, package mirror, expired token), report it and stop. Do
+not paper over it with code changes.
 
-#### 4e — Commit e push
+#### 4e — Commit and push
 
-Se il feedback richiede di correggere titolo o corpo della PR, **non usare `gh pr edit`**: su
-`gh` 2.45.0 fallisce prima di applicare i flag. Usa
-`bash scripts/gh-automation.sh pr-edit <pr> --title "<titolo>" --body-file <path>`.
+If the feedback requires correcting the PR's title or body, **never use `gh pr edit`**: on `gh`
+2.45.0 it fails before applying any flag. Use
+`bash scripts/gh-automation.sh pr-edit <pr> --title "<title>" --body-file <path>`.
 
 ```bash
 cd "$WORKTREE_DIR"
@@ -376,41 +373,41 @@ CURRENT_PR=$(gh pr view <pr-number> --json state,headRefOid)
 [ "$(echo "$CURRENT_PR" | jq -r '.headRefOid')" = "$REMOTE_HEAD" ] || exit 1
 ```
 
-**MAI eseguire `git add` / `git commit` / `git push` dalla cartella principale.** Sempre da
+**NEVER run `git add` / `git commit` / `git push` from the main directory.** Always from
 `$WORKTREE_DIR`.
 
-A budget di round esaurito, questo push **non** fa partire un'altra review. Se serve davvero un
-altro passaggio:
+With the round budget spent, this push does **not** trigger another review. If another pass is
+genuinely needed:
 
 ```bash
 bash scripts/gh-automation.sh pr-deepseek-force-review <pr-number> [ref]
 ```
 
-`ref` è `develop` di default e deve essere un branch che contiene il bypass, perché il run
-lanciato esegue la definizione del workflow di quel ref.
+`ref` defaults to `develop` and must be a branch that carries the bypass, because the dispatched
+run executes that ref's workflow definition.
 
-#### 4f — Pubblicare le risposte dopo il push
+#### 4f — Publish dispositions after the push
 
-Solo dopo che il Passo 4e ha verificato la testa remota, pubblica ogni risposta preparata e poi
-risolvi il suo thread:
+Only after Step 4e has verified the remote head, publish every prepared reply, then resolve its
+thread:
 
 ```bash
 gh api "repos/$REPO/pulls/<pr-number>/comments/<comment-databaseId>/replies" \
-  --field body="<risposta che nomina la correzione pubblicata o le prove del rifiuto>" || exit 1
+  --field body="<response naming the pushed fix or the rejection evidence>" || exit 1
 gh api graphql \
   -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}' \
   -f id="<THREAD_ID>" || exit 1
 ```
 
-Per i finding del corpo pubblica una risposta per finding (corretto, con file/test, oppure
-respinto, con le prove), dopo aver passato il testo esatto a `scripts/check-body-privacy.sh`.
-È la traccia di audit pubblica. Poi rileggi `latest_review_id`: deve
-essere ancora uguale a `ACK_REVIEW_ID`, altrimenti ripeti questo passo dalla lettura dei corpi.
-Rinnova `DEEPSEEK_REVIEW_READ` solo dopo che la traccia esiste, trattando la lettura della label
-a tre stati (presente/assente/illeggibile), e verifica sia la label nuova sia le postcondizioni:
+For body findings, post one disposition per finding (fixed, with file/test, or rejected, with the
+evidence), after passing the exact text to `scripts/check-body-privacy.sh`.
+This is the public audit trail. Then re-read `latest_review_id`: it must
+still equal `ACK_REVIEW_ID`, otherwise repeat this step from the body fetch.
+Refresh `DEEPSEEK_REVIEW_READ` only after the audit trail exists, treating the label lookup as
+three-state (present/absent/unreadable), and verify both the fresh label and the postconditions:
 
 ```bash
-ACK_COMMENT='<un punto per finding del corpo DeepSeek, con ID della review e prove>'
+ACK_COMMENT='<one bullet per DeepSeek body finding, with review ID and evidence>'
 printf '%s\n' "$ACK_COMMENT" | bash scripts/check-body-privacy.sh || exit 1
 gh pr comment <pr-number> --body "$ACK_COMMENT" || exit 1
 LATEST_BEFORE_ACK=$(bash scripts/gh-automation.sh pr-deepseek-rounds <pr-number> \
@@ -444,21 +441,21 @@ if [ "$LATEST_AFTER_ACK" != "$ACK_REVIEW_ID" ] || [ "$UNREAD_AFTER_ACK" != "0" ]
 fi
 ```
 
-Una review più recente resta non letta perché il suo timestamp segue la label. Se una risposta
-non è capita o non ha prove, lascia la label assente. Mai applicare `NO_DEEPSEEK_REVIEW`.
+A newer review stays unread because its timestamp follows the label. If a disposition is not
+understood or has no evidence, leave the label absent. Never apply `NO_DEEPSEEK_REVIEW`.
 
-### Passo 5: verifica finale
+### Step 5: Final verification
 
 ```bash
 bash scripts/gh-automation.sh pr-status <pr-number>
 bash scripts/gh-automation.sh pr-check-label <pr-number> "READY TO MERGE"
 ```
 
-`pr-labeler.yml` applica la label quando la CI finisce, nel giro ogni sei ore e su dispatch
-manuale. Se `pr-status` dice che la regola è soddisfatta ma la label manca, il labeler non è
-ancora passato.
+`pr-labeler.yml` applies the label when CI completes, on the six-hour sweep and on manual
+dispatch. If `pr-status` says the rule is satisfied but the label is missing, the labeler has not
+run yet.
 
-### Passo 6: rimuovere il worktree
+### Step 6: Remove the worktree
 
 ```bash
 MAIN_REPO=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
@@ -468,61 +465,59 @@ git worktree remove "$WORKTREE_DIR"
 git worktree prune
 ```
 
-Se `git worktree remove` fallisce, avvisa l'utente e dai il comando per la pulizia manuale.
+If `git worktree remove` fails, warn the user and provide the manual cleanup command.
 
-### Passo 7: report
+### Step 7: Report
 
 ```
-PR #<numero>: <titolo>
-├── Mergeable:   ✅ nessun conflitto
-├── CI:          ✅ ci-gate eseguito e verde
-├── DeepSeek:    ✅ verdetto pulito / round esauriti
-├── Thread:      ✅ 0 non risolti
-├── Corpo:       ✅ nessun finding non letto (oppure: N non riconosciuti, con il motivo)
+PR #<number>: <title>
+├── Mergeable:   ✅ no conflicts
+├── CI:          ✅ ci-gate ran and passed
+├── DeepSeek:    ✅ clean verdict / rounds exhausted
+├── Threads:     ✅ 0 unresolved
+├── Body:        ✅ no unread findings (or: N unacknowledged, with the reason)
 ├── Label:       READY TO MERGE
-└── Stato:       Pronta per un merge autonomo verso una base diversa da main
+└── Status:      Ready for an autonomous merge into a non-main base
 ```
 
-Riporta ogni riga da quello che `pr-status` ha stampato davvero.
+Report each line from what `pr-status` actually printed.
 
-**Non fare merge da questa skill.** È una separazione di responsabilità: la decisione di merge
-verso basi diverse da `main` spetta a chi legge il risultato finito e i vincoli d'ordine della PR.
+**Do not merge from this skill.** This is a separation of responsibilities: the merge decision for
+non-main bases belongs to whoever reads the finished result and the PR's ordering constraints.
 
-## Guardrail
+## Guardrails
 
-- **Solo worktree**: modifiche, git e gate dentro il worktree, mai nella cartella principale.
-- **Verifica il worktree**: prima di ogni modifica, `git rev-parse --show-toplevel` deve essere
+- **Worktree only**: edits, git and gates inside the worktree, never in the main directory.
+- **Verify the worktree**: before any edit, `git rev-parse --show-toplevel` must be
   `$WORKTREE_DIR`.
-- Un passaggio di default (`MAX_ROUNDS: "1"`); limite di 5 iterazioni se il budget viene alzato.
-- Esegui i gate di **ogni** area toccata.
-- Se la CI fallisce per infrastruttura, segnalalo e fermati.
-- **Non fare polling su `mergeable` e non bloccarti su di esso.** Una PR **già unita** lo riporta
-  `null` per sempre, quindi aspettare che cambi non è lento, è impossibile. `pr-status` lo
-  riprova internamente e il labeler lo rilegge a ogni passaggio. Riporta quello che hai misurato
-  ed esci.
-- **Prima di aspettare qualcosa su una PR, controlla che sia ancora aperta.**
-- Se DeepSeek non arriva entro `DEEPSEEK_WAIT_SECONDS` (5700), segnalalo come probabile timeout
-  del job ed esci dal ciclo: non trattarlo come "nessun finding".
-- **Limiti GraphQL**: un'attesa è al massimo 190 richieste (5700s ÷ 30s) da circa 3–5 punti, sotto
-  i 950 punti. GitHub ne concede 5000 all'ora. Evita cicli forzati in parallelo su più PR.
-- MAI push diretto su `main` e mai merge di una PR verso `main`: sono solo umani. Il merge verso
-  basi diverse da `main` è autorizzato tramite
-  **`bash scripts/gh-automation.sh pr-merge <pr> --head <sha-osservato> --base-head
-  <sha-base-osservato>`**: rifiuta una base `main`, fallisce chiuso su una base illeggibile e
-  rifiuta una testa o una base che si sono mosse dopo la lettura. Leggi il corpo della PR prima
-  del merge: un ordine dichiarato rispetto a un'altra PR vincola chi fa il merge, e la regola
-  congelata non lo vede.
-- Mai force-push o rebase senza istruzione esplicita dell'utente. I conflitti si risolvono con un
-  merge della base nella testa della PR, preservando la storia.
-- Esegui sempre i gate in locale prima di pubblicare correzioni, e i due controlli di privacy
-  (`check-publication-privacy.sh`, `check-commit-privacy.sh`) prima di ogni push.
-- Applica `DEEPSEEK_REVIEW_READ` solo con la sequenza lettura/risposta/audit pubblico/scrittura
-  fresca dei passi 4c e 4f. Mai `NO_DEEPSEEK_REVIEW`.
+- A single pass by default (`MAX_ROUNDS: "1"`); a cap of 5 iterations if the budget is raised.
+- Run the gates of **every** touched area.
+- If CI fails because of infrastructure, report it and stop.
+- **Never poll `mergeable`, and never block on it.** A **merged** PR reports it as `null`
+  forever, so waiting for it to change is not slow, it is impossible. `pr-status` retries it
+  internally and the labeler re-reads it on every pass. Report what you measured and exit.
+- **Before waiting on anything about a PR, check that it is still open.**
+- If DeepSeek does not arrive within `DEEPSEEK_WAIT_SECONDS` (5700), report it as a probable job
+  timeout and exit the loop: do not treat it as "no findings".
+- **GraphQL limits**: one wait is at most 190 requests (5700s ÷ 30s) at about 3–5 points each,
+  under 950 points. GitHub allows 5000 per hour. Avoid parallel forced cycles across several PRs.
+- NEVER push directly to `main`, and never merge a PR into `main`: both are human-only. Merging
+  into non-main bases is authorized through
+  **`bash scripts/gh-automation.sh pr-merge <pr> --head <observed-sha> --base-head
+  <observed-base-sha>`**: it refuses a `main` base, fails closed on an unreadable base and
+  rejects a head or base that moved after the read. Read the PR body before merging: an ordering
+  stated against another PR binds whoever merges, and the frozen rule cannot see it.
+- Never force-push or rebase without an explicit user instruction. Conflicts are resolved by
+  merging the base into the PR head, preserving history.
+- Always run the gates locally before publishing fixes, and the two privacy checks
+  (`check-publication-privacy.sh`, `check-commit-privacy.sh`) before every push.
+- Apply `DEEPSEEK_REVIEW_READ` only through the read/dispose/public-audit/fresh-write sequence of
+  steps 4c and 4f. Never `NO_DEEPSEEK_REVIEW`.
 
-## Riferimenti
+## Reference
 
-- Helper: `scripts/gh-automation.sh` (`pr-status`, `pr-deepseek-rounds`, `pr-deepseek-force-review`)
-- Reviewer DeepSeek: `.github/workflows/deepseek-pr-review.yml` / `.github/scripts/deepseek_review.py`
-- Monitor passivo: `.github/workflows/pr-labeler.yml`
-- Gate (fonte di verità): `.github/workflows/ci.yml`
-- Protezione dei branch: `.github/branch-protection.md`
+- Helpers: `scripts/gh-automation.sh` (`pr-status`, `pr-deepseek-rounds`, `pr-deepseek-force-review`)
+- DeepSeek reviewer: `.github/workflows/deepseek-pr-review.yml` / `.github/scripts/deepseek_review.py`
+- Passive monitor: `.github/workflows/pr-labeler.yml`
+- Gates (source of truth): `.github/workflows/ci.yml`
+- Branch protection: `.github/branch-protection.md`
