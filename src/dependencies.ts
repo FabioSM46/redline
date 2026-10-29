@@ -156,6 +156,18 @@ export function applyInstallEvent(state: InstallState, raw: unknown): InstallSta
   }
 }
 
+/**
+ * The page's install once `install_dependency` has resolved. The command resolves only after the
+ * helper has exited, so the page never stays busy past it: a result that is not a final
+ * `InstallEvent` (a missed or malformed last event) ends the install as failed. A final event
+ * arriving later still replaces this, since `applyInstallEvent` accepts it from any state.
+ */
+export function installSettled(state: InstallState, id: DependencyId, final: unknown): InstallState {
+  const next = applyInstallEvent(state, final);
+  if (next.status === "running") return { status: "failed", id, message: "the install ended without a result." };
+  return next;
+}
+
 /** The command was refused before anything ran (no helper, no pkexec, another install). */
 export function installRefused(id: DependencyId, reason: unknown): InstallState {
   const message = (reason instanceof Error ? reason.message : String(reason)).trim();

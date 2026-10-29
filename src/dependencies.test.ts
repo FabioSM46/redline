@@ -11,6 +11,7 @@ import {
   INSTALL_IDLE,
   installLine,
   installRefused,
+  installSettled,
   installStarted,
   LACT_SOCKET_FALLBACK,
   parseDependencies,
@@ -24,10 +25,16 @@ const DEPENDENCIES_RS = readFileSync(new URL("../src-tauri/src/dependencies.rs",
 const INSTALLER_RS = readFileSync(new URL("../src-tauri/src/installer.rs", import.meta.url), "utf8");
 const PACKAGE_JSON = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
-/** The variants of `pub enum <name>` in a Rust source, as serde snake_case names. */
+/**
+ * The variants of `pub enum <name>` in a Rust source, as serde snake_case names. Fails unless the
+ * enum carries `#[serde(rename_all = "snake_case")]`: without it serde sends the identifiers as
+ * written, and the conversion below would hide the drift.
+ */
 function rustEnum(source: string, name: string): string[] {
   const start = source.indexOf(`pub enum ${name} {`);
   assert.equal(start >= 0, true, `enum ${name} not found`);
+  const attributes = source.slice(source.lastIndexOf("#[derive(", start), start);
+  assert.equal(attributes.includes('#[serde(rename_all = "snake_case")]'), true, `enum ${name} is not snake_case`);
   const body = source.slice(source.indexOf("{", start) + 1, source.indexOf("}", start));
   return [...body.matchAll(/^\s*(\w+),?\s*$/gm)].map((m) => m[1].replace(/(?<!^)([A-Z])/g, "_$1").toLowerCase());
 }
@@ -69,6 +76,12 @@ describe("mirror of the backend contract", () => {
     assert.equal(INSTALLER_RS.includes(`pub const INSTALL_EVENT: &str = "${DEPENDENCY_INSTALL_EVENT}";`), true);
     assert.deepEqual(rustEnum(INSTALLER_RS, "InstallStage"), ["progress", "succeeded", "failed", "cancelled"]);
     assert.deepEqual(rustFields(INSTALLER_RS, "InstallEvent"), ["id", "stage", "message"]);
+  });
+
+  it("calls commands that exist, with the parameter names they declare", () => {
+    assert.equal(/pub (async )?fn dependency_status\(/.test(DEPENDENCIES_RS), true);
+    // `invoke("install_dependency", { name })`: Tauri matches the key to the Rust parameter name.
+    assert.equal(/pub async fn install_dependency\([^)]*\bname: DependencyId,?\s*\)/.test(INSTALLER_RS), true);
   });
 
   it("names Redline's own license as package.json does", () => {
@@ -192,6 +205,23 @@ describe("install state", () => {
     assert.equal(applyInstallEvent(state, { id: "x", stage: "succeeded" }), state);
     assert.equal(applyInstallEvent(state, { id: "lact", stage: "done" }), state);
     assert.equal(applyInstallEvent(state, "nonsense"), state);
+  });
+
+  it("never stays busy once the command has resolved", () => {
+    const running = applyInstallEvent(installStarted("lact"), { id: "lact", stage: "progress", message: "Step" });
+    assert.deepEqual(installSettled(running, "lact", null), {
+      status: "failed",
+      id: "lact",
+      message: "the install ended without a result.",
+    });
+    assert.deepEqual(installSettled(running, "lact", { id: "lact", stage: "progress", message: "Step" }).status, "failed");
+    assert.deepEqual(installSettled(running, "lact", { id: "lact", stage: "succeeded", message: null }), {
+      status: "succeeded",
+      id: "lact",
+    });
+    // A final event that arrives after the fallback still wins.
+    const late = applyInstallEvent(installSettled(running, "lact", null), { id: "lact", stage: "cancelled", message: null });
+    assert.deepEqual(late, { status: "cancelled", id: "lact" });
   });
 
   it("picks up an install started before the page opened", () => {

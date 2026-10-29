@@ -11,6 +11,7 @@ import {
   INSTALL_RUNNING_NOTE,
   installLine,
   installRefused,
+  installSettled,
   installStarted,
   type InstallState,
   NO_GUIDED_INSTALL,
@@ -63,7 +64,7 @@ export function Dependencies() {
     setInstall(installStarted(dep.id));
     invoke<unknown>("install_dependency", { name: dep.id }).then(
       (final) => {
-        setInstall((state) => applyInstallEvent(state, final));
+        setInstall((state) => installSettled(state, dep.id, final));
         // A finished install changes what is installed, whatever its outcome.
         refresh();
       },
