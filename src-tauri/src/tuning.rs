@@ -28,6 +28,11 @@
 //! already reverted, and a late `revert` could only hit a change made after it. Nothing in
 //! Redline ever confirms on its own; quitting the app with a change pending sends `revert`.
 //! Because lactd's pending change is global, a second setter is refused while any GPU has one.
+//!
+//! Overdrive is not a pending change: it is a kernel parameter, set by lactd for the next boot
+//! after a confirmation handshake of its own ([`overdrive`]).
+
+pub mod overdrive;
 
 use redline_core::lact::{
     self, DeviceFlag, DeviceStats, FanControlMode, FanInfo, LactClient, LactError, PmfwInfo,
@@ -80,8 +85,12 @@ pub struct TuningStatus {
     pub warning: Option<String>,
     /// The version `lactd` reports.
     pub lact_version: Option<String>,
-    /// The `amdgpu` overdrive bit, as LACT reads it; `null` when unknown.
+    /// The `amdgpu` overdrive bit, as LACT reads it; `null` when unknown. It is the running
+    /// kernel's value: after enabling overdrive it stays false until the reboot.
     pub overdrive_enabled: Option<bool>,
+    /// Overdrive was enabled or disabled through Redline in this session: the change takes
+    /// effect at the next boot.
+    pub reboot_pending: bool,
     pub power: Option<PowerLimit>,
     pub fan: Option<FanStatus>,
     /// The active LACT profile; `null` is LACT's default profile (or an unreadable list).
@@ -212,6 +221,7 @@ impl TuningStatus {
             warning: None,
             lact_version: None,
             overdrive_enabled: None,
+            reboot_pending: false,
             power: None,
             fan: None,
             profile: None,
@@ -537,6 +547,8 @@ struct Inner {
     control: Mutex<()>,
     /// Held only to read or write the pending change, so `tuning_status` never waits on lactd.
     state: Mutex<PendingState>,
+    /// The overdrive handshake; independent of the pending change.
+    overdrive: overdrive::Overdrive,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -560,6 +572,7 @@ impl Tuning {
                 events,
                 control: Mutex::new(()),
                 state: Mutex::new(PendingState::default()),
+                overdrive: overdrive::Overdrive::default(),
             }),
         }
     }
@@ -573,6 +586,7 @@ impl Tuning {
     pub fn status(&self, gpu_id: &str) -> TuningStatus {
         let mut status = self.inner.lact.status(gpu_id);
         status.pending = self.pending(gpu_id);
+        status.reboot_pending = self.inner.overdrive.reboot_pending();
         status
     }
 
@@ -807,21 +821,21 @@ mod tests {
     use std::thread::{self, JoinHandle};
     use std::time::Duration;
 
-    const TIMEOUT: Duration = Duration::from_secs(2);
+    pub(super) const TIMEOUT: Duration = Duration::from_secs(2);
     const GPU_A: &str = "1002:164e-1043:8877-0000:0c:00.0";
     const GPU_B: &str = "1002:7550-1043:0643-0000:0d:00.0";
 
-    type Handler = dyn Fn(&str, &Value) -> Value + Send + Sync;
+    pub(super) type Handler = dyn Fn(&str, &Value) -> Value + Send + Sync;
 
     /// A fake `lactd`: answers each request line with `ok` and the handler's data, or with
     /// `error` when the handler returns `{"error": "<message>"}`. Stopped (and joined) on drop.
-    struct FakeLactd {
+    pub(super) struct FakeLactd {
         stop: Arc<AtomicBool>,
         thread: Option<JoinHandle<()>>,
     }
 
     impl FakeLactd {
-        fn start(socket: &Path, handler: Box<Handler>) -> Self {
+        pub(super) fn start(socket: &Path, handler: Box<Handler>) -> Self {
             let listener = UnixListener::bind(socket).unwrap();
             listener.set_nonblocking(true).unwrap();
             let stop = Arc::new(AtomicBool::new(false));
@@ -909,21 +923,21 @@ mod tests {
         })
     }
 
-    struct Setup {
+    pub(super) struct Setup {
         dir: TempDir,
     }
 
     impl Setup {
-        fn new(name: &str) -> Self {
+        pub(super) fn new(name: &str) -> Self {
             Setup {
                 dir: TempDir::new("tuning", name),
             }
         }
-        fn socket(&self) -> PathBuf {
+        pub(super) fn socket(&self) -> PathBuf {
             self.dir.join("lactd.sock")
         }
         /// A PATH with an executable `lact` in it, or an empty one.
-        fn lact(&self, installed: bool) -> Lact {
+        pub(super) fn lact(&self, installed: bool) -> Lact {
             let bin = self.dir.join("bin");
             fs::create_dir_all(&bin).unwrap();
             if installed {
@@ -1147,13 +1161,13 @@ mod tests {
 
     /// A clock that moves only when the test says so, and runs the timers that fall due.
     #[derive(Default)]
-    struct ManualClock {
+    pub(super) struct ManualClock {
         now: Mutex<u64>,
         timers: Mutex<Vec<(u64, Job)>>,
     }
 
     impl ManualClock {
-        fn advance(&self, ms: u64) {
+        pub(super) fn advance(&self, ms: u64) {
             let now = {
                 let mut now = self.now.lock().unwrap();
                 *now += ms;
@@ -1182,7 +1196,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct Collected(Mutex<Vec<Value>>);
+    pub(super) struct Collected(Mutex<Vec<Value>>);
 
     impl Events for Collected {
         fn pending(&self, change: &PendingChange) {
@@ -1198,7 +1212,7 @@ mod tests {
     }
 
     impl Collected {
-        fn take(&self) -> Vec<Value> {
+        pub(super) fn take(&self) -> Vec<Value> {
             std::mem::take(&mut *self.0.lock().unwrap())
         }
     }
