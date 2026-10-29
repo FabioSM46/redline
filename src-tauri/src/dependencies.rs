@@ -26,6 +26,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::State;
 
+use crate::installer::Installer;
 use crate::recorder::MISSING as GSR_MISSING;
 use crate::tuning::{self, Lact, Tuning};
 
@@ -75,6 +76,9 @@ pub struct Dependency {
     pub hint: Option<String>,
     /// LACT only: its daemon. `null` for the other tools.
     pub daemon: Option<DaemonStatus>,
+    /// `install_dependency` can run here: the packaged helper and pkexec are both present. The
+    /// same for every tool; the helper itself says when a tool is not supported on the system.
+    pub can_install: bool,
 }
 
 /// `lactd`, as seen from Redline.
@@ -90,8 +94,13 @@ pub struct DaemonStatus {
 /// Every dependency: LACT, GPU Screen Recorder, ffmpeg. Blocking: the three checks run side by
 /// side (one request to `lactd`, bounded by the LACT client's own timeout, and up to three tool
 /// runs, each bounded by `timeout`), so the worst case is about one timeout, not their sum.
-pub fn status(lact: &Lact, search_path: &OsStr, timeout: Duration) -> Vec<Dependency> {
-    thread::scope(|scope| {
+pub fn status(
+    lact: &Lact,
+    search_path: &OsStr,
+    timeout: Duration,
+    can_install: bool,
+) -> Vec<Dependency> {
+    let mut deps = thread::scope(|scope| {
         let recorder = scope.spawn(|| gpu_screen_recorder_status(search_path, timeout));
         let ffmpeg = scope.spawn(|| ffmpeg_status(search_path, timeout));
         let lact = lact_status(lact);
@@ -100,7 +109,11 @@ pub fn status(lact: &Lact, search_path: &OsStr, timeout: Duration) -> Vec<Depend
             recorder.join().expect("the recorder check panicked"),
             ffmpeg.join().expect("the ffmpeg check panicked"),
         ]
-    })
+    });
+    for dep in &mut deps {
+        dep.can_install = can_install;
+    }
+    deps
 }
 
 fn missing(id: DependencyId, verified_version: Option<&'static str>, hint: &str) -> Dependency {
@@ -113,6 +126,7 @@ fn missing(id: DependencyId, verified_version: Option<&'static str>, hint: &str)
         warning: None,
         hint: Some(hint.to_owned()),
         daemon: None,
+        can_install: false,
     }
 }
 
@@ -130,6 +144,7 @@ fn found(
         warning: None,
         hint: None,
         daemon: None,
+        can_install: false,
     }
 }
 
@@ -279,10 +294,14 @@ fn process_path() -> OsString {
 /// LACT, GPU Screen Recorder and ffmpeg, in that order. Never an error for a missing tool:
 /// that is `installed: false` with a hint.
 #[tauri::command]
-pub async fn dependency_status(tuning: State<'_, Tuning>) -> Result<Vec<Dependency>, String> {
+pub async fn dependency_status(
+    tuning: State<'_, Tuning>,
+    installer: State<'_, Installer>,
+) -> Result<Vec<Dependency>, String> {
     let tuning = tuning.inner().clone();
+    let can_install = installer.available();
     tauri::async_runtime::spawn_blocking(move || {
-        status(tuning.lact(), &process_path(), TOOL_TIMEOUT)
+        status(tuning.lact(), &process_path(), TOOL_TIMEOUT, can_install)
     })
     .await
     .map_err(|error| format!("The dependency check did not answer: {error}"))
@@ -353,7 +372,7 @@ mod tests {
         }
 
         fn status(&self) -> Vec<Dependency> {
-            status(&self.lact(), self.bin().as_os_str(), TIMEOUT)
+            status(&self.lact(), self.bin().as_os_str(), TIMEOUT, true)
         }
 
         fn get(&self, id: DependencyId) -> Dependency {
@@ -391,7 +410,7 @@ mod tests {
         );
         assert!(
             deps.iter()
-                .all(|dep| !dep.installed && dep.version.is_none())
+                .all(|dep| !dep.installed && dep.version.is_none() && dep.can_install)
         );
 
         assert_eq!(deps[0].hint.as_deref(), Some(NOT_INSTALLED));
@@ -580,6 +599,7 @@ mod tests {
             &setup.lact(),
             setup.bin().as_os_str(),
             Duration::from_millis(300),
+            false,
         )
         .remove(2);
         assert!(
@@ -600,7 +620,7 @@ mod tests {
         );
         let timeout = Duration::from_secs(1);
         let started = Instant::now();
-        let deps = status(&setup.lact(), setup.bin().as_os_str(), timeout);
+        let deps = status(&setup.lact(), setup.bin().as_os_str(), timeout, false);
         // Two hanging tools one after the other would take two timeouts.
         assert!(started.elapsed() < timeout * 2, "{:?}", started.elapsed());
         assert!(deps[1].installed && deps[2].installed);
@@ -615,6 +635,7 @@ mod tests {
             &setup.lact(),
             setup.bin().as_os_str(),
             Duration::from_millis(200),
+            false,
         )
         .remove(2);
         assert!(started.elapsed() < Duration::from_secs(10));
@@ -643,6 +664,7 @@ mod tests {
             serde_json::to_value(missing(DependencyId::GpuScreenRecorder, None, "x")).unwrap();
         assert_eq!(json["id"], "gpu_screen_recorder");
         assert_eq!(json["name"], "GPU Screen Recorder");
+        assert_eq!(json["can_install"], false);
         for key in ["version", "verified_version", "warning", "daemon"] {
             assert_eq!(json[key], Value::Null, "{key}");
         }

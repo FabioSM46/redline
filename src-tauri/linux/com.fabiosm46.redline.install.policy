@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- Redline's guided install (D4): pkexec runs only the packaged helper, which accepts only
+     the fixed names lact, gpu-screen-recorder and ffmpeg. Every run asks for an administrator
+     password; nothing is kept between runs. -->
+<policyconfig>
+  <vendor>Redline</vendor>
+  <action id="com.fabiosm46.redline.install">
+    <description>Install a tool Redline needs</description>
+    <message>Authentication is required to install a tool Redline needs (LACT, GPU Screen Recorder or ffmpeg).</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/share/redline/install-dependency</annotate>
+  </action>
+</policyconfig>
