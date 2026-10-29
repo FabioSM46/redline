@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useState } from "react";
+import { OVERDRIVE_ANCHOR } from "./block.ts";
 import { type OverdrivePlan, type OverdriveResult, overdriveView, planExpired, type TuningStatus } from "../../../tuning.ts";
 
 type Step =
@@ -58,7 +59,7 @@ export function OverdriveBlock({
   };
 
   return (
-    <div className="tuning-block">
+    <div className="tuning-block" id={OVERDRIVE_ANCHOR} tabIndex={-1}>
       <h2 className="record-title">Overdrive</h2>
       <div className="setting setting-wide">
         <div className="setting-text">

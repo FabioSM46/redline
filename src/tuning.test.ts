@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
+  type CurveRules,
+  type FanSettings,
+  type FanStatus,
+  type PmfwSettings,
+  type PmfwStatus,
   canApply,
   canReset,
   changeLabel,
@@ -38,6 +43,44 @@ const status: TuningStatus = {
   profile: null,
   pending: null,
 };
+
+const pmfw: PmfwStatus = {
+  acoustic_limit: { current: 2900, min: 500, max: 3300 },
+  acoustic_target: null,
+  target_temperature: null,
+  minimum_pwm: null,
+  zero_rpm: true,
+  zero_rpm_threshold: null,
+};
+
+const rules: CurveRules = {
+  points: 5,
+  temperature: { min_c: 25, max_c: 100 },
+  speed: { min_pct: 15, max_pct: 100 },
+  whole_percent: true,
+};
+
+const fan: FanStatus = {
+  configurable: true,
+  control_enabled: true,
+  mode: "curve",
+  static_speed: 35,
+  curve: [{ temperature_c: 40, speed_pct: 30 }],
+  temperature_range: { min_c: 25, max_c: 100 },
+  pmfw,
+  curve_rules: rules,
+};
+
+const pmfwSettings: Required<PmfwSettings> = {
+  zero_rpm: true,
+  zero_rpm_threshold: 50,
+  target_temperature: 90,
+  acoustic_limit: 2900,
+  acoustic_target: 1450,
+  minimum_pwm: 15,
+};
+
+const fanSettings: Required<FanSettings> = { mode: "curve", static_speed: 35, curve: [], pmfw: pmfwSettings };
 
 const change: PendingChange = { gpu_id: "0000:03:00.0", what: "power_limit", deadline_ms: 10_000 };
 const other: PendingChange = { gpu_id: "0000:0c:00.0", what: "power_limit", deadline_ms: 20_000 };
@@ -198,6 +241,7 @@ describe("status views", () => {
 describe("mirrors of src-tauri/src/tuning.rs", () => {
   const rust = readFileSync(new URL("../src-tauri/src/tuning.rs", import.meta.url), "utf8");
   const overdrive = readFileSync(new URL("../src-tauri/src/tuning/overdrive.rs", import.meta.url), "utf8");
+  const fanSource = readFileSync(new URL("../src-tauri/src/tuning/fan.rs", import.meta.url), "utf8");
 
   it("uses the same event names", () => {
     assert.equal(rust.includes(`PENDING_EVENT: &str = "${PENDING_EVENT}"`), true);
@@ -214,6 +258,34 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
     assert.deepEqual(fields(rust, "PendingChange"), Object.keys(change).sort());
     assert.deepEqual(fields(rust, "Settled"), ["gpu_id", "outcome"]);
     assert.deepEqual(fields(overdrive, "OverdrivePlan"), ["action", "expires_ms", "reboot_required", "steps", "token"]);
+  });
+
+  it("has every field of the fan structs", () => {
+    const fields = (source: string, name: string) => {
+      const body = source.slice(source.indexOf(`pub struct ${name} {`));
+      return [...body.slice(0, body.indexOf("\n}")).matchAll(/^\s+pub (\w+):/gm)].map((m) => m[1]).sort();
+    };
+    const keys = (value: object) => Object.keys(value).sort();
+    assert.deepEqual(fields(rust, "FanStatus"), keys(fan));
+    assert.deepEqual(fields(rust, "PmfwStatus"), keys(pmfw));
+    assert.deepEqual(fields(rust, "PmfwValue"), ["current", "max", "min"]);
+    assert.deepEqual(fields(rust, "CurvePoint"), keys(fan.curve?.[0] ?? {}));
+    assert.deepEqual(fields(rust, "TemperatureRange"), keys(rules.temperature));
+    assert.deepEqual(fields(fanSource, "CurveRules"), keys(rules));
+    assert.deepEqual(fields(fanSource, "SpeedRange"), keys(rules.speed));
+    assert.deepEqual(fields(fanSource, "FanSettings"), keys(fanSettings));
+    assert.deepEqual(fields(fanSource, "PmfwSettings"), keys(pmfwSettings));
+  });
+
+  it("has the same fan modes", () => {
+    const variants = (source: string, name: string) => {
+      const body = source.slice(source.indexOf(`pub enum ${name} {`));
+      return [...body.slice(0, body.indexOf("}")).matchAll(/^\s+(\w+),/gm)].map((m) => m[1].toLowerCase()).sort();
+    };
+    const modes: FanStatus["mode"][] = ["static", "curve"];
+    assert.deepEqual(variants(rust, "FanMode"), [...modes].sort());
+    const settings: FanSettings["mode"][] = ["auto", "static", "curve"];
+    assert.deepEqual(variants(fanSource, "FanSetting"), [...settings].sort());
   });
 
   it("has a label for every kind of change", () => {
