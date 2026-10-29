@@ -1,4 +1,5 @@
 mod autostart;
+mod recorder;
 mod sampler;
 mod settings;
 mod tray;
@@ -34,6 +35,7 @@ pub fn run() {
         .setup(|app| {
             settings::init(app.handle());
             sampler::start(app)?;
+            recorder::init(app.handle());
             tray::create(app.handle());
             autostart::show_main_window_unless_hidden_start(app.handle());
             Ok(())
@@ -48,7 +50,18 @@ pub fn run() {
             autostart::get_autostart,
             autostart::set_autostart,
             tray::app_status,
+            recorder::recorder_status,
+            recorder::replay_start,
+            recorder::replay_stop,
+            recorder::replay_save,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            // Every way out (tray Quit, closing the window without a tray) ends here: the
+            // replay process must not outlive the app.
+            if let tauri::RunEvent::Exit = event {
+                recorder::shutdown(app);
+            }
+        });
 }

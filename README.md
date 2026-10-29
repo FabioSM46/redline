@@ -39,7 +39,8 @@ in [docs/context.md](docs/context.md), the choices in [docs/decisions.md](docs/d
 - Linux with an AMD GPU on the `amdgpu` driver (every recent Radeon)
 - Wayland or X11
 - For tuning: LACT with the `lactd` daemon running
-- For replay and recording: GPU Screen Recorder
+- For replay and recording: GPU Screen Recorder (verified with 6.1.6; another version works
+  with a warning)
 
 On Ubuntu 24.04, `scripts/install-deps.sh` installs LACT (from the official `.deb`) and GPU
 Screen Recorder (from Flathub):
