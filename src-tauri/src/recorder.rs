@@ -116,6 +116,8 @@ impl<R: Runtime> Events for AppEvents<R> {
         if let Err(error) = self.0.emit(FILE_SAVED_EVENT, file) {
             eprintln!("redline: could not send {FILE_SAVED_EVENT} ({error})");
         }
+        // The desktop notification (#31): every saved file, also with the window hidden.
+        crate::gallery::notify_saved(file);
     }
 }
 
