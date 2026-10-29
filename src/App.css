@@ -618,3 +618,197 @@ body {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* Record tab (D8): the replay and recording blocks reuse the settings rows; the gallery reuses
+ * the clip cards of Home. */
+.record-block + .record-block,
+.record > .settings-notice + .record-block,
+.record > .setting-error + .record-block {
+  margin-top: calc(var(--space) * 2);
+}
+
+.record > .settings-notice,
+.record > .setting-error {
+  margin: 0 0 var(--space);
+}
+
+.record-title {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.record-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-intro {
+  margin: 0 0 var(--space-sm);
+}
+
+.record-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}
+
+.record-elapsed {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A row whose control needs the full width (track lists, folder fields). */
+.setting-wide {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.setting-wide > .setting-control {
+  display: grid;
+  gap: var(--space-sm);
+  justify-items: start;
+}
+
+.button {
+  padding: calc(var(--space-sm) / 2) var(--space);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--muted);
+}
+
+/* Stopping a running recording: the accent marks the active state, not decoration. */
+.button-stop {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.button:focus-visible,
+.chip-remove:focus-visible,
+.setting-input:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.button:disabled,
+.chip-remove:disabled,
+.link-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.button[aria-disabled="true"],
+.chip-remove[aria-disabled="true"],
+.link-button[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.setting-input {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.setting-input[aria-invalid="true"] {
+  border-color: var(--accent);
+}
+
+.setting-input:disabled {
+  color: var(--muted);
+}
+
+.folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.folder-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.tracks {
+  display: grid;
+  gap: var(--space-sm);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+}
+
+.track-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.chips {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-sm) / 2);
+  padding: calc(var(--space-sm) / 4) var(--space-sm);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--text-sm);
+}
+
+.chip-remove {
+  padding: 0 calc(var(--space-sm) / 2);
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip-remove:hover {
+  color: var(--fg);
+}
+
+.gallery-hint {
+  margin: 0 0 var(--space-sm);
+}
+
+.clip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space);
+}

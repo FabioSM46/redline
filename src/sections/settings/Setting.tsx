@@ -15,6 +15,7 @@ export function Setting({
   description,
   save,
   note,
+  wide = false,
   children,
 }: {
   title: string;
@@ -22,10 +23,12 @@ export function Setting({
   save: SaveState;
   /** What follows from the last saved change, if anything. */
   note?: string | null;
+  /** The control below the text, full width (lists, text fields), instead of on the right. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div className="setting">
+    <div className={wide ? "setting setting-wide" : "setting"}>
       <div className="setting-text">
         <span className="setting-title">{title}</span>
         <span className="setting-description">{description}</span>
