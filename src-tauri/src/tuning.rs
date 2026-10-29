@@ -32,6 +32,12 @@
 //! A profile switch is pending too, but lactd 0.10.1 does not hold it ([`profiles`]): Redline
 //! keeps the previous profile and, on `revert`, at the deadline or when the app quits, switches
 //! back to it itself.
+//!
+//! Overdrive is not a pending change: it is a kernel parameter, set by lactd for the next boot
+//! after a confirmation handshake of its own ([`overdrive`]).
+
+pub mod overdrive;
+pub mod profiles;
 
 use redline_core::lact::{
     self, DeviceFlag, DeviceStats, FanControlMode, FanInfo, LactClient, LactError, PmfwInfo,
@@ -81,8 +87,12 @@ pub struct TuningStatus {
     pub warning: Option<String>,
     /// The version `lactd` reports.
     pub lact_version: Option<String>,
-    /// The `amdgpu` overdrive bit, as LACT reads it; `null` when unknown.
+    /// The `amdgpu` overdrive bit, as LACT reads it; `null` when unknown. It is the running
+    /// kernel's value: after enabling overdrive it stays false until the reboot.
     pub overdrive_enabled: Option<bool>,
+    /// Overdrive was enabled or disabled through Redline in this session: the change takes
+    /// effect at the next boot.
+    pub reboot_pending: bool,
     pub power: Option<PowerLimit>,
     pub fan: Option<FanStatus>,
     /// The active LACT profile; `null` is LACT's default profile (or an unreadable list).
@@ -210,6 +220,7 @@ impl TuningStatus {
             warning: None,
             lact_version: None,
             overdrive_enabled: None,
+            reboot_pending: false,
             power: None,
             fan: None,
             profile: None,
@@ -250,8 +261,14 @@ impl Lact {
         )
     }
 
-    fn installed(&self) -> bool {
+    /// The `lact` binary is on the search path.
+    pub fn installed(&self) -> bool {
         find_program(LACT_BINARY, &self.search_path).is_some()
+    }
+
+    /// `lactd`'s `system_info`: answers only when the daemon runs and the user may use it.
+    pub fn system_info(&self) -> lact::LactResult<lact::SystemInfo> {
+        self.client.system_info()
     }
 
     /// The sentence for a failed request.
@@ -529,6 +546,8 @@ struct Inner {
     control: Mutex<()>,
     /// Held only to read or write the pending change, so `tuning_status` never waits on lactd.
     state: Mutex<PendingState>,
+    /// The overdrive handshake; independent of the pending change.
+    overdrive: overdrive::Overdrive,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -552,14 +571,21 @@ impl Tuning {
                 events,
                 control: Mutex::new(()),
                 state: Mutex::new(PendingState::default()),
+                overdrive: overdrive::Overdrive::default(),
             }),
         }
+    }
+
+    /// Where LACT is reached and looked for (the dependency status reads it too).
+    pub fn lact(&self) -> &Lact {
+        &self.inner.lact
     }
 
     /// `Lact::status` plus the change pending on this GPU. Blocking.
     pub fn status(&self, gpu_id: &str) -> TuningStatus {
         let mut status = self.inner.lact.status(gpu_id);
         status.pending = self.pending(gpu_id);
+        status.reboot_pending = self.inner.overdrive.reboot_pending();
         status
     }
 
@@ -839,8 +865,6 @@ pub async fn tuning_confirm(gpu_id: String, tuning: State<'_, Tuning>) -> Result
 pub async fn tuning_revert(gpu_id: String, tuning: State<'_, Tuning>) -> Result<Outcome, String> {
     blocking(&tuning, move |tuning| tuning.settle(&gpu_id, false)).await?
 }
-
-pub mod profiles;
 
 #[cfg(test)]
 mod tests {

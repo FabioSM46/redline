@@ -42,14 +42,18 @@ in [docs/context.md](docs/context.md), the choices in [docs/decisions.md](docs/d
 - For replay and recording: GPU Screen Recorder (verified with 6.1.6; another version works
   with a warning)
 
-On Ubuntu 24.04, `scripts/install-deps.sh` installs LACT (from the official `.deb`) and GPU
-Screen Recorder (from Flathub):
+The Redline package can install what is missing with one password prompt (`pkexec`). From a
+source checkout, `scripts/install-deps.sh` runs the same helper: LACT (the official `.deb`, on
+Ubuntu 24.04/26.04 and Debian 13), GPU Screen Recorder (from Flathub) and ffmpeg (apt, dnf or
+pacman):
 
 ```bash
 sudo bash scripts/install-deps.sh
 ```
 
-Undervolting and overclocking also need the kernel parameter `amdgpu.ppfeaturemask=0xffffffff`.
+The fan curve on RDNA3/4 GPUs, overclocking and undervolting need overdrive, the `0x4000` bit of
+the `amdgpu.ppfeaturemask` kernel parameter. Redline can ask LACT to enable it after you confirm;
+it takes effect after a reboot.
 
 ## Stack
 

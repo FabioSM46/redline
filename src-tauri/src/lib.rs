@@ -1,8 +1,10 @@
 mod actions;
 mod autostart;
+mod dependencies;
 mod desktop;
 mod gallery;
 mod global_shortcuts;
+mod installer;
 mod recorder;
 mod sampler;
 mod settings;
@@ -47,6 +49,7 @@ pub fn run() {
             settings::init(app.handle());
             sampler::start(app)?;
             tuning::init(app);
+            installer::init(app);
             // A first launch with an action performs it once GPU Screen Recorder has been
             // detected and `replay_on_start` has run.
             let launch_action = actions::requested(std::env::args_os().skip(1));
@@ -95,6 +98,12 @@ pub fn run() {
             tuning::profiles::create_profile,
             tuning::profiles::activate_profile,
             tuning::profiles::delete_profile,
+            tuning::overdrive::prepare_enable_overdrive,
+            tuning::overdrive::enable_overdrive,
+            tuning::overdrive::prepare_disable_overdrive,
+            tuning::overdrive::disable_overdrive,
+            dependencies::dependency_status,
+            installer::install_dependency,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
