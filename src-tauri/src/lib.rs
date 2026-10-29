@@ -63,6 +63,7 @@ pub fn run() {
             sampler::gpu_history,
             settings::get_settings,
             settings::set_settings,
+            settings::recording_defaults,
             autostart::get_autostart,
             autostart::set_autostart,
             tray::app_status,

@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { homeDir, videoDir } from "@tauri-apps/api/path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RecordingSettings } from "../../capture.ts";
 import { IDLE, type Loaded, type SaveState } from "../settings/Setting.tsx";
@@ -84,23 +83,26 @@ export function useRecordingSettings(): RecordingSettingsState {
   return { recording, saves, busy, save };
 }
 
+/** `RecordingDefaults` in src-tauri/src/settings.rs: null when the backend has no video folder. */
+export type RecordingDefaults = { replay_dir: string | null; recording_dir: string | null };
+
+const NO_DEFAULTS: RecordingDefaults = { replay_dir: null, recording_dir: null };
+
 /**
- * The video folder the default replay and recording folders live under, asked of Tauri as the
- * backend does (`video_dir`, then `<home>/Videos`); null when neither is known.
+ * The default replay and recording folders, from `recording_defaults`. No default (no "Reset to
+ * default") while it loads or when it fails.
  */
-export function useVideoDir(): string | null {
-  const [dir, setDir] = useState<string | null>(null);
+export function useRecordingDefaults(): RecordingDefaults {
+  const [defaults, setDefaults] = useState(NO_DEFAULTS);
   useEffect(() => {
     let active = true;
-    videoDir()
-      .catch(() => homeDir().then((home) => `${home.replace(/\/+$/, "")}/Videos`))
-      .then(
-        (value) => active && setDir(value),
-        () => {},
-      );
+    invoke<RecordingDefaults>("recording_defaults").then(
+      (value) => active && setDefaults(value),
+      () => {},
+    );
     return () => {
       active = false;
     };
   }, []);
-  return dir;
+  return defaults;
 }

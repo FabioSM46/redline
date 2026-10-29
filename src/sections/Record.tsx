@@ -1,13 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import { type ReactNode, useEffect, useState } from "react";
 import type { RecordingSettings } from "../capture.ts";
-import { defaultFolder, formatElapsed, formatLength, replayLengthOptions } from "../record.ts";
+import { formatElapsed, formatLength, replayLengthOptions } from "../record.ts";
 import { type RecorderStatus, replayIsOn, unavailableNotice } from "../recorder.ts";
 import { useRecorder } from "../RecorderContext.tsx";
 import { type AudioSources, AudioTracks } from "./record/AudioTracks.tsx";
 import { Folder } from "./record/Folder.tsx";
 import { Gallery } from "./record/Gallery.tsx";
-import { type RecordingSettingsState, useRecordingSettings, useVideoDir } from "./record/useRecordingSettings.ts";
+import {
+  type RecordingDefaults,
+  type RecordingSettingsState,
+  useRecordingDefaults,
+  useRecordingSettings,
+} from "./record/useRecordingSettings.ts";
 import { type Loaded, Setting } from "./settings/Setting.tsx";
 
 /**
@@ -17,7 +22,7 @@ import { type Loaded, Setting } from "./settings/Setting.tsx";
 export function Record() {
   const { recorder } = useRecorder();
   const settings = useRecordingSettings();
-  const videoDir = useVideoDir();
+  const defaults = useRecordingDefaults();
   const [sources, setSources] = useState<Loaded<AudioSources>>({ status: "loading" });
 
   const status = recorder.status === "ready" ? recorder.value : null;
@@ -58,8 +63,8 @@ export function Record() {
           {notice} Until then, replays and recordings cannot be started or set up. Saved clips are listed below.
         </p>
       )}
-      <ReplayBlock status={status} settings={settings} sources={sources} videoDir={videoDir} lock={lock} />
-      <RecordingBlock status={status} settings={settings} videoDir={videoDir} lock={lock} />
+      <ReplayBlock status={status} settings={settings} sources={sources} defaults={defaults} lock={lock} />
+      <RecordingBlock status={status} settings={settings} defaults={defaults} lock={lock} />
       <Gallery />
     </section>
   );
@@ -72,13 +77,13 @@ function ReplayBlock({
   status,
   settings,
   sources,
-  videoDir,
+  defaults,
   lock,
 }: {
   status: RecorderStatus | null;
   settings: RecordingSettingsState;
   sources: Loaded<AudioSources>;
-  videoDir: string | null;
+  defaults: RecordingDefaults;
   lock: Lock;
 }) {
   const { recording, saves, busy, save } = settings;
@@ -151,7 +156,7 @@ function ReplayBlock({
                 title="Replay folder"
                 description="Where saved replays go."
                 saved={current.replay_dir}
-                defaultValue={defaultFolder(videoDir, "replay")}
+                defaultValue={defaults.replay_dir}
                 save={saves.replay_dir}
                 disabled={lock.disabled}
                 busy={busy}
@@ -217,12 +222,12 @@ function ReplaySwitch({ status }: { status: RecorderStatus | null }) {
 function RecordingBlock({
   status,
   settings,
-  videoDir,
+  defaults,
   lock,
 }: {
   status: RecorderStatus | null;
   settings: RecordingSettingsState;
-  videoDir: string | null;
+  defaults: RecordingDefaults;
   lock: Lock;
 }) {
   const { busy, recordingError, recordingSince, toggleRecording } = useRecorder();
@@ -284,7 +289,7 @@ function RecordingBlock({
               title="Recording folder"
               description="Where recordings go, with or without the replay."
               saved={current.recording_dir}
-              defaultValue={defaultFolder(videoDir, "recording")}
+              defaultValue={defaults.recording_dir}
               save={settings.saves.recording_dir}
               disabled={lock.disabled}
               busy={settings.busy}
