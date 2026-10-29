@@ -103,16 +103,22 @@ pub(super) struct Undo {
 }
 
 impl Undo {
-    /// Called with the control lock held.
+    /// Switches back and emits [`PROFILE_EVENT`]. Called with the control lock held.
     pub(super) fn run(&self, tuning: &Tuning) -> Result<(), String> {
+        self.restore(tuning)?;
+        tuning.announce(None);
+        Ok(())
+    }
+
+    /// Switches back without reading the profiles again: one request, for when the app quits
+    /// and no window is left to tell. Called with the control lock held.
+    pub(super) fn restore(&self, tuning: &Tuning) -> Result<(), String> {
         tuning
             .inner
             .lact
             .client
             .set_profile(self.previous.as_deref())
-            .map_err(|error| tuning.profile_refusal(&error))?;
-        tuning.announce(None);
-        Ok(())
+            .map_err(|error| tuning.profile_refusal(&error))
     }
 }
 
@@ -683,11 +689,14 @@ mod tests {
             .activate_profile(SLOT_B, Some("Gaming"))
             .unwrap();
         service.events.take();
+        service.log();
         service.tuning.shutdown();
         assert_eq!(service.active().as_deref(), Some("Quiet"));
+        assert_eq!(service.log(), vec![set_profile(Some("Quiet"))]);
+        // Only the settlement: the profiles are not read again on the way out.
         assert_eq!(
-            service.events.take().last(),
-            Some(&settled_event(SLOT_B, "reverted"))
+            service.events.take(),
+            vec![settled_event(SLOT_B, "reverted")]
         );
     }
 

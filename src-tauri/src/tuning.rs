@@ -744,7 +744,8 @@ impl Tuning {
             return;
         };
         let reverted = match undo {
-            Some(undo) => undo.run(self),
+            // No window is left for `tuning-profile`: one request, not two.
+            Some(undo) => undo.restore(self),
             None => self
                 .inner
                 .lact
