@@ -865,6 +865,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
     use std::process::Command;
+    use std::sync::mpsc;
     use std::time::Instant;
 
     /// Collects what the service reports, in order.
@@ -897,12 +898,57 @@ mod tests {
         settings::RecordingSettings::defaults(video_dir).replay_config(None)
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir =
+    /// The longest a test with a process may run: past it the whole test binary exits, so a
+    /// hang fails `cargo test` instead of stalling it.
+    const TEST_DEADLINE: Duration = Duration::from_secs(60);
+
+    /// A test's own folder, removed when the test ends, also when it fails. Removing it ends
+    /// every fake gsr started in it (see [`fake_gsr`]). It also carries the test's watchdog.
+    struct TestDir {
+        path: PathBuf,
+        _watchdog: mpsc::Sender<()>,
+    }
+
+    impl std::ops::Deref for TestDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    /// Exits the test binary when the returned sender is not dropped within [`TEST_DEADLINE`].
+    fn watchdog(name: &str) -> mpsc::Sender<()> {
+        let (alive, deadline) = mpsc::channel::<()>();
+        let name = name.to_owned();
+        thread::spawn(move || {
+            if let Err(mpsc::RecvTimeoutError::Timeout) = deadline.recv_timeout(TEST_DEADLINE) {
+                // Straight to stderr: `eprintln!` is captured by the test harness and lost on exit.
+                use std::io::Write as _;
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "recorder test '{name}' ran past {TEST_DEADLINE:?}: exiting"
+                );
+                std::process::exit(101);
+            }
+        });
+        alive
+    }
+
+    fn temp_dir(name: &str) -> TestDir {
+        let path =
             std::env::temp_dir().join(format!("redline-replay-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("run")).unwrap();
-        dir
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(path.join("run")).unwrap();
+        TestDir {
+            path,
+            _watchdog: watchdog(name),
+        }
     }
 
     fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
@@ -914,17 +960,20 @@ mod tests {
     }
 
     /// A shell script standing in for gpu-screen-recorder. `$out` is `-o` (the replay folder, or
-    /// the file of a recording without the replay), `$rec` is `-ro`; `body` runs after the
-    /// arguments are read.
+    /// the file of a recording without the replay), `$rec` is `-ro`, `$dir` is the test's folder;
+    /// `body` runs after the arguments are read. The waiting loops ([`SLEEP`], [`LOOP`]) end when
+    /// the test's folder is gone or after 30 seconds, so a failed test leaves no process behind.
     fn fake_gsr(dir: &Path, body: &str) -> PathBuf {
         let script = dir.join("fake-gsr");
         let text = format!(
             "#!/bin/sh\n\
+             dir='{}'\n\
              [ \"$1\" = --version ] && {{ echo {}; exit 0; }}\n\
              while [ $# -gt 0 ]; do\n\
                [ \"$1\" = -o ] && out=$2; [ \"$1\" = -ro ] && rec=$2; shift\n\
              done\n\
              {body}\n",
+            dir.display(),
             recorder::VERIFIED_VERSION
         );
         fs::write(&script, text).unwrap();
@@ -1038,7 +1087,6 @@ mod tests {
         assert_eq!(file.file_name, "Video_kept.mkv");
         // Never a second process: the replay process did all of it.
         assert_eq!(names(&requests).len(), 3);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1085,7 +1133,6 @@ mod tests {
         // With nothing running the replay starts again.
         assert_eq!(service.start().unwrap().replay, ReplayState::Starting);
         service.shutdown();
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1101,11 +1148,13 @@ mod tests {
             status.error.as_deref(),
             Some("GPU Screen Recorder stopped: failed to get the portal session")
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
-    const SLEEP: &str = "while :; do sleep 0.05; done";
-    const LOOP: &str = "trap 'exit 0' INT\nwhile :; do sleep 0.05; done";
+    /// Waits like gsr until stopped, at most 30 seconds or until the test's folder is removed.
+    const SLEEP: &str =
+        "n=0\nwhile [ -d \"$dir\" ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n + 1)); done";
+    const LOOP: &str = "trap 'exit 0' INT\n\
+        n=0\nwhile [ -d \"$dir\" ] && [ $n -lt 600 ]; do sleep 0.05; n=$((n + 1)); done";
 
     #[test]
     fn a_replay_starts_saves_and_stops() {
@@ -1148,7 +1197,6 @@ mod tests {
             );
         }
         assert!(!events.saw(|status| status.replay == ReplayState::Error));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1157,7 +1205,7 @@ mod tests {
         let launcher = Launcher::Native(fake_gsr(&dir, LOOP));
         let seconds = Arc::new(Mutex::new(60));
         let source = Arc::clone(&seconds);
-        let video_dir = dir.clone();
+        let video_dir = dir.to_path_buf();
         let events = Collector::default();
         let service = Recorder::new(
             Environment {
@@ -1203,7 +1251,6 @@ mod tests {
         );
         service.shutdown();
         assert_eq!(service.status().replay, ReplayState::Off);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1215,7 +1262,6 @@ mod tests {
         assert_eq!(service.save().unwrap_err(), STILL_STARTING);
         assert_eq!(service.toggle_recording().unwrap_err(), STILL_STARTING);
         assert_eq!(service.stop().unwrap().replay, ReplayState::Off);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1233,7 +1279,6 @@ mod tests {
         // Stopping acknowledges the error.
         let stopped = service.stop().unwrap();
         assert_eq!((stopped.replay, stopped.error), (ReplayState::Off, None));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1263,7 +1308,6 @@ mod tests {
         assert_eq!(service.start().unwrap().replay, ReplayState::Starting);
         service.shutdown();
         assert_eq!(service.status().replay, ReplayState::Off);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1273,7 +1317,7 @@ mod tests {
         let launcher = Launcher::Native(fake_gsr(&dir, LOOP));
         let installed = Arc::new(AtomicBool::new(true));
         let seen = Arc::clone(&installed);
-        let video_dir = dir.clone();
+        let video_dir = dir.to_path_buf();
         let service = Recorder::new(
             Environment {
                 detect: Box::new(move || {
@@ -1299,7 +1343,6 @@ mod tests {
         assert_eq!(service.stop().unwrap().replay, ReplayState::Off);
         // With nothing left to stop, the missing tool is the answer again.
         assert_eq!(service.stop().unwrap_err(), MISSING);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -828,12 +828,54 @@ mod tests {
         }
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir =
+    /// The longest a test may run: past it the whole test binary exits, so a hang fails
+    /// `cargo test` instead of stalling it.
+    const TEST_DEADLINE: Duration = Duration::from_secs(60);
+
+    /// A test's own folder, removed when the test ends, also when it fails; it carries the
+    /// test's watchdog.
+    struct TestDir {
+        path: PathBuf,
+        _watchdog: std::sync::mpsc::Sender<()>,
+    }
+
+    impl std::ops::Deref for TestDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn temp_dir(name: &str) -> TestDir {
+        let path =
             std::env::temp_dir().join(format!("redline-recorder-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        let (alive, deadline) = std::sync::mpsc::channel::<()>();
+        let test = name.to_owned();
+        thread::spawn(move || {
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                deadline.recv_timeout(TEST_DEADLINE)
+            {
+                // Straight to stderr: `eprintln!` is captured by the test harness and lost on exit.
+                use std::io::Write as _;
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "recorder test '{test}' ran past {TEST_DEADLINE:?}: exiting"
+                );
+                std::process::exit(101);
+            }
+        });
+        TestDir {
+            path,
+            _watchdog: alive,
+        }
     }
 
     fn args_of(cmd: &Command) -> Vec<String> {
@@ -892,14 +934,13 @@ mod tests {
         // Video_YYYY-MM-DD_HH-MM-SS.mkv
         assert_eq!(name.len(), "Video_2026-10-29_14-04-22.mkv".len(), "{name}");
         assert!(name.starts_with("Video_20") && name.ends_with(".mkv"));
-        assert_eq!(first.parent(), Some(dir.as_path()));
+        assert_eq!(first.parent(), Some(&*dir));
         fs::write(&first, b"").unwrap();
         let second = recording_file(&dir, "mkv", now);
         assert_eq!(
             second.file_name().unwrap().to_str().unwrap(),
             name.replace(".mkv", "_2.mkv")
         );
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1091,7 +1132,6 @@ mod tests {
             [(101, "bwrap".to_string()), (102, GSR_COMM.to_string())]
         );
         assert!(descendants(&proc_root, 102).is_empty());
-        let _ = fs::remove_dir_all(&proc_root);
     }
 
     /// A stand-in for gsr's IPC server: answers each request with `reply(name)`.
@@ -1149,7 +1189,6 @@ mod tests {
         );
         let refused = ipc_request(&socket, "toggle-pause", None, IPC_TIMEOUT);
         assert_eq!(refused.unwrap_err().to_string(), "unknown request name");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1166,6 +1205,7 @@ mod tests {
         assert!(!probe.poll());
 
         let (stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(IPC_TIMEOUT)).unwrap();
         let mut line = String::new();
         BufReader::new(&stream).read_line(&mut line).unwrap();
         assert!(line.contains(READY_PROBE));
@@ -1177,6 +1217,5 @@ mod tests {
             assert!(Instant::now() < deadline, "the reply was never seen");
             thread::sleep(WAIT_STEP);
         }
-        let _ = fs::remove_dir_all(&dir);
     }
 }
