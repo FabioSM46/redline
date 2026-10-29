@@ -1,60 +1,64 @@
-# Decisioni
+# Decisions
 
-Ogni decisione ha un numero (D1, D2, …) che il codice e le issue possono citare. Una decisione
-cambiata si aggiorna qui, con la data e il motivo.
+Every decision has a number (D1, D2, …) that code and issues can cite. A decision that changes is
+updated here, with the date and the reason.
 
-## D1 — Stack: Rust + Tauri 2, frontend React + TypeScript (2026-10-29)
+## D1 — Stack: Rust + Tauri 2, React + TypeScript frontend (2026-10-29)
 
-Lo stesso stack di wow-don: backend Rust con Tauri 2, frontend React + TypeScript con Vite e
-pnpm. La pipeline di sviluppo (skill, CI, review) è portata da wow-don.
+The same stack as wow-don: a Rust backend with Tauri 2, a React + TypeScript frontend with Vite
+and pnpm. The development pipeline (skills, CI, review) is ported from wow-don.
 
-## D2 — Coordinare strumenti esistenti, non riscriverli (2026-10-29)
+## D2 — Coordinate existing tools, do not rewrite them (2026-10-29)
 
-- **Sensori**: lettura diretta da sysfs (`/sys/class/drm/cardN/device` e il suo `hwmon`), senza
-  permessi.
-- **Tuning**: demone LACT (`lactd`), tramite il suo socket Unix (`/run/lactd.sock`, una
-  richiesta JSON per riga). LACT è MIT e gira come root al posto nostro.
-- **Replay e registrazione**: GPU Screen Recorder come processo esterno, pilotato con opzioni,
-  segnali e IPC. È GPL-3.0: niente codice copiato.
-- **Overlay**: MangoHud, configurato da Redline.
+- **Sensors**: read directly from sysfs (`/sys/class/drm/cardN/device` and its `hwmon`), with no
+  permissions.
+- **Tuning**: the LACT daemon (`lactd`), through its Unix socket (`/run/lactd.sock`, one JSON
+  request per line). LACT is MIT and runs as root on our behalf.
+- **Replay and recording**: GPU Screen Recorder as an external process, driven through options,
+  signals and IPC. It is GPL-3.0: no code copied.
+- **Overlay**: MangoHud, configured by Redline.
 
-Riscrivere overlay Vulkan, cattura video o un demone privilegiato costerebbe anni e produrrebbe
-copie peggiori di progetti maturi.
+Rewriting a Vulkan overlay, video capture or a privileged daemon would take years and produce
+worse copies of mature projects.
 
-## D3 — Solo Linux (2026-10-29)
+## D3 — Linux only (2026-10-29)
 
-Redline legge il driver `amdgpu` del kernel e usa strumenti solo Linux. Su Windows esiste già
-Adrenaline. La CI e i pacchetti sono solo Linux.
+Redline reads the kernel's `amdgpu` driver and uses Linux-only tools. On Windows AMD's own
+software already exists. CI and packages are Linux only.
 
-## D4 — Distribuzione: `.deb`, configurazione guidata, poi un repository apt (2026-10-29)
+## D4 — Distribution: `.deb`, guided setup, then an apt repository (2026-10-29)
 
-Il pacchetto principale è un `.deb` generato da Tauri. LACT e GPU Screen Recorder non sono nei
-repository di Ubuntu, quindi il `.deb` non può installarli tramite `Depends`.
+The main package is a `.deb` built by Tauri. LACT and GPU Screen Recorder are not in Ubuntu's
+repositories, so the `.deb` cannot install them through `Depends`.
 
-1. **Subito**: all'avvio l'app controlla le dipendenze e propone di installare quelle mancanti,
-   chiedendo i permessi con `pkexec`. Le funzioni senza dipendenza restano disattivate.
-2. **Più avanti**: un repository apt con `redline`, `lact` e `gpu-screen-recorder`, così
-   `apt install redline` installa tutto e gli aggiornamenti arrivano con `apt upgrade`.
+1. **Now**: on startup the app checks its dependencies and offers to install the missing ones,
+   asking for permissions with `pkexec`. Features without their dependency stay disabled.
+2. **Later**: an apt repository with `redline`, `lact` and `gpu-screen-recorder`, so that
+   `apt install redline` installs everything and updates arrive with `apt upgrade`.
 
-Scartati:
-- script di installazione del `.deb` che scaricano pacchetti: si bloccano senza rete e
-  confondono apt;
-- binari inclusi nel nostro `.deb`: per GPU Screen Recorder servono gli obblighi GPL e FFmpeg 8,
-  per LACT c'è il rischio di conflitto con un'installazione già presente;
-- Redline come Flatpak: la sandbox ostacola l'accesso a sysfs e al socket di `lactd`.
+Rejected:
+- `.deb` install scripts that download packages: they hang without network and confuse apt;
+- binaries bundled in our `.deb`: GPU Screen Recorder brings GPL obligations and needs FFmpeg 8,
+  and LACT risks clashing with an existing installation;
+- Redline as a Flatpak: the sandbox gets in the way of sysfs and of the `lactd` socket.
 
-## D5 — Scorciatoie globali (2026-10-29)
+## D5 — Global shortcuts (2026-10-29)
 
-Sotto Wayland le scorciatoie globali passano dal portale GlobalShortcuts. GNOME lo implementa
-dalla 48; Ubuntu 24.04 ha GNOME 46. Finché il portale non c'è, Redline offrirà dei comandi
-(per esempio "salva replay") da legare alle scorciatoie personalizzate del desktop.
+Under Wayland global shortcuts go through the GlobalShortcuts portal. GNOME implements it from
+version 48; Ubuntu 24.04 ships GNOME 46. Until the portal is there, Redline will offer commands
+(for example "save replay") to bind to the desktop's custom shortcuts.
 
-## D6 — Licenza MIT (2026-10-29)
+## D6 — MIT license (2026-10-29)
 
-Redline è MIT. GPU Screen Recorder (GPL-3.0) resta un processo separato, quindi non vincola la
-licenza di Redline.
+Redline is MIT. GPU Screen Recorder (GPL-3.0) stays a separate process, so it does not bind
+Redline's license.
 
-## Aperte
+## D7 — English only in the repository (2026-10-29)
 
-- Come arriva l'overlay: configurazione di MangoHud gestita da Redline o un overlay proprio.
-- Dove vive il replay quando l'app è chiusa: servizio utente systemd o processo dell'app.
+Everything in the repository is written in English: code, comments, user-facing strings,
+documentation, skills, issue templates, issues, PRs and commit messages.
+
+## Open
+
+- How the overlay arrives: a MangoHud configuration managed by Redline, or an overlay of its own.
+- Where the replay lives while the app is closed: a systemd user service or a process of the app.

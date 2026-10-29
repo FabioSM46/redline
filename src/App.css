@@ -1,4 +1,4 @@
-/* Token di base. I colori scuri sono --dark-* assegnati nei blocchi del tema scuro. */
+/* Base tokens. Dark colours are --dark-* values assigned in the dark-theme block. */
 :root {
   --text-sm: 13px;
   --text-md: 15px;

@@ -1,34 +1,35 @@
-# Contesto
+# Context
 
-## Perché esiste Redline
+## Why Redline exists
 
-Chi passa da Windows a Linux per giocare con una GPU AMD perde **AMD Software: Adrenaline
-Edition**: overlay con FPS e temperature, grafici delle prestazioni, tuning di ventole e potenza,
-replay istantanei dell'ultimo minuto e registrazione con una scorciatoia. AMD non lo porta su
-Linux.
+Anyone moving from Windows to Linux to play games on an AMD GPU loses **AMD Software: Adrenalin
+Edition**: an overlay with FPS and temperatures, performance charts, fan and power tuning,
+instant replays of the last minute and recording on a shortcut. AMD does not ship it for Linux.
 
-Su Linux ogni pezzo esiste già come progetto separato:
+On Linux every piece already exists as a separate project:
 
-| Funzione | Progetto |
+| Feature | Project |
 |---|---|
-| Overlay in gioco | MangoHud |
-| Tuning (ventole, potenza, clock, undervolt) | LACT, CoreCtrl |
-| Replay e registrazione con encoder hardware | GPU Screen Recorder, OBS |
-| Monitoraggio | amdgpu_top, Mission Center |
+| In-game overlay | MangoHud |
+| Tuning (fans, power, clocks, undervolt) | LACT, CoreCtrl |
+| Replay and recording with hardware encoding | GPU Screen Recorder, OBS |
+| Monitoring | amdgpu_top, Mission Center |
 
-Il problema è che sono cinque programmi, con cinque interfacce e cinque configurazioni. Redline
-è **un'unica app** che li coordina, con un'interfaccia che chi viene da Adrenaline riconosce.
+The problem is that they are five programs, with five interfaces and five configurations.
+Redline is **one app** that coordinates them, with an interface that someone coming from AMD's
+Windows software recognises.
 
-## Cosa prende da Adrenaline e cosa lascia
+## What it takes from AMD's software and what it leaves out
 
-Prende: dashboard con le metriche principali, grafici nel tempo, overlay, tuning con profili,
-replay istantaneo, registrazione, scorciatoie.
+It takes: a dashboard with the main metrics, charts over time, the overlay, tuning with profiles,
+instant replay, recording, shortcuts.
 
-Lascia, perché la usa una minoranza minima: browser e social integrati, streaming integrato,
-statistiche di gioco online, avvisi su driver e giochi, impostazioni grafiche per gioco che su
-Linux appartengono a Mesa e Proton, impostazioni dello schermo che appartengono al desktop.
+It leaves out, because only a tiny minority uses them: the built-in browser and social features,
+built-in streaming, online game statistics, driver and game notifications, per-game graphics
+settings that on Linux belong to Mesa and Proton, and display settings that belong to the
+desktop.
 
-## Per chi è
+## Who it is for
 
-Giocatori con GPU AMD su una distribuzione Linux recente, sotto Wayland o X11. Il riferimento è
-Ubuntu LTS con GNOME, ma Redline non dipende da una distribuzione o da un desktop.
+Gamers with an AMD GPU on a recent Linux distribution, under Wayland or X11. The reference is
+Ubuntu LTS with GNOME, but Redline does not depend on a distribution or a desktop.

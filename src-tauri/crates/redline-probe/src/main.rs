@@ -1,4 +1,4 @@
-//! CLI per provare a mano i pezzi di redline-core prima di costruirci sopra la UI.
+//! CLI to try the pieces of redline-core by hand before building the UI on top.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -13,7 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(about = "Prove di integrazione di Redline")]
+#[command(about = "Redline integration probes")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -21,22 +21,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Sensori GPU letti da sysfs
+    /// GPU sensors read from sysfs
     Sensors {
-        /// Aggiorna ogni secondo
+        /// Refresh every second
         #[arg(long)]
         watch: bool,
         #[arg(long)]
         json: bool,
     },
-    /// Interroga il demone LACT
+    /// Query the LACT daemon
     Lact {
         #[arg(value_parser = ["ping", "devices", "info", "stats"])]
         what: String,
     },
-    /// Sorgenti audio disponibili per GPU Screen Recorder
+    /// Audio sources available to GPU Screen Recorder
     Audio,
-    /// Replay buffer interattivo: [s] salva, [r] avvia/ferma registrazione, [q] esci
+    /// Interactive replay buffer: [s] save, [r] start/stop recording, [q] quit
     Replay {
         #[arg(long, default_value_t = 60)]
         seconds: u32,
@@ -44,13 +44,13 @@ enum Cmd {
         fps: u32,
         #[arg(long, default_value = "portal")]
         capture: String,
-        /// Una traccia per ogni valore; usa `|` per mixare più sorgenti nella stessa traccia
+        /// One track per value; use `|` to mix several sources into the same track
         #[arg(long = "track", default_values_t = ["default_output".to_string(), "default_input".to_string()])]
         tracks: Vec<String>,
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Elenca gli stream (video/audio) di un file con ffprobe
+    /// List the (video/audio) streams of a file with ffprobe
     Tracks { file: PathBuf },
 }
 
@@ -111,7 +111,7 @@ fn format_snapshot(s: &GpuSnapshot) -> String {
 fn lact(what: &str) -> Result<()> {
     let client = LactClient::default();
     let id = || -> Result<String> {
-        // LACT identifica la GPU con "VENDOR:DEVICE-SUBVENDOR:SUBDEVICE-PCI_SLOT"
+        // LACT identifies the GPU as "VENDOR:DEVICE-SUBVENDOR:SUBDEVICE-PCI_SLOT"
         let devices = client.list_devices()?;
         Ok(devices[0]["id"].as_str().unwrap_or_default().to_owned())
     };
@@ -131,11 +131,11 @@ fn lact(what: &str) -> Result<()> {
 
 fn audio() -> Result<()> {
     let launcher = Launcher::detect()?;
-    println!("Dispositivi ({launcher:?}):");
+    println!("Devices ({launcher:?}):");
     for (name, desc) in recorder::list_audio_devices(launcher)? {
         println!("  {name:<40} {desc}");
     }
-    println!("Applicazioni (usa app:<nome>):");
+    println!("Applications (use app:<name>):");
     for app in recorder::list_application_audio(launcher)? {
         println!("  {app}");
     }
@@ -159,7 +159,7 @@ fn replay(
         container: "mkv".into(),
         codec: None,
         replay_dir: base.join("Replay"),
-        recording_dir: base.join("Registrazioni"),
+        recording_dir: base.join("Recordings"),
         audio: tracks
             .iter()
             .map(|t| AudioTrack(t.split('|').map(str::to_owned).collect()))
@@ -167,11 +167,9 @@ fn replay(
     };
 
     let launcher = Launcher::detect()?;
-    eprintln!("Avvio gsr ({launcher:?}), buffer {seconds}s, tracce audio: {tracks:?}");
+    eprintln!("Starting gsr ({launcher:?}), buffer {seconds}s, audio tracks: {tracks:?}");
     let mut session = ReplaySession::start(launcher, &config)?;
-    eprintln!(
-        "Comandi: [s]+Invio salva replay, [r]+Invio avvia/ferma registrazione, [q]+Invio esci"
-    );
+    eprintln!("Commands: [s]+Enter save replay, [r]+Enter start/stop recording, [q]+Enter quit");
 
     let (tx, keys) = mpsc::channel();
     thread::spawn(move || {
@@ -184,11 +182,11 @@ fn replay(
 
     loop {
         while let Ok(path) = session.saved.try_recv() {
-            println!("salvato: {}", path.display());
+            println!("saved: {}", path.display());
             let _ = tracks_summary(&path);
         }
         if !session.is_running() {
-            eprintln!("gsr è terminato");
+            eprintln!("gsr has exited");
             return Ok(());
         }
         match keys.recv_timeout(Duration::from_millis(200)) {
@@ -196,18 +194,18 @@ fn replay(
             Ok(k) if k == "r" => session.toggle_recording()?,
             Ok(k) if k == "q" => break,
             Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-            // stdin chiuso (EOF, oppure nessun terminale): nessuno può più mandare comandi,
-            // quindi fermiamo gsr invece di girare a vuoto finché termina da solo.
+            // stdin closed (EOF, or no terminal): nobody can send commands any more,
+            // so stop gsr instead of spinning until it exits by itself.
             Err(RecvTimeoutError::Disconnected) => {
-                eprintln!("stdin chiuso: fermo gsr");
+                eprintln!("stdin closed: stopping gsr");
                 break;
             }
         }
     }
     session.stop()?;
-    // gsr può scrivere l'ultimo percorso mentre si chiude
+    // gsr may write the last path while it shuts down
     while let Ok(path) = session.saved.recv_timeout(Duration::from_millis(500)) {
-        println!("salvato: {}", path.display());
+        println!("saved: {}", path.display());
     }
     Ok(())
 }

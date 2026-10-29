@@ -1,9 +1,9 @@
-//! Client minimale per il demone LACT (`lactd`).
+//! Minimal client for the LACT daemon (`lactd`).
 //!
-//! Protocollo: socket Unix, una richiesta JSON per riga, una risposta JSON per riga.
-//! Richiesta: `{"command": "<snake_case>", "args": {...}}`
-//! Risposta:  `{"status": "ok", "data": ...}` oppure `{"status": "error", "data": ...}`
-//! Riferimento: lact-schema/src/request.rs nel repo di LACT (v0.10.1).
+//! Protocol: Unix socket, one JSON request per line, one JSON response per line.
+//! Request:  `{"command": "<snake_case>", "args": {...}}`
+//! Response: `{"status": "ok", "data": ...}` or `{"status": "error", "data": ...}`
+//! Reference: lact-schema/src/request.rs in the LACT repository (v0.10.1).
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ impl LactClient {
         }
     }
 
-    /// Invia un comando e restituisce il campo `data` della risposta.
+    /// Sends a command and returns the `data` field of the response.
     pub fn request(&self, command: &str, args: Option<Value>) -> Result<Value> {
         let mut req = json!({ "command": command });
         if let Some(args) = args {
@@ -40,7 +40,7 @@ impl LactClient {
 
         let mut stream = UnixStream::connect(&self.socket).with_context(|| {
             format!(
-                "connessione a {} fallita: lactd è attivo e sei nel gruppo admin (sudo)?",
+                "connecting to {} failed: is lactd running and are you in its admin group (sudo)?",
                 self.socket.display()
             )
         })?;
@@ -52,12 +52,12 @@ impl LactClient {
 
         let mut buf = String::new();
         BufReader::new(stream).read_line(&mut buf)?;
-        let resp: Value = serde_json::from_str(&buf).context("risposta di lactd non valida")?;
+        let resp: Value = serde_json::from_str(&buf).context("invalid response from lactd")?;
 
         match resp["status"].as_str() {
             Some("ok") => Ok(resp["data"].clone()),
             Some("error") => bail!("lactd: {}", resp["data"]),
-            _ => bail!("risposta inattesa da lactd: {buf}"),
+            _ => bail!("unexpected response from lactd: {buf}"),
         }
     }
 
@@ -77,9 +77,9 @@ impl LactClient {
         self.request("device_stats", Some(json!({ "id": id })))
     }
 
-    /// Imposta il limite di potenza in watt (`None` = default).
-    /// LACT applica la modifica in attesa di conferma: va seguita da `confirm_pending`,
-    /// altrimenti dopo qualche secondo il demone torna ai valori precedenti.
+    /// Sets the power cap in watts (`None` = default).
+    /// LACT applies the change pending confirmation: follow it with `confirm_pending`,
+    /// otherwise after a few seconds the daemon reverts to the previous values.
     pub fn set_power_cap(&self, id: &str, watts: Option<f64>) -> Result<Value> {
         self.request("set_power_cap", Some(json!({ "id": id, "cap": watts })))
     }

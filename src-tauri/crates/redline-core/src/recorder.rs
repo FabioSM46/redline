@@ -1,11 +1,11 @@
-//! Controllo di GPU Screen Recorder (gsr) come processo esterno.
+//! Control of GPU Screen Recorder (gsr) as an external process.
 //!
-//! gsr si pilota con i segnali e scrive su stdout il percorso di ogni file salvato:
-//! - SIGUSR1   salva il replay
-//! - SIGRTMIN  avvia/ferma una registrazione normale mentre il replay è attivo (`-ro`)
-//! - SIGINT    ferma gsr
+//! gsr is driven with signals and writes the path of every saved file to stdout:
+//! - SIGUSR1   saves the replay
+//! - SIGRTMIN  starts/stops a regular recording while the replay is running (`-ro`)
+//! - SIGINT    stops gsr
 //!
-//! Usiamo il binario nativo se è nel PATH, altrimenti la versione Flatpak.
+//! We use the native binary when it is on PATH, otherwise the Flatpak.
 
 use anyhow::{Context, Result, bail};
 use std::fs;
@@ -16,7 +16,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 const FLATPAK_ID: &str = "com.dec05eba.gpu_screen_recorder";
-/// `comm` del processo in /proc, troncato dal kernel a 15 caratteri.
+/// The process `comm` in /proc, truncated by the kernel to 15 characters.
 const GSR_COMM: &str = "gpu-screen-reco";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +38,7 @@ impl Launcher {
         if matches!(flatpak, Ok(out) if out.status.success()) {
             return Ok(Launcher::Flatpak);
         }
-        bail!("GPU Screen Recorder non trovato (né nel PATH né come Flatpak {FLATPAK_ID})")
+        bail!("GPU Screen Recorder not found (neither on PATH nor as Flatpak {FLATPAK_ID})")
     }
 
     fn command(self) -> Command {
@@ -53,8 +53,8 @@ impl Launcher {
     }
 }
 
-/// Una traccia audio del file finale. Più sorgenti nella stessa traccia vengono mixate.
-/// Sorgenti valide: `default_output`, `default_input`, `app:<nome>`, nome di un device.
+/// One audio track of the output file. Several sources in the same track are mixed.
+/// Valid sources: `default_output`, `default_input`, `app:<name>`, a device name.
 #[derive(Debug, Clone)]
 pub struct AudioTrack(pub Vec<String>);
 
@@ -66,16 +66,16 @@ impl AudioTrack {
 
 #[derive(Debug, Clone)]
 pub struct ReplayConfig {
-    /// `portal` (Wayland, chiede una volta lo schermo), `screen`, o il nome di un monitor
+    /// `portal` (Wayland, asks for the screen once), `screen`, or a monitor name
     pub capture: String,
     pub fps: u32,
     pub replay_seconds: u32,
-    /// mkv per avere più tracce audio senza sorprese
+    /// mkv, to carry several audio tracks without surprises
     pub container: String,
-    /// h264, hevc, av1... `None` = scelta di gsr
+    /// h264, hevc, av1... `None` = gsr's choice
     pub codec: Option<String>,
     pub replay_dir: PathBuf,
-    /// Dove finiscono le registrazioni normali avviate durante il replay
+    /// Where regular recordings started during the replay go
     pub recording_dir: PathBuf,
     pub audio: Vec<AudioTrack>,
 }
@@ -109,11 +109,11 @@ impl ReplayConfig {
     }
 }
 
-/// gsr in modalità replay, avviato e posseduto da noi.
+/// gsr in replay mode, started and owned by us.
 pub struct ReplaySession {
     child: Child,
     launcher: Launcher,
-    /// Percorsi dei file salvati, letti dallo stdout di gsr
+    /// Paths of the saved files, read from gsr's stdout
     pub saved: Receiver<PathBuf>,
 }
 
@@ -128,7 +128,7 @@ impl ReplaySession {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .context("avvio di gpu-screen-recorder fallito")?;
+            .context("starting gpu-screen-recorder failed")?;
 
         let stdout = child.stdout.take().expect("stdout in pipe");
         let (tx, saved) = mpsc::channel();
@@ -156,7 +156,7 @@ impl ReplaySession {
         self.signal(libc::SIGRTMIN())
     }
 
-    /// Dopo lo stop `saved` resta leggibile per gli ultimi percorsi scritti da gsr.
+    /// After stopping, `saved` stays readable for the last paths gsr writes.
     pub fn stop(&mut self) -> Result<()> {
         self.signal(libc::SIGINT)?;
         self.child.wait()?;
@@ -170,17 +170,17 @@ impl ReplaySession {
     fn signal(&self, sig: libc::c_int) -> Result<()> {
         let pids = match self.launcher {
             Launcher::Native => vec![self.child.id() as i32],
-            // non è garantito che `flatpak run` inoltri i segnali: cerchiamo il vero processo gsr.
-            // Nel prototipo prendiamo tutti i gsr dell'utente; l'app userà `-ipc`.
+            // `flatpak run` is not guaranteed to forward signals: find the real gsr process.
+            // The prototype takes every gsr of the user; the app will use `-ipc`.
             Launcher::Flatpak => find_gsr_pids(),
         };
         if pids.is_empty() {
-            bail!("processo gpu-screen-recorder non trovato");
+            bail!("gpu-screen-recorder process not found");
         }
         for pid in pids {
-            // SAFETY: kill() non tocca memoria, al massimo fallisce con errno
+            // SAFETY: kill() touches no memory, at worst it fails with errno
             if unsafe { libc::kill(pid, sig) } != 0 {
-                bail!("kill({pid}) fallita: {}", std::io::Error::last_os_error());
+                bail!("kill({pid}) failed: {}", std::io::Error::last_os_error());
             }
         }
         Ok(())
@@ -207,7 +207,7 @@ fn find_gsr_pids() -> Vec<i32> {
         .collect()
 }
 
-/// Sorgente audio elencata da gsr: (nome da passare a `-a`, descrizione).
+/// Audio source listed by gsr: (name to pass to `-a`, description).
 pub fn list_audio_devices(launcher: Launcher) -> Result<Vec<(String, String)>> {
     let out = launcher.command().arg("--list-audio-devices").output()?;
     Ok(String::from_utf8_lossy(&out.stdout)
@@ -219,7 +219,7 @@ pub fn list_audio_devices(launcher: Launcher) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-/// Applicazioni che stanno riproducendo audio, utilizzabili come `app:<nome>`.
+/// Applications currently playing audio, usable as `app:<name>`.
 pub fn list_application_audio(launcher: Launcher) -> Result<Vec<String>> {
     let out = launcher
         .command()

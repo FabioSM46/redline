@@ -113,5 +113,5 @@ jobs:
               --draft \
               --verify-tag \
               --title "Redline $TAG" \
-              --notes "Pacchetto .deb per Linux. Bozza da rivedere prima della pubblicazione."
+              --notes ".deb package for Linux. Draft to review before publishing."
           fi

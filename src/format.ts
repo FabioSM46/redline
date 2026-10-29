@@ -1,4 +1,4 @@
-// Formattazione delle letture dei sensori per la UI. Funzioni pure, testate in format.test.ts.
+// Formatting of sensor readings for the UI. Pure functions, tested in format.test.ts.
 
 export function formatValue(value: number | null | undefined, unit: string, digits = 0): string {
   if (value === null || value === undefined || Number.isNaN(value)) {

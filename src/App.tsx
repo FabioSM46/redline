@@ -37,24 +37,24 @@ function App() {
   }, []);
 
   if (error) {
-    return <main className="state">Impossibile leggere la GPU: {error}</main>;
+    return <main className="state">Cannot read the GPU: {error}</main>;
   }
   if (!snapshot) {
-    return <main className="state">Lettura dei sensori…</main>;
+    return <main className="state">Reading sensors…</main>;
   }
 
   const s = snapshot;
   const vram = percentOf(s.vram_used_mib, s.vram_total_mib);
   const metrics: [string, string][] = [
-    ["Temperatura", formatValue(s.temp_edge_c, "°C")],
+    ["Temperature", formatValue(s.temp_edge_c, "°C")],
     ["Hotspot", formatValue(s.temp_junction_c, "°C")],
-    ["Memoria", formatValue(s.temp_mem_c, "°C")],
-    ["Potenza", `${formatValue(s.power_w, "W")} / ${formatValue(s.power_cap_w, "W")}`],
-    ["Ventola", formatValue(s.fan_rpm, "rpm")],
-    ["Clock GPU", formatValue(s.sclk_mhz, "MHz")],
-    ["Clock VRAM", formatValue(s.mclk_mhz, "MHz")],
-    ["Tensione", formatValue(s.vddgfx_mv, "mV")],
-    ["Utilizzo GPU", formatValue(s.gpu_busy_pct, "%")],
+    ["Memory", formatValue(s.temp_mem_c, "°C")],
+    ["Power", `${formatValue(s.power_w, "W")} / ${formatValue(s.power_cap_w, "W")}`],
+    ["Fan", formatValue(s.fan_rpm, "rpm")],
+    ["GPU clock", formatValue(s.sclk_mhz, "MHz")],
+    ["VRAM clock", formatValue(s.mclk_mhz, "MHz")],
+    ["Voltage", formatValue(s.vddgfx_mv, "mV")],
+    ["GPU usage", formatValue(s.gpu_busy_pct, "%")],
     ["VRAM", `${formatValue(s.vram_used_mib, "MiB")} (${formatValue(vram, "%")})`],
   ];
 

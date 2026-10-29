@@ -1,6 +1,6 @@
 use redline_core::sensors::{AmdGpu, GpuSnapshot};
 
-/// Una lettura dei sensori della prima GPU AMD.
+/// One sensor reading of the first AMD GPU.
 #[tauri::command]
 fn gpu_snapshot() -> Result<GpuSnapshot, String> {
     AmdGpu::first()
