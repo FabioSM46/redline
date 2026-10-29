@@ -315,15 +315,13 @@ pub async fn show_in_folder(app: AppHandle, id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use std::fs::{File, FileTimes};
     use std::time::{Duration, SystemTime};
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("redline-gallery-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    /// Removed when the test ends, also when it fails.
+    fn temp_dir(name: &str) -> TempDir {
+        TempDir::new("gallery", name)
     }
 
     /// A file of `size` bytes modified `seconds` after the epoch.
@@ -370,7 +368,6 @@ mod tests {
         assert_eq!(list[0].size_bytes, 20);
         // Zero bytes are not a video header: unknown, not zero.
         assert_eq!(list[0].duration_s, None);
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -390,14 +387,12 @@ mod tests {
         .unwrap();
         // The recording folder does not exist: nothing from it, and no error.
         assert_eq!(names(&list(&folders)), ["Replay_b.webm", "Replay_a.MKV"]);
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn missing_folders_are_an_empty_list() {
         let root = temp_dir("missing");
         assert!(list(&folders(&root.join("nowhere"))).is_empty());
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -440,15 +435,14 @@ mod tests {
             resolve(&folders, "replay:Replay_a.mkv"),
             Err(UNKNOWN_ID.to_owned())
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn one_folder_for_both_kinds_lists_each_file_once() {
         let root = temp_dir("same");
         let same = Folders {
-            replay: root.clone(),
-            recording: root.clone(),
+            replay: root.to_path_buf(),
+            recording: root.to_path_buf(),
         };
         clip(&root, "Replay_a.mkv", 1, 1);
         clip(&root, "Video_b.mkv", 2, 1);
@@ -456,7 +450,6 @@ mod tests {
         assert_eq!(names(&list), ["Video_b.mkv", "Replay_a.mkv"]);
         assert_eq!(list[0].kind, FileKind::Recording);
         assert_eq!(list[1].kind, FileKind::Replay);
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

@@ -6,6 +6,8 @@ mod recorder;
 mod sampler;
 mod settings;
 mod sources;
+#[cfg(test)]
+mod test_support;
 mod thumbnails;
 mod tray;
 

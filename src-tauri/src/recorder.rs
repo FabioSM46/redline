@@ -883,6 +883,7 @@ pub async fn replay_save(service: State<'_, Recorder>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use std::fs;
     use std::io::{BufRead, BufReader, ErrorKind, Write};
     use std::os::unix::fs::PermissionsExt;
@@ -928,20 +929,15 @@ mod tests {
     /// A test's own folder, removed when the test ends, also when it fails. Removing it ends
     /// every fake gsr started in it (see [`fake_gsr`]). It also carries the test's watchdog.
     struct TestDir {
-        path: PathBuf,
+        // Declared first so the folder goes before the watchdog stops.
+        dir: TempDir,
         _watchdog: mpsc::Sender<()>,
     }
 
     impl std::ops::Deref for TestDir {
         type Target = Path;
         fn deref(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
+            &self.dir
         }
     }
 
@@ -964,12 +960,10 @@ mod tests {
     }
 
     fn temp_dir(name: &str) -> TestDir {
-        let path =
-            std::env::temp_dir().join(format!("redline-replay-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(path.join("run")).unwrap();
+        let dir = TempDir::new("replay", name);
+        fs::create_dir_all(dir.join("run")).unwrap();
         TestDir {
-            path,
+            dir,
             _watchdog: watchdog(name),
         }
     }
