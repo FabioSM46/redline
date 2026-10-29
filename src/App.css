@@ -869,3 +869,127 @@ body {
 .settings-advanced[open] > summary {
   margin-bottom: var(--space);
 }
+
+/* Performance → Tuning: blocks reuse the settings rows; the confirmation panel is in the page,
+ * never a browser dialog. The accent border marks the one state that needs an answer. */
+.tuning {
+  display: grid;
+  gap: calc(var(--space) * 2);
+  max-width: calc(var(--space) * 40);
+}
+
+.tuning > .settings-notice,
+.tuning > .setting-error,
+.tuning > .state {
+  margin: 0;
+}
+
+.tuning-number {
+  font-variant-numeric: tabular-nums;
+}
+
+.tuning-figure {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.tuning-power {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space);
+}
+
+.tuning-slider {
+  flex: 1;
+  min-width: calc(var(--space) * 10);
+  accent-color: var(--accent);
+}
+
+.tuning-watts {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-sm) / 2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.tuning-watts .setting-input {
+  flex: none;
+  width: calc(var(--space) * 5);
+}
+
+.tuning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.tuning-slider:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
+/* The accent is the same in light and dark, so the text on it is too. */
+:root {
+  --on-accent: #ffffff;
+}
+
+/* The answer a pending state waits for (Keep, Enable overdrive). */
+.button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.button-primary:hover {
+  border-color: var(--accent);
+}
+
+.tuning-confirm {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space);
+  border: var(--indicator) solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.tuning-confirm > p {
+  margin: 0;
+}
+
+.tuning-confirm-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.tuning-confirm-detail {
+  font-variant-numeric: tabular-nums;
+}
+
+.tuning-confirm-gpu,
+.tuning-confirm-result,
+.tuning-confirm-countdown {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.tuning-unavailable {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-unavailable > p {
+  margin: 0;
+}
+
+.tuning-plan {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-plan > p {
+  margin: 0;
+}
