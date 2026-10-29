@@ -22,6 +22,7 @@
 | `lact` | Client of the `lactd` socket: devices, statistics, power cap, confirming or reverting changes | prototype, verified on real hardware |
 | `recorder` | Starts GPU Screen Recorder in replay mode with its IPC socket, saves the replay over IPC, stops it with signals sent only to the process tree it started, one audio track per source. Verified against GPU Screen Recorder 6.1.6 (`VERIFIED_VERSION`) | replay verified on real hardware; IPC, process tree and stdout parsing tested with fakes |
 | `media` | The length of a saved video from its container header, without decoding and without extra tools: Matroska/WebM (`Info → Duration`) and MP4/MOV (`mvhd`). Anything else, or a header without a usable duration (fragmented MP4, a file still being written), is unknown | tested with synthetic headers; checked against ffprobe on files written by ffmpeg |
+| `thumbnail` | The preview of a saved video, never decoded in-process: the desktop's thumbnail cache (`large/`, `normal/`, named after the MD5 of the GLib file URI, valid only while `Thumb::MTime` matches), then Redline's own cache, then one JPEG frame (256 px) written by `ffmpegthumbnailer` or `ffmpeg` found on PATH, at most one at a time, killed after 15 s. A failure is cached until the file changes; with no tool nothing is cached. MD5, base64 and the PNG `tEXt` reader are in the module (no new dependency) | tested with fake tools on a fake PATH; checked with ffmpeg on generated mkv and mp4 files |
 
 ## Tauri app modules (`src-tauri/src/`)
 
@@ -32,6 +33,7 @@
 | `autostart` | Starting with the system through `tauri-plugin-autostart` (an XDG autostart entry), used only by the backend: the frontend has no `autostart:*` permission. The entry launches the app with `--autostart`. The operating system is the only source of truth: the state is not stored in `settings.json` and is read back after every write | `get_autostart`, `set_autostart` |
 | `recorder` | The instant replay service: at most one replay session for the whole app, in the app process (D8). `RecorderStatus { available, unavailable_reason, replay: "off" \| "starting" \| "on" \| "error", recording, replay_seconds, error, warning }`, sent again as the `recorder-state` event on every change; `file-saved { kind: "replay" \| "recording", file_name, saved_at_ms }` for every file GPU Screen Recorder saves (the name only, never the path). Stopped on app exit | `recorder_status`, `replay_start`, `replay_stop`, `replay_save` |
 | `gallery` | The saved clips of the replay and recording folders (read through `gallery::folders`, today the recorder's defaults): `Recording { id, kind: "replay" \| "recording", file_name, saved_at_ms, size_bytes, duration_s }`, newest first, only regular video files directly inside the folders. `id` is opaque: the backend maps it back to a path only by listing the folders again, so it never names a file outside them. Also the desktop notification ("Replay saved" / "Recording saved" with the file name) for every `file-saved` | `list_recordings`, `open_recording`, `show_in_folder` |
+| `thumbnails` | Previews of saved clips by gallery id: `recording_thumbnail(id)` is a `data:image/png` or `data:image/jpeg` base64 URL, or `null`; `thumbnail_support()` is `{ generator: "ffmpegthumbnailer" \| "ffmpeg" \| null, hint }`, the hint saying what to install. Desktop cache in `cache_dir()/thumbnails` (read only), Redline's in `app_cache_dir()/thumbnails`, pruned by `list_recordings` | `recording_thumbnail`, `thumbnail_support` |
 | `desktop` | Two session bus calls through GIO (`extern "C"`, as `tray`): `org.freedesktop.Notifications.Notify` and `org.freedesktop.FileManager1.ShowItems`. A missing service is `false`, never an error | — |
 
 ## Flows
@@ -74,3 +76,8 @@ name only; without a notification server nothing is shown and nothing fails. `li
 lists both folders (missing folders are empty); `open_recording(id)` runs `xdg-open` on the file
 and `show_in_folder(id)` asks the file manager to select it (`FileManager1.ShowItems`), falling
 back to `xdg-open` on the folder. The frontend only ever holds ids, never paths.
+`recording_thumbnail(id)` resolves the id the same way and answers with a data URL from the
+desktop's thumbnail cache, Redline's cache or a frame written by `ffmpegthumbnailer`/`ffmpeg`
+(on the blocking pool, one tool at a time, with a timeout), or `null`. Without either tool
+`thumbnail_support` carries the hint to install ffmpeg. Every `list_recordings` removes from
+Redline's cache the previews of clips that no longer exist or have changed.

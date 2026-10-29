@@ -13,6 +13,7 @@
 //! - `open_recording(id)`: `xdg-open` on the file. `show_in_folder(id)`: the file manager's
 //!   `FileManager1.ShowItems` with the file selected, otherwise `xdg-open` on its folder. An
 //!   unknown id is an error.
+//! - Previews are in `thumbnails` (`recording_thumbnail(id)`); listing prunes their cache.
 //! - [`notify_saved`]: "Replay saved" / "Recording saved" with the file name, hooked on the
 //!   recorder's `file-saved`. No notification server means no notification, silently.
 
@@ -27,8 +28,8 @@ use redline_core::recorder::ReplayConfig;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::desktop;
 use crate::recorder::{self, FileKind, FileSaved};
+use crate::{desktop, thumbnails};
 
 /// The extensions of the containers GPU Screen Recorder can write.
 const VIDEO_EXTENSIONS: [&str; 5] = ["mkv", "mp4", "webm", "flv", "mov"];
@@ -186,6 +187,14 @@ pub fn list(folders: &Folders) -> Vec<Recording> {
         .collect()
 }
 
+/// The paths of the clips of both folders, in listing order, without reading their headers.
+pub fn paths(folders: &Folders) -> Vec<PathBuf> {
+    entries(folders)
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect()
+}
+
 /// The path of the clip with `id`, found by listing the folders again: an id the listing does
 /// not produce right now is unknown.
 pub fn resolve(folders: &Folders, id: &str) -> Result<PathBuf, String> {
@@ -248,7 +257,7 @@ pub fn notify_saved(file: &FileSaved) {
 }
 
 /// Runs `job` with the folders on the blocking pool: listing and opening touch the disk.
-async fn with_folders<R: Runtime, T: Send + 'static>(
+pub(crate) async fn with_folders<R: Runtime, T: Send + 'static>(
     app: AppHandle<R>,
     job: impl FnOnce(Folders) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -257,10 +266,18 @@ async fn with_folders<R: Runtime, T: Send + 'static>(
         .map_err(|error| error.to_string())?
 }
 
-/// The saved clips of both folders, newest first.
+/// The saved clips of both folders, newest first. Also drops the cached previews of clips
+/// that are gone or changed.
 #[tauri::command]
 pub async fn list_recordings(app: AppHandle) -> Result<Vec<Recording>, String> {
-    with_folders(app, |folders| Ok(list(&folders))).await
+    let thumbnailer = thumbnails::thumbnailer(&app);
+    with_folders(app, move |folders| {
+        if let Some(thumbnailer) = thumbnailer {
+            thumbnailer.prune(&paths(&folders));
+        }
+        Ok(list(&folders))
+    })
+    .await
 }
 
 /// Opens the clip `id` in the default video player.

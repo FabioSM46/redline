@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use redline_core::lact::LactClient;
 use redline_core::recorder::{self, AudioTrack, Launcher, Output, ReplayConfig, ReplaySession};
 use redline_core::sensors::{self, AmdGpu, GpuSnapshot};
+use redline_core::thumbnail::{self, Thumbnailer};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -60,6 +61,19 @@ enum Cmd {
     },
     /// List the (video/audio) streams of a file with ffprobe
     Tracks { file: PathBuf },
+    /// Preview of a video: desktop thumbnail cache, then ffmpegthumbnailer or ffmpeg on PATH
+    Thumbnail {
+        file: PathBuf,
+        /// Redline's own cache folder (generated previews and failure markers)
+        #[arg(long)]
+        cache: PathBuf,
+        /// The desktop's thumbnail folder (usually `<cache dir>/thumbnails`); not read if absent
+        #[arg(long)]
+        desktop_cache: Option<PathBuf>,
+        /// Where to write the image
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -76,6 +90,12 @@ fn main() -> Result<()> {
             out,
         } => replay(seconds, fps, capture, tracks, out),
         Cmd::Tracks { file } => tracks(&file),
+        Cmd::Thumbnail {
+            file,
+            cache,
+            desktop_cache,
+            out,
+        } => thumbnail(&file, cache, desktop_cache, &out),
     }
 }
 
@@ -274,6 +294,40 @@ fn print_output(output: &Output) {
         }
         Output::Failed(message) => println!("gsr error: {message}"),
     }
+}
+
+fn thumbnail(
+    file: &Path,
+    cache: PathBuf,
+    desktop_cache: Option<PathBuf>,
+    out: &Path,
+) -> Result<()> {
+    let thumbnailer = Thumbnailer {
+        desktop_cache,
+        own_cache: cache,
+        search_path: std::env::var_os("PATH").unwrap_or_default(),
+        timeout: thumbnail::DEFAULT_TIMEOUT,
+    };
+    let tools: Vec<&str> = thumbnailer
+        .tools()
+        .iter()
+        .map(|(tool, _)| tool.program())
+        .collect();
+    println!("tools on PATH: {tools:?}");
+    match thumbnailer.thumbnail(file) {
+        Some(image) => {
+            std::fs::write(out, &image.bytes)?;
+            println!(
+                "{}: {} bytes -> {}",
+                image.mime,
+                image.bytes.len(),
+                out.display()
+            );
+        }
+        None if tools.is_empty() => println!("no preview: {}", thumbnail::INSTALL_HINT),
+        None => println!("no preview (failure cached)"),
+    }
+    Ok(())
 }
 
 fn tracks(file: &Path) -> Result<()> {
