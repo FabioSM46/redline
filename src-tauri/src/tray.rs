@@ -30,8 +30,9 @@ use tauri::{AppHandle, Manager, Runtime, Window, WindowEvent};
 pub const MAIN_WINDOW: &str = "main";
 /// On Linux `tray-icon` writes the icon to `$XDG_RUNTIME_DIR/tray-icon/tray-icon-<id>-<n>.png`
 /// and deletes that file when its tray is dropped, so the ID must be one no other app would
-/// pick: with a generic `"main"`, another app quitting deletes our icon (issue #83).
-const TRAY_ID: &str = "redline";
+/// pick: with a generic `"main"`, another app quitting deletes our icon (issue #83). The bundle
+/// identifier from `tauri.conf.json` is the most specific name the app has.
+const TRAY_ID: &str = "com.fabiosm46.redline";
 const MENU_SHOW: &str = "show";
 const MENU_QUIT: &str = "quit";
 const TOOLTIP: &str = "Redline";
@@ -341,9 +342,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tray_id_is_specific_to_redline() {
-        // The ID names the icon file other tray-icon apps share a folder with.
-        assert_eq!(TRAY_ID, "redline");
+    fn the_tray_id_is_the_bundle_identifier() {
+        // A pin, not a behaviour test: the ID names the icon file every tray-icon app in the
+        // session shares a folder with, so it must stay the bundle identifier (issue #83).
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(TRAY_ID, config["identifier"].as_str().unwrap());
         assert_ne!(TRAY_ID, MAIN_WINDOW);
     }
 
