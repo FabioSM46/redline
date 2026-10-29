@@ -4,6 +4,10 @@ import { describe, it } from "node:test";
 import { copyError, copyText, EXECUTABLE, SHORTCUT_ACTIONS, shortcutCommand } from "./shortcuts.ts";
 
 const ACTIONS_RS = new URL("../src-tauri/src/actions.rs", import.meta.url);
+const CARGO_TOML = new URL("../src-tauri/Cargo.toml", import.meta.url);
+const TAURI_CONFS = ["tauri.conf.json", "tauri.linux.conf.json", "tauri.release.linux.conf.json"].map(
+  (name) => new URL(`../src-tauri/${name}`, import.meta.url),
+);
 
 /** The `(arg, action)` pairs of `pub const ACTION_ARGS` in actions.rs, in order. */
 function rustActionArgs(source: string): [string, string][] {
@@ -33,6 +37,21 @@ describe("mirror of ACTION_ARGS in actions.rs", () => {
   });
 });
 
+describe("EXECUTABLE", () => {
+  it("is the Cargo package name, with no [[bin]] renaming it", () => {
+    const cargo = readFileSync(CARGO_TOML, "utf8");
+    assert.equal(cargo.startsWith(`[package]\nname = "${EXECUTABLE}"\n`), true, "package name in Cargo.toml");
+    assert.equal(cargo.includes("[[bin]]"), false, "a [[bin]] section would rename the executable");
+  });
+
+  it("is the Linux productName, and no Tauri config sets mainBinaryName", () => {
+    const [base, linux, release] = TAURI_CONFS.map((url) => JSON.parse(readFileSync(url, "utf8")));
+    assert.equal(linux.productName, EXECUTABLE);
+    assert.equal(release.productName ?? EXECUTABLE, EXECUTABLE);
+    for (const conf of [base, linux, release]) assert.equal(conf.mainBinaryName, undefined);
+  });
+});
+
 describe("shortcutCommand", () => {
   it("is the executable followed by the argument", () => {
     assert.equal(EXECUTABLE, "redline");
@@ -44,22 +63,58 @@ describe("shortcutCommand", () => {
 });
 
 describe("copyText", () => {
-  it("writes the text to the clipboard", async () => {
+  async function outcome(promise: Promise<void>): Promise<string> {
+    return promise.then(
+      () => "copied",
+      (e: Error) => `rejected: ${e.message}`,
+    );
+  }
+
+  it("writes the text to the clipboard without touching the fallback", async () => {
     let written = "";
-    await copyText({ writeText: async (text) => void (written = text) }, "redline --save-replay");
-    assert.equal(written, "redline --save-replay");
+    let fallbackUsed = false;
+    const result = await outcome(
+      copyText(
+        { writeText: async (text) => void (written = text) },
+        "redline --save-replay",
+        () => (fallbackUsed = true),
+      ),
+    );
+    assert.deepEqual([result, written, fallbackUsed], ["copied", "redline --save-replay", false]);
   });
 
-  it("rejects with a readable reason when there is no clipboard", async () => {
-    let message = "";
-    await copyText(undefined, "x").catch((e: Error) => (message = e.message));
-    assert.equal(message, "the clipboard is not available");
+  it("rejects with a readable reason when there is no clipboard and no fallback", async () => {
+    assert.equal(await outcome(copyText(undefined, "x")), "rejected: the clipboard is not available");
   });
 
-  it("passes on the clipboard's own rejection", async () => {
-    let message = "";
-    await copyText({ writeText: () => Promise.reject(new Error("denied")) }, "x").catch((e: Error) => (message = e.message));
-    assert.equal(message, "denied");
+  it("uses the fallback when there is no clipboard", async () => {
+    let copied = "";
+    assert.equal(await outcome(copyText(undefined, "x", (text) => ((copied = text), true))), "copied");
+    assert.equal(copied, "x");
+  });
+
+  it("uses the fallback when the clipboard refuses, and keeps its reason if the fallback fails", async () => {
+    const refuses = { writeText: () => Promise.reject(new Error("denied")) };
+    assert.equal(await outcome(copyText(refuses, "x", () => true)), "copied");
+    assert.equal(await outcome(copyText(refuses, "x", () => false)), "rejected: denied");
+    assert.equal(
+      await outcome(
+        copyText(refuses, "x", () => {
+          throw new Error("no execCommand");
+        }),
+      ),
+      "rejected: denied",
+    );
+  });
+
+  it("turns a synchronous throw from writeText into a rejection", async () => {
+    const throws = {
+      writeText: (): Promise<void> => {
+        throw new TypeError("Illegal invocation");
+      },
+    };
+    assert.equal(await outcome(copyText(throws, "x")), "rejected: Illegal invocation");
+    assert.equal(await outcome(copyText(throws, "x", () => true)), "copied");
   });
 });
 

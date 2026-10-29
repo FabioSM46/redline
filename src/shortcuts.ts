@@ -1,7 +1,10 @@
 // Settings → Shortcuts (D5, D8): the commands to bind in the desktop's custom shortcuts until the
 // GlobalShortcuts portal is available.
 
-/** The executable the `.deb` installs (`/usr/bin/redline`). */
+/**
+ * The executable the `.deb` installs (`/usr/bin/redline`): the Cargo package name, which is also
+ * the Linux `productName` in src-tauri/tauri.linux.conf.json. `shortcuts.test.ts` checks both.
+ */
 export const EXECUTABLE = "redline";
 
 /**
@@ -50,12 +53,33 @@ export const DESKTOP_STEPS = [
 /** The part of the Clipboard API used here. */
 export type Clipboard = { writeText: (text: string) => Promise<void> };
 
-/** Writes `text` to the clipboard; rejects with a readable reason when there is none. */
-export function copyText(clipboard: Clipboard | undefined, text: string): Promise<void> {
+/**
+ * Writes `text` to the clipboard. The Clipboard API comes first; when it is missing (some WebKitGTK
+ * builds) or refuses, `fallback` (a synchronous copy, see `copyWithSelection`) is tried. Always
+ * returns a promise, even when `writeText` or `fallback` throws synchronously; it rejects with the
+ * Clipboard API's reason, or a readable one when there is no clipboard at all.
+ */
+export function copyText(
+  clipboard: Clipboard | undefined,
+  text: string,
+  fallback?: (text: string) => boolean,
+): Promise<void> {
+  const tryFallback = (reason: unknown): Promise<void> => {
+    try {
+      if (fallback?.(text)) return Promise.resolve();
+    } catch {
+      // The fallback failing is reported as the original reason.
+    }
+    return Promise.reject(reason);
+  };
   if (!clipboard || typeof clipboard.writeText !== "function") {
-    return Promise.reject(new Error("the clipboard is not available"));
+    return tryFallback(new Error("the clipboard is not available"));
   }
-  return clipboard.writeText(text);
+  try {
+    return Promise.resolve(clipboard.writeText(text)).catch(tryFallback);
+  } catch (e) {
+    return tryFallback(e);
+  }
 }
 
 /** The sentence shown when a copy fails, from whatever the Clipboard API rejected with. */

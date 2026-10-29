@@ -52,7 +52,7 @@ function CommandRow({ title, description, command }: { title: string; descriptio
   }, [copy]);
 
   function onCopy() {
-    copyText(navigator.clipboard, command).then(
+    copyText(navigator.clipboard, command, copyWithSelection).then(
       () => setCopy({ status: "copied" }),
       (e) => setCopy({ status: "error", message: copyError(e) }),
     );
@@ -78,4 +78,24 @@ function CommandRow({ title, description, command }: { title: string; descriptio
       )}
     </Setting>
   );
+}
+
+/**
+ * The copy fallback for webviews without the async Clipboard API: select the text in a hidden,
+ * read-only textarea and run the copy command. `true` only when the webview reports success.
+ */
+function copyWithSelection(text: string): boolean {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.readOnly = true;
+  area.className = "visually-hidden";
+  const focused = document.activeElement;
+  document.body.append(area);
+  try {
+    area.select();
+    return document.execCommand("copy");
+  } finally {
+    area.remove();
+    if (focused instanceof HTMLElement) focused.focus();
+  }
 }
