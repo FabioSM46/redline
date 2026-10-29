@@ -5,6 +5,7 @@ import { PROFILE_EVENT } from "../../profiles.ts";
 import type { Navigate } from "../../tabs.ts";
 import { changeLabel, lactUnreachable, outcomeSentence, type TuningStatus } from "../../tuning.ts";
 import type { TuningBlockProps } from "./tuning/block.ts";
+import { FanBlock } from "./tuning/Fan.tsx";
 import { ConfirmationPanel } from "./tuning/ConfirmationPanel.tsx";
 import { OverdriveBlock } from "./tuning/Overdrive.tsx";
 import { PowerLimitBlock } from "./tuning/PowerLimit.tsx";
@@ -156,11 +157,12 @@ function TuningBody({
  * profiles block (#61) go here, each taking `TuningBlockProps`.
  */
 function Blocks(block: TuningBlockProps) {
-  const { power } = block.status;
+  const { power, fan } = block.status;
   return (
     <>
       <ProfilesBlock {...block} />
       {power !== null && <PowerLimitBlock key={`${block.gpuId}:${power.current_w}`} {...block} power={power} />}
+      {fan !== null && <FanBlock key={`${block.gpuId}:${JSON.stringify(fan)}`} {...block} fan={fan} />}
     </>
   );
 }

@@ -33,10 +33,80 @@ export type Outcome = "confirmed" | "reverted" | "expired";
 /** Mirrors `tuning::Settled`: the payload of `tuning-settled`. */
 export type Settled = { gpu_id: string; outcome: Outcome };
 
-/**
- * Mirrors `tuning::TuningStatus` (`tuning_status`). `fan` is typed loosely on purpose: the fan
- * editor (#60) owns its shape.
- */
+/** Mirrors `tuning::FanMode`: what LACT drives the fan with, once it drives it. */
+export type FanMode = "static" | "curve";
+
+/** Mirrors `tuning::CurvePoint`. Speeds in percent. */
+export type CurvePoint = { temperature_c: number; speed_pct: number };
+
+/** Mirrors `tuning::TemperatureRange`. */
+export type TemperatureRange = { min_c: number; max_c: number };
+
+/** Mirrors `tuning::fan::SpeedRange`. */
+export type SpeedRange = { min_pct: number; max_pct: number };
+
+/** Mirrors `tuning::fan::CurveRules`: exactly what `set_fan` checks a fixed speed or a curve against. */
+export type CurveRules = {
+  /** The exact number of points of a curve; null = any number from 1. */
+  points: number | null;
+  temperature: TemperatureRange;
+  speed: SpeedRange;
+  /** Speeds must be whole percents (a firmware curve). */
+  whole_percent: boolean;
+};
+
+/** Mirrors `tuning::PmfwValue`: `min`/`max` are null when the firmware does not allow changing it. */
+export type PmfwValue = { current: number; min: number | null; max: number | null };
+
+/** Mirrors `tuning::PmfwStatus`. Each is null when the GPU does not expose it. */
+export type PmfwStatus = {
+  /** RPM. */
+  acoustic_limit: PmfwValue | null;
+  /** RPM. */
+  acoustic_target: PmfwValue | null;
+  /** °C. */
+  target_temperature: PmfwValue | null;
+  /** Percent. */
+  minimum_pwm: PmfwValue | null;
+  zero_rpm: boolean | null;
+  /** °C. */
+  zero_rpm_threshold: PmfwValue | null;
+};
+
+/** Mirrors `tuning::FanStatus`. `mode`, `static_speed` and `curve` are null until configured once. */
+export type FanStatus = {
+  configurable: boolean;
+  control_enabled: boolean;
+  mode: FanMode | null;
+  static_speed: number | null;
+  curve: CurvePoint[] | null;
+  temperature_range: TemperatureRange | null;
+  pmfw: PmfwStatus;
+  curve_rules: CurveRules | null;
+};
+
+/** Mirrors `tuning::fan::FanSetting`. */
+export type FanSetting = "auto" | "static" | "curve";
+
+/** Mirrors `tuning::fan::PmfwSettings`: a field left out keeps the value LACT stores. */
+export type PmfwSettings = {
+  zero_rpm?: boolean;
+  zero_rpm_threshold?: number;
+  target_temperature?: number;
+  acoustic_limit?: number;
+  acoustic_target?: number;
+  minimum_pwm?: number;
+};
+
+/** Mirrors `tuning::fan::FanSettings` (`set_fan`). */
+export type FanSettings = {
+  mode: FanSetting;
+  static_speed?: number;
+  curve?: CurvePoint[];
+  pmfw?: PmfwSettings;
+};
+
+/** Mirrors `tuning::TuningStatus` (`tuning_status`). */
 export type TuningStatus = {
   available: boolean;
   unavailable_reason: string | null;
@@ -45,7 +115,7 @@ export type TuningStatus = {
   overdrive_enabled: boolean | null;
   reboot_pending: boolean;
   power: PowerLimit | null;
-  fan: unknown;
+  fan: FanStatus | null;
   profile: string | null;
   pending: PendingChange | null;
 };

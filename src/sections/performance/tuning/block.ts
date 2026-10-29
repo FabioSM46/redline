@@ -17,3 +17,6 @@ export type TuningBlockProps = {
    */
   apply: (send: () => Promise<PendingChange>, detail: string) => Promise<string | null>;
 };
+
+/** The id of the Overdrive block, so another block can point to its explanation. */
+export const OVERDRIVE_ANCHOR = "tuning-overdrive";
