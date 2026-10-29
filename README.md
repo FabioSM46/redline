@@ -125,7 +125,7 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust workspace tests
 ```bash
 cargo run -p redline-probe -- gpus               # AMD GPUs with their id and name
 cargo run -p redline-probe -- sensors --watch     # sensors, one line per second (--gpu <id>)
-cargo run -p redline-probe -- lact stats          # statistics from lactd
+cargo run -p redline-probe -- lact stats          # statistics from lactd (also: system, devices, info, config, profiles)
 cargo run -p redline-probe -- audio               # audio sources for GPU Screen Recorder
 # 60 s replay, game audio and microphone on two separate tracks
 cargo run -p redline-probe -- replay --track default_output --track default_input

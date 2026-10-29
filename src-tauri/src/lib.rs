@@ -11,6 +11,7 @@ mod sources;
 mod test_support;
 mod thumbnails;
 mod tray;
+mod tuning;
 
 use redline_core::sensors::{self, GpuInfo, GpuSnapshot};
 use sampler::Sampler;
@@ -45,6 +46,7 @@ pub fn run() {
         .setup(|app| {
             settings::init(app.handle());
             sampler::start(app)?;
+            tuning::init(app);
             // A first launch with an action performs it once GPU Screen Recorder has been
             // detected and `replay_on_start` has run.
             let launch_action = actions::requested(std::env::args_os().skip(1));
@@ -85,6 +87,7 @@ pub fn run() {
             thumbnails::thumbnail_support,
             global_shortcuts::global_shortcuts_status,
             global_shortcuts::global_shortcuts_configure,
+            tuning::tuning_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
