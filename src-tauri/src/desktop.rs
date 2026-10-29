@@ -4,13 +4,18 @@
 //!
 //! Same approach as the tray (`tray.rs`): GIO/GLib through `extern "C"`, libraries GTK already
 //! loads, no extra crate. Every call is blocking and bounded by a D-Bus timeout, so callers run
-//! it off the main thread. Every failure (no session bus, no service, timeout) is `false`, never
-//! an error: the caller decides what that means.
+//! it off the main thread. Every failure (no session bus, no service, timeout) is `false` or
+//! `None`, never an error: the caller decides what that means.
+//!
+//! A [`NotificationSlot`] is one notification that replaces itself: each new one takes the place
+//! of the previous one (`replaces_id`) instead of piling up next to it (#64). The app's two slots
+//! are [`SHORTCUT_NOTIFICATION`] and [`REPLAY_SAVED_NOTIFICATION`].
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::ptr;
+use std::sync::{Mutex, PoisonError};
 
 /// The application name every notification carries.
 pub const APP_NAME: &str = "Redline";
@@ -54,6 +59,8 @@ unsafe extern "C" {
         n_children: usize,
     ) -> *mut c_void;
     fn g_variant_new_tuple(children: *const *mut c_void, n_children: usize) -> *mut c_void;
+    fn g_variant_get_child_value(value: *mut c_void, index: usize) -> *mut c_void;
+    fn g_variant_get_uint32(value: *mut c_void) -> u32;
     fn g_variant_ref_sink(value: *mut c_void) -> *mut c_void;
     fn g_variant_unref(value: *mut c_void);
     fn g_filename_to_uri(
@@ -64,13 +71,55 @@ unsafe extern "C" {
     fn g_free(memory: *mut c_void);
 }
 
-/// Shows a desktop notification. `false` when nothing showed it (no session bus, no
-/// notification server, timeout).
-pub fn notify(app_name: &str, summary: &str, body: &str) -> bool {
+/// The notification of the actions started outside the window (command line, shortcuts),
+/// success or failure, shared with "Recording saved": each replaces the previous one (#64).
+pub static SHORTCUT_NOTIFICATION: NotificationSlot = NotificationSlot::new();
+
+/// "Replay saved": each save replaces the previous one, without taking the place of a
+/// [`SHORTCUT_NOTIFICATION`] such as "Replay off" or a failure.
+pub static REPLAY_SAVED_NOTIFICATION: NotificationSlot = NotificationSlot::new();
+
+/// One notification that replaces itself: [`NotificationSlot::show`] passes the id the server
+/// gave the previous one as `replaces_id`, so a new one takes its place. When the previous one
+/// is already gone the server shows a new one. The lock is held for the D-Bus call, so two
+/// notifications at once never both start a new one.
+pub struct NotificationSlot {
+    id: Mutex<u32>,
+}
+
+impl NotificationSlot {
+    pub const fn new() -> Self {
+        NotificationSlot { id: Mutex::new(0) }
+    }
+
+    /// Shows `summary` and `body` (markup already escaped) in place of the slot's previous
+    /// notification. `false` when nothing showed it; the next one then starts afresh.
+    pub fn show(&self, summary: &str, body: &str) -> bool {
+        self.show_with(|replaces_id| notify_replacing(APP_NAME, summary, body, replaces_id))
+    }
+
+    /// [`NotificationSlot::show`] with the D-Bus call as a parameter, for the tests.
+    pub(crate) fn show_with(&self, notify: impl FnOnce(u32) -> Option<u32>) -> bool {
+        let mut id = self.id.lock().unwrap_or_else(PoisonError::into_inner);
+        let shown = notify(*id);
+        *id = shown.unwrap_or(0);
+        shown.is_some()
+    }
+}
+
+/// Shows a desktop notification in place of the notification `replaces_id` (0: a new one). The
+/// id the server gave the notification; `None` when nothing showed it (no session bus, no
+/// notification server, timeout). The app calls it through a [`NotificationSlot`].
+pub fn notify_replacing(
+    app_name: &str,
+    summary: &str,
+    body: &str,
+    replaces_id: u32,
+) -> Option<u32> {
     let (Some(app_name), Some(summary), Some(body)) =
         (c_string(app_name), c_string(summary), c_string(body))
     else {
-        return false;
+        return None;
     };
     // SAFETY: every string is NUL-terminated and outlives the calls. The children are floating
     // references: `g_variant_new_tuple` sinks them and `call` sinks the tuple. The empty arrays
@@ -78,7 +127,7 @@ pub fn notify(app_name: &str, summary: &str, body: &str) -> bool {
     unsafe {
         let children = [
             g_variant_new_string(app_name.as_ptr()),
-            g_variant_new_uint32(0),
+            g_variant_new_uint32(replaces_id),
             g_variant_new_string(c"".as_ptr()),
             g_variant_new_string(summary.as_ptr()),
             g_variant_new_string(body.as_ptr()),
@@ -95,6 +144,14 @@ pub fn notify(app_name: &str, summary: &str, body: &str) -> bool {
             parameters,
             c"(u)",
             NOTIFY_TIMEOUT_MS,
+            // SAFETY: the reply has the checked type `(u)`: child 0 is a `u`, returned as a new
+            // reference and released after reading it.
+            |reply| {
+                let id = g_variant_get_child_value(reply, 0);
+                let value = g_variant_get_uint32(id);
+                g_variant_unref(id);
+                value
+            },
         )
     }
 }
@@ -112,8 +169,8 @@ pub fn show_items(path: &Path) -> bool {
     let Some(uri) = file_uri(path).and_then(|uri| CString::new(uri).ok()) else {
         return false;
     };
-    // SAFETY: as in `notify`; `uri` outlives the calls and the one-element array sinks its
-    // floating child.
+    // SAFETY: as in `notify_replacing`; `uri` outlives the calls and the one-element array
+    // sinks its floating child.
     unsafe {
         let uris = [g_variant_new_string(uri.as_ptr())];
         let children = [
@@ -129,7 +186,9 @@ pub fn show_items(path: &Path) -> bool {
             parameters,
             c"()",
             SHOW_ITEMS_TIMEOUT_MS,
+            |_| (),
         )
+        .is_some()
     }
 }
 
@@ -153,13 +212,15 @@ fn c_string(text: &str) -> Option<CString> {
     CString::new(text).ok()
 }
 
-/// One method call on the session bus, `true` when it answered with `reply_type`.
+/// One method call on the session bus: what `read` makes of the reply when it answered with
+/// `reply_type`, `None` otherwise.
 ///
 /// # Safety
 ///
 /// `parameters` must be a new (floating) GVariant tuple; it is consumed even when there is no
-/// bus.
-unsafe fn call(
+/// bus. `read` gets a reply of type `reply_type`, which it must not release.
+#[allow(clippy::too_many_arguments)]
+unsafe fn call<T>(
     bus_name: &CStr,
     object_path: &CStr,
     interface: &CStr,
@@ -167,7 +228,8 @@ unsafe fn call(
     parameters: *mut c_void,
     reply_type: &CStr,
     timeout_ms: c_int,
-) -> bool {
+    read: impl FnOnce(*mut c_void) -> T,
+) -> Option<T> {
     // SAFETY: plain GIO calls with NUL-terminated strings. The connection is the shared session
     // bus: our reference is released once, after the call. `call_sync` sinks `parameters`; when
     // there is no bus they are sunk and released here instead. The reply, if any, is released.
@@ -175,7 +237,7 @@ unsafe fn call(
         let bus = g_bus_get_sync(G_BUS_TYPE_SESSION, ptr::null_mut(), ptr::null_mut());
         if bus.is_null() {
             g_variant_unref(g_variant_ref_sink(parameters));
-            return false;
+            return None;
         }
         let reply = g_dbus_connection_call_sync(
             bus,
@@ -192,10 +254,11 @@ unsafe fn call(
         );
         g_object_unref(bus);
         if reply.is_null() {
-            return false;
+            return None;
         }
+        let value = read(reply);
         g_variant_unref(reply);
-        true
+        Some(value)
     }
 }
 
@@ -203,8 +266,8 @@ unsafe fn call(
 mod tests {
     use super::*;
 
-    // `notify` and `show_items` are not called here: on a developer's desktop they would show
-    // a real notification or open a file manager window.
+    // `notify_replacing` and `show_items` are not called here: on a developer's desktop they
+    // would show a real notification or open a file manager window.
 
     #[test]
     fn file_uris_are_escaped_by_glib() {
@@ -223,6 +286,50 @@ mod tests {
 
     #[test]
     fn strings_with_a_nul_are_refused_before_any_call() {
-        assert!(!notify("Redline", "Replay saved", "a\0b"));
+        assert_eq!(notify_replacing("Redline", "Replay on", "a\0b", 7), None);
+    }
+
+    #[test]
+    fn a_slot_replaces_its_previous_notification() {
+        let slot = NotificationSlot::new();
+        let mut asked = Vec::new();
+        assert!(slot.show_with(|replaces| {
+            asked.push(replaces);
+            Some(41)
+        }));
+        assert!(slot.show_with(|replaces| {
+            asked.push(replaces);
+            Some(41)
+        }));
+        // The server gave a new id (the previous one was closed): the next one replaces that.
+        assert!(slot.show_with(|replaces| {
+            asked.push(replaces);
+            Some(42)
+        }));
+        assert!(slot.show_with(|replaces| {
+            asked.push(replaces);
+            Some(42)
+        }));
+        assert_eq!(asked, [0, 41, 41, 42]);
+    }
+
+    #[test]
+    fn a_slot_starts_afresh_after_nothing_showed() {
+        let slot = NotificationSlot::new();
+        let mut asked = Vec::new();
+        assert!(slot.show_with(|replaces| {
+            asked.push(replaces);
+            Some(5)
+        }));
+        // No notification server any more: nothing shown, no error.
+        assert!(!slot.show_with(|replaces| {
+            asked.push(replaces);
+            None
+        }));
+        assert!(slot.show_with(|replaces| {
+            asked.push(replaces);
+            Some(9)
+        }));
+        assert_eq!(asked, [0, 5, 0]);
     }
 }

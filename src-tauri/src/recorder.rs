@@ -30,8 +30,9 @@
 //! - gallery and notifications (#31): subscribe to [`Events::file_saved`]; the folders come from
 //!   `settings::recording_settings`.
 //! - command-line actions (#32, done): `actions.rs` calls [`Recorder::save`],
-//!   [`Recorder::toggle_replay`] and [`Recorder::toggle_recording`]; the action of a first launch
-//!   runs after [`init`]'s detection and `replay_on_start`.
+//!   [`Recorder::toggle_replay`] and [`Recorder::toggle_recording_with_file`] (the saved file's
+//!   name goes into the shortcut notification, #64); the action of a first launch runs after
+//!   [`init`]'s detection and `replay_on_start`.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -439,6 +440,12 @@ impl Recorder {
     /// separate process does. Fails with the sentence that says what to install when GPU Screen
     /// Recorder is missing, and while the replay is still starting.
     pub fn toggle_recording(&self) -> Result<RecorderStatus, String> {
+        self.toggle_recording_with_file().map(|(status, _)| status)
+    }
+
+    /// [`Recorder::toggle_recording`], plus the name of the file a stop saved (never its path):
+    /// what the shortcut notification shows (#64). `None` after a start.
+    pub fn toggle_recording_with_file(&self) -> Result<(RecorderStatus, Option<String>), String> {
         let _control = lock(&self.inner.control);
         let state = self.state();
         let recording = state.status.recording;
@@ -452,8 +459,10 @@ impl Recorder {
             (Some((false, _)), _) => self.stop_recording_process(),
             (Some((true, socket)), true) => self.stop_replay_recording(&socket),
             (Some((true, _)), false) if replay != ReplayState::On => Err(STILL_STARTING.to_owned()),
-            (Some((true, socket)), false) => self.start_replay_recording(&socket),
-            (None, _) => self.start_recording_process(),
+            (Some((true, socket)), false) => self
+                .start_replay_recording(&socket)
+                .map(|status| (status, None)),
+            (None, _) => self.start_recording_process().map(|status| (status, None)),
         }
     }
 
@@ -465,10 +474,14 @@ impl Recorder {
     }
 
     /// Asks the replay process to stop recording; returns once the file is written. A refusal
-    /// (no recording was running after all) also ends the `recording` state.
-    fn stop_replay_recording(&self, socket: &Path) -> Result<RecorderStatus, String> {
+    /// (no recording was running after all) also ends the `recording` state. Returns the saved
+    /// file's name.
+    fn stop_replay_recording(
+        &self,
+        socket: &Path,
+    ) -> Result<(RecorderStatus, Option<String>), String> {
         match recorder::stop_replay_recording(socket, SAVE_TIMEOUT) {
-            Ok(_) => Ok(self.set_recording(false, None)),
+            Ok(path) => Ok((self.set_recording(false, None), name_of(&path))),
             Err(error) => {
                 let error = format!("Could not stop the recording: {error:#}");
                 self.set_recording(false, Some(error.clone()));
@@ -512,20 +525,29 @@ impl Recorder {
         Ok(status)
     }
 
-    /// Stops the recording process (SIGINT): gsr closes the file and prints its path.
-    fn stop_recording_process(&self) -> Result<RecorderStatus, String> {
+    /// Stops the recording process (SIGINT): gsr closes the file and prints its path. Returns
+    /// the name the process was started with (`-o`), not the printed one: in recording mode gsr
+    /// writes exactly the file `-o` names, and `recording_file` already chose a name that is not
+    /// taken, so the two are the same (the recording tests check it against `file-saved`).
+    fn stop_recording_process(&self) -> Result<(RecorderStatus, Option<String>), String> {
         let mut state = self.state();
         state.generation += 1;
         let running = state.running.take();
         drop(state);
-        let error = match running.map(|mut running| running.session.stop()) {
+        let mut file = None;
+        let error = match running.map(|mut running| {
+            if let Mode::Recording(path) = &running.mode {
+                file = name_of(path);
+            }
+            running.session.stop()
+        }) {
             Some(Err(error)) => Some(format!("Could not stop the recording: {error:#}")),
             _ => None,
         };
         let status = self.set_recording(false, error);
         match &status.error {
             Some(error) => Err(error.clone()),
-            None => Ok(status),
+            None => Ok((status, file)),
         }
     }
 
@@ -733,6 +755,12 @@ pub fn file_saved(
         file_name,
         saved_at_ms,
     })
+}
+
+/// The file name of a saved file, for the interface and the notifications: never the path.
+fn name_of(path: &Path) -> Option<String> {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
 }
 
 /// Why the process ended, for `error`.
@@ -1082,10 +1110,14 @@ mod tests {
         service.start().unwrap();
         wait_until("on", || service.status().replay == ReplayState::On);
         wait_until("the trap", || ready.exists());
-        let started = service.toggle_recording().unwrap();
+        let (started, file) = service.toggle_recording_with_file().unwrap();
         assert!(started.recording);
         assert_eq!(started.replay, ReplayState::On);
-        assert!(!service.toggle_recording().unwrap().recording);
+        assert_eq!(file, None);
+        // The stop names the file gsr answered with, never its path.
+        let (stopped, file) = service.toggle_recording_with_file().unwrap();
+        assert!(!stopped.recording);
+        assert_eq!(file.as_deref(), Some("Video_1.mkv"));
         assert_eq!(
             names(&requests),
             ["start-replay-recording", "stop-replay-recording"]
@@ -1129,7 +1161,7 @@ mod tests {
         assert!(service.stop().unwrap().recording, "replay_stop leaves it");
         assert_eq!(service.save().unwrap_err(), NOT_RUNNING);
 
-        let stopped = service.toggle_recording().unwrap();
+        let (stopped, stopped_file) = service.toggle_recording_with_file().unwrap();
         assert_eq!(
             (stopped.replay, stopped.recording),
             (ReplayState::Off, false)
@@ -1138,6 +1170,8 @@ mod tests {
         let file = lock(&events.files)[0].clone();
         assert_eq!(file.kind, FileKind::Recording);
         assert!(file.file_name.starts_with("Video_") && file.file_name.ends_with(".mkv"));
+        // The stop names the file the process was started with: the one gsr reports.
+        assert_eq!(stopped_file.as_deref(), Some(file.file_name.as_str()));
         assert!(dir.join("Redline").join("Recordings").is_dir());
 
         // Quitting during a recording keeps the file too.

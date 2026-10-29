@@ -4,27 +4,22 @@ import { describe, it } from "node:test";
 import {
   addSource,
   addTrack,
-  defaultFolder,
   folderProblem,
   formatElapsed,
   formatLength,
   formatSize,
-  RECORDING_FOLDER,
   recordingSince,
   removeSource,
   removeTrack,
-  REPLAY_FOLDER,
   REPLAY_PRESETS,
   REPLAY_SECONDS_MAX,
   REPLAY_SECONDS_MIN,
   replayLengthOptions,
   sourceLabel,
   sourcesToAdd,
-  VIDEO_SUBFOLDER,
 } from "./record.ts";
 
 const RECORDER_RS = new URL("../src-tauri/crates/redline-core/src/recorder.rs", import.meta.url);
-const SETTINGS_RS = new URL("../src-tauri/src/settings.rs", import.meta.url);
 
 describe("mirror of the backend", () => {
   it("has the replay length range of redline-core::recorder", () => {
@@ -33,17 +28,6 @@ describe("mirror of the backend", () => {
       .toLocaleString("en-US")
       .replace(/,/g, "_")};`;
     assert.equal(source.includes(range), true, range);
-  });
-
-  it("has the default folder names of settings.rs", () => {
-    const source = readFileSync(SETTINGS_RS, "utf8");
-    for (const [name, value] of [
-      ["VIDEO_SUBFOLDER", VIDEO_SUBFOLDER],
-      ["REPLAY_FOLDER", REPLAY_FOLDER],
-      ["RECORDING_FOLDER", RECORDING_FOLDER],
-    ]) {
-      assert.equal(source.includes(`const ${name}: &str = "${value}";`), true, name);
-    }
   });
 });
 
@@ -121,17 +105,6 @@ describe("audio tracks", () => {
 });
 
 describe("folders", () => {
-  it("builds the defaults under the video folder, as the backend does", () => {
-    assert.equal(defaultFolder("/videos", "replay"), "/videos/Redline/Replays");
-    assert.equal(defaultFolder("/videos/", "recording"), "/videos/Redline/Recordings");
-  });
-
-  it("has no default without an absolute video folder", () => {
-    assert.equal(defaultFolder(null, "replay"), null);
-    assert.equal(defaultFolder("", "replay"), null);
-    assert.equal(defaultFolder("videos", "replay"), null);
-  });
-
   it("accepts only full paths", () => {
     assert.equal(folderProblem("/games/clips"), null);
     assert.equal(folderProblem("  /games/clips  "), null);

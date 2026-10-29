@@ -234,6 +234,26 @@ fn check_bool(_: &bool) -> Result<(), String> {
     Ok(())
 }
 
+/// The default replay and recording folders, as `recording_defaults` returns them. `None` when
+/// the video folder is not known: the default would be a relative path, which is not offered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecordingDefaults {
+    pub replay_dir: Option<PathBuf>,
+    pub recording_dir: Option<PathBuf>,
+}
+
+impl RecordingDefaults {
+    /// The folders of [`RecordingSettings::defaults`] under `video_dir`.
+    pub fn new(video_dir: &Path) -> Self {
+        let defaults = RecordingSettings::defaults(video_dir);
+        let absolute = |dir: PathBuf| dir.is_absolute().then_some(dir);
+        Self {
+            replay_dir: absolute(defaults.replay_dir),
+            recording_dir: absolute(defaults.recording_dir),
+        }
+    }
+}
+
 /// The settings as saved and as the frontend receives them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Settings {
@@ -344,6 +364,12 @@ pub fn get_settings(state: State<'_, SettingsState>) -> Result<Settings, String>
         .lock()
         .map(|current| current.clone())
         .map_err(|_| UNAVAILABLE.to_owned())
+}
+
+/// The default replay and recording folders, for "Reset to default" in the Record tab.
+#[tauri::command]
+pub fn recording_defaults(state: State<'_, SettingsState>) -> RecordingDefaults {
+    RecordingDefaults::new(&state.video_dir)
 }
 
 /// Saves the settings and returns them as read back from the file. A change of the recording
@@ -637,6 +663,32 @@ mod tests {
             start_minimised: settings.start_minimised,
             recording: Some(settings.recording.clone()),
         }
+    }
+
+    #[test]
+    fn the_recording_defaults_are_the_default_folders() {
+        let defaults = RecordingDefaults::new(videos());
+        let recording = RecordingSettings::defaults(videos());
+        assert_eq!(defaults.replay_dir, Some(recording.replay_dir));
+        assert_eq!(defaults.recording_dir, Some(recording.recording_dir));
+        assert_eq!(
+            serde_json::to_value(&defaults).unwrap(),
+            serde_json::json!({
+                "replay_dir": "/videos/Redline/Replays",
+                "recording_dir": "/videos/Redline/Recordings",
+            })
+        );
+    }
+
+    #[test]
+    fn without_a_video_folder_there_are_no_recording_defaults() {
+        let defaults = RecordingDefaults::new(Path::new(""));
+        assert_eq!(defaults.replay_dir, None);
+        assert_eq!(defaults.recording_dir, None);
+        assert_eq!(
+            serde_json::to_value(&defaults).unwrap(),
+            serde_json::json!({ "replay_dir": null, "recording_dir": null })
+        );
     }
 
     #[test]
