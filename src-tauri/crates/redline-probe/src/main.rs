@@ -8,7 +8,7 @@ use redline_core::sensors::{AmdGpu, GpuSnapshot};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
@@ -195,7 +195,13 @@ fn replay(
             Ok(k) if k == "s" => session.save_replay()?,
             Ok(k) if k == "r" => session.toggle_recording()?,
             Ok(k) if k == "q" => break,
-            _ => {}
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {}
+            // stdin chiuso (EOF, oppure nessun terminale): nessuno può più mandare comandi,
+            // quindi fermiamo gsr invece di girare a vuoto finché termina da solo.
+            Err(RecvTimeoutError::Disconnected) => {
+                eprintln!("stdin chiuso: fermo gsr");
+                break;
+            }
         }
     }
     session.stop()?;
