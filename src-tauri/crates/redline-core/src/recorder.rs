@@ -44,7 +44,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// checked against.
 pub const VERIFIED_VERSION: &str = "6.1.6";
 pub const FLATPAK_ID: &str = "com.dec05eba.gpu_screen_recorder";
-const NATIVE_BINARY: &str = "gpu-screen-recorder";
+/// The native binary, looked up on PATH.
+pub const NATIVE_BINARY: &str = "gpu-screen-recorder";
 /// The process `comm` in /proc, truncated by the kernel to 15 characters.
 const GSR_COMM: &str = "gpu-screen-reco";
 /// A request name gsr does not know: it answers with an error, and the answer is all we need.
