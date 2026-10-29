@@ -47,6 +47,13 @@ export function AudioTracks({
       wide
     >
       {sources.status === "loading" && <span className="setting-description">Listing the audio sources…</span>}
+      {/* When the rows are disabled, the page already says why (missing tool, running recording). */}
+      {sources.status === "ready" && !sources.value.available && !disabled && (
+        <span className="setting-description">
+          {sources.value.unavailable_reason ?? "The audio sources cannot be listed."} New sources cannot be added until
+          then.
+        </span>
+      )}
       {sources.status === "error" && (
         <span className="setting-error" role="alert">
           Cannot list the audio sources: {sources.message}

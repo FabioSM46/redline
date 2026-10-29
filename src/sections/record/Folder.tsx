@@ -34,7 +34,12 @@ export function Folder({
 
   function submit(folder: string) {
     if (inactive) return;
-    onSave(folder).then((ok) => ok && setDraft(null));
+    // Typing stays possible while the save runs: the draft is cleared only if it was not
+    // changed meanwhile, so a correction typed during the save is kept.
+    const sent = draft;
+    onSave(folder).then((ok) => {
+      if (ok) setDraft((current) => (current === sent ? null : current));
+    });
   }
 
   return (
@@ -53,11 +58,8 @@ export function Folder({
           spellCheck={false}
           value={draft ?? saved}
           disabled={disabled}
-          aria-disabled={busy}
           aria-invalid={problem !== null}
-          onChange={(event) => {
-            if (!busy) setDraft(event.target.value);
-          }}
+          onChange={(event) => setDraft(event.target.value)}
         />
         <span className="folder-actions">
           {editing && (

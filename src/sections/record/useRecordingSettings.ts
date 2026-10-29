@@ -5,10 +5,10 @@ import type { RecordingSettings } from "../../capture.ts";
 import { IDLE, type Loaded, type SaveState } from "../settings/Setting.tsx";
 
 /**
- * `Settings` as `get_settings` / `set_settings` return it. `theme` and `start_minimised` are sent
- * back unchanged: `set_settings` requires them, and the Record tab does not own them.
+ * `Settings` as `get_settings` / `set_settings` return it. Every field but `recording` is sent
+ * back exactly as read, including fields added later: the Record tab does not own them.
  */
-type StoredSettings = { theme: unknown; start_minimised: unknown; recording: RecordingSettings };
+type StoredSettings = { [field: string]: unknown; recording: RecordingSettings };
 
 /** The recording settings the Record tab owns; the rest live in Settings → Capture. */
 export type RecordField = "replay_seconds" | "replay_on_start" | "audio_tracks" | "replay_dir" | "recording_dir";
@@ -33,7 +33,8 @@ export type RecordingSettingsState = {
 /**
  * The recording settings, saved one field at a time with the pattern of Settings → Capture:
  * every save re-reads `get_settings` and changes only its own field on that fresh copy, so a
- * value changed elsewhere since the tab opened (Capture, General) is sent back as it is now.
+ * value changed elsewhere since the tab opened (Capture, General) is sent back as it is now,
+ * and so is any top-level field this tab does not know.
  * One save at a time; a failed save keeps the saved value and puts the reason in `saves`.
  */
 export function useRecordingSettings(): RecordingSettingsState {
@@ -60,9 +61,8 @@ export function useRecordingSettings(): RecordingSettingsState {
     setSave({ status: "saving" });
     return invoke<StoredSettings>("get_settings")
       .then((fresh) => {
-        const { theme, start_minimised } = fresh;
-        const next = { ...fresh.recording, [field]: value };
-        return invoke<StoredSettings>("set_settings", { settings: { theme, start_minimised, recording: next } });
+        const recording = { ...fresh.recording, [field]: value };
+        return invoke<StoredSettings>("set_settings", { settings: { ...fresh, recording } });
       })
       .then(
         (saved) => {
