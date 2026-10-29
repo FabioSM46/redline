@@ -1,4 +1,6 @@
 mod autostart;
+mod desktop;
+mod gallery;
 mod recorder;
 mod sampler;
 mod settings;
@@ -57,6 +59,9 @@ pub fn run() {
             recorder::replay_save,
             sources::list_audio_sources,
             sources::list_capture_targets,
+            gallery::list_recordings,
+            gallery::open_recording,
+            gallery::show_in_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
