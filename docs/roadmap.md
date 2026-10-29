@@ -7,9 +7,10 @@ Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 - [x] Rust workspace with `redline-core` and the `redline-probe` CLI
 - [x] Sensor reading from sysfs
 - [x] `lactd` client, verified against a running `lactd`
-- [x] GPU Screen Recorder control: replay verified on real hardware, with game audio and
+- [x] GPU Screen Recorder control: replay verified on real hardware, with desktop audio and
   microphone on two separate tracks
-- [x] Tests of `sensors` on fake sysfs trees
+- [x] Tests of `sensors` on fake sysfs trees (the `tests` module of
+  `src-tauri/crates/redline-core/src/sensors.rs`)
 - [x] Minimal Tauri app with live metrics
 - [x] Development pipeline ported from wow-don
 - [x] Repository in English

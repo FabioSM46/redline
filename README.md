@@ -14,7 +14,7 @@ In development: **M0 — Foundations** is done, **M1 — Performance** is next (
 
 - GPU sensor reading, tested on an RX 9070 (RDNA4);
 - a client for the LACT daemon, verified on real hardware;
-- control of GPU Screen Recorder, verified on real hardware: an instant replay saved with game
+- control of GPU Screen Recorder, verified on real hardware: an instant replay saved with desktop
   audio and microphone on two separate tracks;
 - a minimal Tauri app that shows live metrics.
 
