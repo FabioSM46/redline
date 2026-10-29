@@ -4,360 +4,360 @@ description: Scrum ceremony facilitator. Use for backlog refinement, iteration p
 ---
 
 
-# scrum-master — cerimonie scrum
+# scrum-master — scrum ceremonies
 
-Trigger: `$scrum-master <cerimonia>`, dove la cerimonia è una di:
-- `backlog-refine` — raffinamento del backlog
-- `iteration-plan` — pianificazione di un'iterazione guidata dal completamento
-- `feature-spec` — funzionalità → specifica tecnica → issue
+Trigger: `$scrum-master <ceremony>`, where the ceremony is one of:
+- `backlog-refine` — backlog refinement
+- `iteration-plan` — planning of a completion-driven iteration
+- `feature-spec` — feature → technical specification → issues
 
-## Scopo
+## Purpose
 
-Gestisce il ciclo di sviluppo del repository. L'utente porta le idee; questa skill ascolta,
-scrive le specifiche tecniche, crea le issue e organizza backlog e iterazioni.
+Manages the repository's development cycle. The user brings the ideas; this skill listens,
+writes the technical specifications, creates the issues and organizes the backlog and
+iterations.
 
-## Cerimonie
+## Ceremonies
 
 ### 1. backlog-refine
 
-Trigger: `$scrum-master backlog-refine` oppure da una issue di cerimonia.
+Trigger: `$scrum-master backlog-refine` or from a ceremony issue.
 
 **Workflow:**
 
-1. Leggi tutte le issue aperte:
+1. Read all open issues:
    ```bash
    gh issue list --state open --json number,title,labels,createdAt,updatedAt --limit 100
    ```
 
-2. Escludi le issue di cerimonia (label `ceremony`).
+2. Exclude ceremony issues (label `ceremony`).
 
-3. Classifica ogni issue rispetto allo stesso contratto di campi obbligatori che `$dev-issue`
-   applica (Area, Tipo, Priorità, User story, Criteri di accettazione, Contesto tecnico, Fuori
-   scope), leggendo **solo il corpo della issue**: è tutto quello che `$dev-issue` vede.
-   - **Pronta**: tutti e sette i campi presenti e sostanziali nel corpo
-   - **Da specificare**: un campo obbligatorio manca o è solo un segnaposto
-   - **Da smistare**: nuova o non classificata
-   - **Ferma**: nessuna attività da 30+ giorni → proporre chiusura o ridefinizione
+3. Classify every issue against the same required-field contract that `$dev-issue` enforces
+   (Area, Type, Priority, User Story, Acceptance Criteria, Technical Context, Out of Scope),
+   reading **only the issue body**: it is all that `$dev-issue` sees.
+   - **Ready**: all seven fields present and substantive in the body
+   - **Needs spec**: a required field is missing or is only a placeholder
+   - **Needs triage**: new or unclassified
+   - **Stale**: no activity for 30+ days → propose closing or redefining it
 
-4. Per ogni issue **Da specificare**:
-   - leggi il corpo;
-   - scrivi i criteri di accettazione mancanti partendo dalla user story;
-   - scrivi il contesto tecnico mancante partendo dall'area e dal codice esistente;
-   - scrivi **Fuori scope** se manca, con file/moduli/comportamenti concreti, mai "modifiche non
-     correlate": è l'unica difesa di `$dev-issue` contro l'allargamento dello scope;
-   - **scrivi ogni campo nel corpo della issue. Un commento non basta.** `$dev-issue` legge la
-     issue con `gh issue view <numero> --json title,body,labels` e ricava i campi solo dal corpo,
-     non legge mai i commenti.
+4. For every **Needs spec** issue:
+   - read the body;
+   - write the missing acceptance criteria starting from the user story;
+   - write the missing technical context starting from the area and the existing code;
+   - write **Out of Scope** if missing, with concrete files/modules/behaviors, never "unrelated
+     changes": it is `$dev-issue`'s only defense against scope creep;
+   - **write every field into the issue body. A comment is not enough.** `$dev-issue` reads the
+     issue with `gh issue view <number> --json title,body,labels` and derives the fields only
+     from the body, it never reads comments.
 
-     `gh issue edit --body-file` sostituisce **tutto** il corpo, quindi la modifica deve essere
-     chirurgica per disciplina: sostituisci solo la sezione `### <Campo>` e riproduci ogni altro
-     byte. Leggi, riscrivi, sostituisci, poi rileggi il corpo e verifica che l'unica differenza
-     sia quella sezione (GitHub aggiunge un solo a capo finale).
+     `gh issue edit --body-file` replaces the **whole** body, so the edit must be surgical by
+     discipline: replace only the `### <Field>` section and reproduce every other byte. Read,
+     rewrite, replace, then reread the body and verify that the only difference is that section
+     (GitHub adds a single trailing newline).
 
      ```bash
-     gh issue view <numero> --json body --jq '.body' > /tmp/issue-<numero>.md
-     # Riscrivi il file con la sezione sostituita — un heredoc
-     # `cat > /tmp/issue-<numero>.md <<'BODY' … BODY`, perché gli allowed-tools di questa
-     # skill includono `cat` e nessuno strumento di modifica dei file — poi:
-     gh issue edit <numero> --body-file /tmp/issue-<numero>.md
-     gh issue view <numero> --json body --jq '.body'   # rileggi e confronta
+     gh issue view <number> --json body --jq '.body' > /tmp/issue-<number>.md
+     # Rewrite the file with the section replaced — a heredoc
+     # `cat > /tmp/issue-<number>.md <<'BODY' … BODY`, because this skill's allowed-tools
+     # include `cat` and no file-editing tool — then:
+     gh issue edit <number> --body-file /tmp/issue-<number>.md
+     gh issue view <number> --json body --jq '.body'   # reread and compare
      ```
 
-   - Aggiungi anche un commento quando una scoperta deve arrivare a una persona tramite le
-     notifiche (un rischio d'ordine, una dipendenza tra issue). Il commento è la traccia, la
-     modifica del corpo è la consegna. Mai solo il commento.
+   - Also add a comment when a finding has to reach a person through notifications (an ordering
+     risk, a dependency between issues). The comment is the trail, the body edit is the
+     delivery. Never only the comment.
 
-5. Riordina le priorità in base a:
-   - catene di dipendenze (modulo backend prima del comando Tauri, comando prima della UI);
-   - valore (monitoraggio e replay prima del tuning, il tuning prima delle rifiniture);
-   - impegno (alterna vittorie rapide e lavori grandi).
+5. Reorder priorities based on:
+   - dependency chains (backend module before the Tauri command, command before the UI);
+   - value (monitoring and replay before tuning, tuning before polish);
+   - effort (alternate quick wins and large pieces of work).
 
-6. Aggiorna le label quando una issue è pronta: `needs-refinement` → `ready-for-dev` solo quando
-   tutti e sette i campi sono presenti e sostanziali **nel corpo**. `iteration-plan` sceglie il
-   lavoro da `ready-for-dev`, quindi una label guadagnata con un commento pianifica lavoro su cui
-   `$dev-issue` si fermerebbe al primo passo.
+6. Update the labels when an issue is ready: `needs-refinement` → `ready-for-dev` only when all
+   seven fields are present and substantive **in the body**. `iteration-plan` picks work from
+   `ready-for-dev`, so a label earned with a comment schedules work on which `$dev-issue` would
+   stop at the first step.
 
-7. Pubblica un commento di sintesi sulla issue di cerimonia (o in una nuova issue se avviata a
-   mano) con:
-   - totale delle issue aperte;
-   - ripartizione per categoria;
-   - ordine di priorità suggerito per la prossima iterazione;
-   - issue proposte per la chiusura.
+7. Post a summary comment on the ceremony issue (or in a new issue if started by hand) with:
+   - total open issues;
+   - breakdown by category;
+   - suggested priority order for the next iteration;
+   - issues proposed for closing.
 
-8. Chiudi la issue di cerimonia.
+8. Close the ceremony issue.
 
 ### 2. iteration-plan
 
-Trigger: `$scrum-master iteration-plan` dalla issue di cerimonia creata da
-`iteration-lifecycle.yml` per la milestone.
+Trigger: `$scrum-master iteration-plan` from the ceremony issue created by
+`iteration-lifecycle.yml` for the milestone.
 
-**Avvio a freddo (repository nuovo)**: se NON esiste nessuna milestone di iterazione, aperta o
-chiusa, non c'è una milestone da verificare né una cerimonia da aspettare. Salta i passi 1–4:
-crea direttamente la milestone senza data `Iteration 1`, popolala da `ready-for-dev` (passi
-5–8) e pubblica il piano. Dopo la prima iterazione tutto passa per la macchina a stati guidata
-dal completamento.
+**Cold start (new repository)**: if NO iteration milestone exists, open or closed, there is no
+milestone to check and no ceremony to wait for. Skip steps 1–4: directly create the undated
+milestone `Iteration 1`, populate it from `ready-for-dev` (steps 5–8) and post the plan. After
+the first iteration everything goes through the completion-driven state machine.
 
 **Workflow:**
 
-1. Individua l'iterazione attiva: la milestone aperta con la sequenza **più bassa**, letta da un
-   titolo `Iteration N` / `Sprint N` e in mancanza dal numero della milestone, la stessa regola di
-   `iteration-advance`. Fallisci chiuso se nessuna milestone è aperta (fuori dall'avvio a freddo)
-   o se due milestone aperte hanno la stessa sequenza **più bassa**. Una collisione più in alto
-   non conta finché non diventa la più bassa.
+1. Identify the active iteration: the open milestone with the **lowest** sequence, read from an
+   `Iteration N` / `Sprint N` title and failing that from the milestone number, the same rule as
+   `iteration-advance`. Fail closed if no milestone is open (outside the cold start) or if two
+   open milestones share the **lowest** sequence. A collision higher up does not count until it
+   becomes the lowest.
    ```bash
    REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
    gh api "repos/$REPO/milestones?state=open&per_page=100"
    ```
 
-   **Più milestone aperte sono uno stato previsto.** Pianificare in anticipo è il punto: un
-   blocco coerente di lavoro può essere assegnato a un'iterazione futura mentre quella corrente
-   è ancora in corso. Creare e popolare un'iterazione è sempre possibile; **chiudere** una
-   milestone completata è quello che i passi 2 e 3 controllano.
+   **Several open milestones are an expected state.** Planning ahead is the point: a coherent
+   block of work can be assigned to a future iteration while the current one is still in
+   progress. Creating and populating an iteration is always possible; **closing** a completed
+   milestone is what steps 2 and 3 control.
 
-2. **Per chiudere la milestone completata deve avere zero issue aperte.** Le iterazioni sono
-   guidate dal completamento: mai spostare lavoro non finito in automatico e mai chiudere una
-   milestone che ha ancora issue aperte. Vale solo per il passo 9.
+2. **To be closed, the completed milestone must have zero open issues.** Iterations are
+   completion-driven: never move unfinished work automatically and never close a milestone that
+   still has open issues. This applies only to step 9.
 
-3. **Per chiuderla serve anche il suo raffinamento.** Leggi il marcatore
-   `<!-- iteration-lifecycle:iteration-plan:milestone-N -->` della cerimonia di pianificazione e
-   richiedi esattamente una issue di backlog-refinement chiusa con il marcatore corrispondente
-   `<!-- iteration-lifecycle:backlog-refine:milestone-N -->`. Rifiuta di chiudere se il
-   raffinamento manca, è aperto o è duplicato.
+3. **Closing it also requires its refinement.** Read the
+   `<!-- iteration-lifecycle:iteration-plan:milestone-N -->` marker of the planning ceremony and
+   require exactly one closed backlog-refinement issue with the matching marker
+   `<!-- iteration-lifecycle:backlog-refine:milestone-N -->`. Refuse to close if the refinement
+   is missing, open or duplicated.
 
-4. Individua la sequenza obiettivo: **quella nel titolo della cerimonia, una sopra l'iterazione
-   attiva.** Con la pianificazione anticipata può esistere già:
+4. Identify the target sequence: **the one in the ceremony title, one above the active
+   iteration.** With planning ahead it may already exist:
 
-   - **esiste e contiene lavoro**: il lotto è stato scelto quando è stata pianificata. I passi
-     5–7 non hanno niente da selezionare e il passo 8 non crea niente; resta il passo 9.
-   - **non esiste, o esiste vuota**: è il caso normale, seleziona il lavoro e creala al passo 8.
+   - **it exists and contains work**: the batch was chosen when it was planned. Steps 5–7 have
+     nothing to select and step 8 creates nothing; step 9 remains.
+   - **it does not exist, or exists empty**: this is the normal case, select the work and create
+     it at step 8.
 
-   **Mai creare una seconda milestone su una sequenza che ne ha già una.** Per pianificare oltre,
-   prendi la sequenza sopra la **più alta** esistente, aperta o chiusa. Non modificare ancora lo
-   stato delle milestone.
+   **Never create a second milestone on a sequence that already has one.** To plan further
+   ahead, take the sequence above the **highest** existing one, open or closed. Do not change
+   milestone state yet.
 
-5. Leggi le issue in ordine di priorità dal raffinamento completato o dalle label di priorità.
+5. Read the issues in priority order from the completed refinement or from the priority labels.
 
-6. Seleziona le issue per l'iterazione:
-   - un lotto realistico per un solo sviluppatore;
-   - bilanciato tra backend e frontend quando il backlog lo permette;
-   - almeno un bug o un debito tecnico se ce ne sono;
-   - rispetta ogni dipendenza bloccante;
-   - almeno una issue selezionata; se nessuna è pronta, spiega il blocco e lascia aperte la
-     cerimonia e la milestone completata. Vale solo se il passo 4 ha individuato una milestone
-     da creare o a cui aggiungere lavoro.
+6. Select the issues for the iteration:
+   - a realistic batch for a single developer;
+   - balanced between backend and frontend when the backlog allows it;
+   - at least one bug or piece of technical debt if there are any;
+   - respect every blocking dependency;
+   - at least one selected issue; if none is ready, explain the blocker and leave the ceremony
+     and the completed milestone open. This applies only if step 4 identified a milestone to
+     create or to add work to.
 
-7. Per ogni issue selezionata:
-   - stima: S (ore), M (1–2 giorni), L (3–5 giorni);
-   - controlla le dipendenze bloccanti;
-   - suggerisci un ordine di implementazione.
+7. For every selected issue:
+   - estimate: S (hours), M (1–2 days), L (3–5 days);
+   - check the blocking dependencies;
+   - suggest an implementation order.
 
-8. Crea la milestone senza data per la sequenza del passo 4 (o `Iteration 1` all'avvio a freddo),
-   assegnale ogni issue selezionata e verifica le assegnazioni prima di chiudere la milestone
-   completata. Quest'ordine lascia la milestone precedente recuperabile se la creazione o
-   l'assegnazione falliscono. Se la milestone obiettivo esiste già, assegna lì il lavoro.
+8. Create the undated milestone for the step 4 sequence (or `Iteration 1` at cold start), assign
+   every selected issue to it and verify the assignments before closing the completed milestone.
+   This order leaves the previous milestone recoverable if creation or assignment fails. If the
+   target milestone already exists, assign the work there.
    ```bash
-   for issue in <numeri-issue>; do
-     gh issue edit "$issue" --milestone "Iteration <numero>"
+   for issue in <issue-numbers>; do
+     gh issue edit "$issue" --milestone "Iteration <number>"
    done
    ```
 
-9. Chiudi la milestone completata solo dopo che la nuova iterazione contiene il lavoro scelto, e
-   solo se i passi 2 e 3 sono soddisfatti. Se l'iterazione attiva ha ancora issue aperte,
-   lasciala aperta. (Avvio a freddo: niente da chiudere.)
+9. Close the completed milestone only after the new iteration contains the chosen work, and only
+   if steps 2 and 3 are satisfied. If the active iteration still has open issues, leave it open.
+   (Cold start: nothing to close.)
 
-10. Pubblica il piano come commento con:
-    - obiettivo dell'iterazione (una frase);
-    - elenco delle issue con stima e area;
-    - impegno totale stimato;
-    - dipendenze e rischi.
+10. Post the plan as a comment with:
+    - iteration goal (one sentence);
+    - list of issues with estimate and area;
+    - total estimated effort;
+    - dependencies and risks.
 
-11. Chiudi la issue di cerimonia. La chiusura rilancia l'helper del ciclo di vita, che dovrebbe
-    vedere la nuova iterazione attiva e non cambiare niente.
+11. Close the ceremony issue. Closing it reruns the lifecycle helper, which should see the new
+    active iteration and change nothing.
 
 ### 3. feature-spec
 
-Trigger: `$scrum-master feature-spec <descrizione-funzionalità>`
+Trigger: `$scrum-master feature-spec <feature-description>`
 
 **Workflow:**
 
-1. Confronta la descrizione con i documenti del progetto: `docs/context.md` (perché esiste
-   Redline e cosa prende e cosa lascia di Adrenaline), `docs/roadmap.md` (milestone),
-   `docs/architecture.md` (moduli previsti) e `docs/decisions.md` (decisioni prese e aperte).
-   Fai domande se:
-   - l'area non è indicata e non è ovvia;
-   - lo scope è ambiguo;
-   - le dipendenze non sono chiare;
-   - la funzionalità contraddice una decisione registrata (di' quale, e chiedi).
+1. Compare the description with the project documents: `docs/context.md` (why Redline exists
+   and what it takes from Adrenalin and what it leaves out), `docs/roadmap.md` (milestones),
+   `docs/architecture.md` (planned modules) and `docs/decisions.md` (decisions made and open).
+   Ask questions if:
+   - the area is not stated and not obvious;
+   - the scope is ambiguous;
+   - the dependencies are unclear;
+   - the feature contradicts a recorded decision (say which one, and ask).
 
-2. Scrivi una specifica tecnica (in conversazione):
-   - **Sintesi**: un paragrafo sulla funzionalità
-   - **Aree coinvolte**: backend, frontend o entrambe
-   - **Backend (Rust/Tauri)**: moduli in `src-tauri/src/`, comandi Tauri esposti, tipi
-     serializzati verso il frontend, I/O su disco, gestione degli errori
-   - **Frontend (React/TypeScript)**: componenti, stato, ricerca/filtri/ordinamento, chiamate
-     `invoke()`, seguendo le regole della sezione "Interfaccia" di `AGENTS.md` (UI minimale e
-     moderna); ogni issue di frontend ripete il vincolo nel Contesto tecnico
-   - **Strumenti esterni** (se servono): comandi di `lactd`, opzioni e segnali di GPU Screen
-     Recorder, file sysfs letti; da verificare sulla documentazione o sul sorgente della
-     versione fissata
-   - **Dati e persistenza** (se servono): stato locale, formato, migrazioni
-   - **Vincoli**: accesso al sistema solo nel backend; Redline mai come root e mai scritture in
-     sysfs (il tuning passa da `lactd` con conferma); GPU Screen Recorder solo come processo
-     esterno; sensori o strumenti assenti gestiti come funzione disattivata, non come errore;
-     nessuna nuova dipendenza senza discuterne
-   - **Rischi**: cosa può andare storto, cosa richiede attenzione
+2. Write a technical specification (in the conversation):
+   - **Summary**: one paragraph about the feature
+   - **Areas involved**: backend, frontend or both
+   - **Backend (Rust/Tauri)**: modules in `src-tauri/src/`, exposed Tauri commands, types
+     serialized to the frontend, disk I/O, error handling
+   - **Frontend (React/TypeScript)**: components, state, search/filters/sorting, `invoke()`
+     calls, following the rules of the "Interface" section of `AGENTS.md` (minimal, modern UI);
+     every frontend issue repeats the constraint in its Technical Context
+   - **External tools** (if needed): `lactd` commands, GPU Screen Recorder options and signals,
+     sysfs files read; to be verified against the documentation or the source of the pinned
+     version
+   - **Data and persistence** (if needed): local state, format, migrations
+   - **Constraints**: system access only in the backend; Redline never as root and never writing
+     to sysfs (tuning goes through `lactd` with confirmation); GPU Screen Recorder only as an
+     external process; missing sensors or tools handled as a disabled feature, not as an error;
+     no new dependencies without discussing them
+   - **Risks**: what can go wrong, what needs attention
 
-3. Fatti approvare la specifica. NON creare issue finché l'utente non conferma.
+3. Get the specification approved. Do NOT create issues until the user confirms.
 
-4. Dopo l'approvazione crea le issue con il formato del template delle funzionalità.
+4. After approval, create the issues in the feature template format.
 
-   **Il corpo della issue è un contratto con `$dev-issue`.** Quella skill legge questi titoli e
-   considera obbligatori Area, Tipo, Priorità, User story, Criteri di accettazione, Contesto
-   tecnico e Fuori scope, come `.github/ISSUE_TEMPLATE/feature_request.yml`. Una issue senza uno
-   di questi blocca la pipeline al primo passo. Scrivili **tutti e sette**, sempre.
+   **The issue body is a contract with `$dev-issue`.** That skill reads these headings and treats
+   Area, Type, Priority, User Story, Acceptance Criteria, Technical Context and Out of Scope as
+   required, like `.github/ISSUE_TEMPLATE/feature_request.yml`. An issue missing one of them
+   blocks the pipeline at the first step. Write **all seven**, always.
 
-   I valori dei menu sono stringhe fisse; usali alla lettera:
+   The dropdown values are fixed strings; use them verbatim:
 
-   | Campo | Valori ammessi |
+   | Field | Allowed values |
    |-------|----------------|
-   | Area | `backend (Rust / Tauri)` · `frontend (React / TypeScript)` · `shared (Trasversale)` |
-   | Tipo | `feature (Nuova funzionalità)` · `enhancement (Miglioramento di una funzionalità esistente)` · `refactor (Ristrutturazione senza cambi di comportamento)` |
-   | Priorità | `high (Blocca altro lavoro)` · `medium (Priorità normale)` · `low (Utile ma non urgente)` |
+   | Area | `backend (Rust / Tauri)` · `frontend (React / TypeScript)` · `shared (Cross-cutting)` |
+   | Type | `feature (New functionality)` · `enhancement (Improvement to an existing feature)` · `refactor (Restructuring with no behavior change)` |
+   | Priority | `high (Blocks other work)` · `medium (Normal priority)` · `low (Useful but not urgent)` |
 
-   Per ogni unità di lavoro:
+   For every unit of work:
 
    ```bash
    gh issue create \
-     --title "[Feature]: <descrizione del componente>" \
+     --title "[Feature]: <component description>" \
      --body "$(cat <<'EOF'
    ### Area
 
-   <uno dei tre valori ammessi, alla lettera>
+   <one of the three allowed values, verbatim>
 
-   ### Tipo
+   ### Type
 
-   <uno dei tre valori ammessi, alla lettera>
+   <one of the three allowed values, verbatim>
 
-   ### Priorità
+   ### Priority
 
-   <uno dei tre valori ammessi, alla lettera>
+   <one of the three allowed values, verbatim>
 
-   ### User story
+   ### User Story
 
-   Come <ruolo>, voglio <obiettivo>, così che <motivo>
+   As a <role>, I want <goal>, so that <reason>
 
-   ### Criteri di accettazione
+   ### Acceptance Criteria
 
-   - [ ] <criterio 1>
-   - [ ] <criterio 2>
+   - [ ] <criterion 1>
+   - [ ] <criterion 2>
 
-   ### Contesto tecnico
+   ### Technical Context
 
-   <file, pattern e vincoli rilevanti dalla specifica>
+   <relevant files, patterns and constraints from the specification>
 
-   ### Fuori scope
+   ### Out of Scope
 
-   - <cosa questa issue NON deve toccare>
+   - <what this issue must NOT touch>
 
-   ### Riferimenti nel codice
+   ### Code Pointers
 
-   - `src-tauri/src/commands.rs:12` — <perché conta>
+   - `src-tauri/src/commands.rs:12` — <why it matters>
 
-   ### Dipendenze
+   ### Dependencies
 
-   <issue bloccanti, oppure "Nessuna">
+   <blocking issues, or "None">
 
-   ### Strategia di test
+   ### Test Strategy
 
-   <cosa testare e a che livello>
+   <what to test and at what level>
    EOF
    )" \
      --label "feature" \
      --label "needs-refinement"
    ```
 
-   **Fuori scope è il campo con più leva.** È l'unico confine che `$dev-issue` ha contro
-   l'allargamento dello scope, ed è quello lasciato vago più spesso. Nomina file, moduli o
-   comportamenti concreti.
+   **Out of Scope is the field with the most leverage.** It is the only boundary `$dev-issue`
+   has against scope creep, and the one most often left vague. Name concrete files, modules or
+   behaviors.
 
-   I bug usano `.github/ISSUE_TEMPLATE/bug_report.yml`, che richiede Area, Cosa è successo?,
-   Cosa doveva succedere?, Passi per riprodurre, Contesto tecnico e Fuori scope, senza
-   Tipo/Priorità/User story.
+   Bugs use `.github/ISSUE_TEMPLATE/bug_report.yml`, which requires Area, What happened?, What
+   should have happened?, Steps to reproduce, Technical Context and Out of Scope, without
+   Type/Priority/User Story.
 
-5. Raggruppa le issue:
-   - **prima le fondamenta**: tipi e moduli del backend, formati dei dati, client delle fonti;
-   - **poi il nucleo**: comandi Tauri e flussi principali della UI;
-   - **infine le rifiniture**: casi limite, gestione degli errori, feedback visivo.
+5. Group the issues:
+   - **foundations first**: backend types and modules, data formats, source clients;
+   - **then the core**: Tauri commands and the main UI flows;
+   - **finally the polish**: edge cases, error handling, visual feedback.
 
-6. Riporta all'utente:
-   - numero di issue create;
-   - ordine di implementazione suggerito;
-   - impegno totale stimato;
-   - link alla specifica.
+6. Report to the user:
+   - number of issues created;
+   - suggested implementation order;
+   - total estimated effort;
+   - link to the specification.
 
-## Dimensionamento: una issue si scrive contro il limite della review
+## Sizing: an issue is written against the review limit
 
-`DEEPSEEK_MAX_DIFF_CHARS` è **90,000** caratteri. Una PR oltre il limite viene troncata, ogni
-file non letto diventa un finding e la PR resta bloccata finché qualcuno non lo riconosce.
-`$dev-issue` Passo 5 divide una issue troppo grande in parti, ma è un rimedio: quando
-`$dev-issue` legge la issue, la sua forma è già fissata. Questo è il momento in cui un confine
-si sceglie senza codice già scritto.
+`DEEPSEEK_MAX_DIFF_CHARS` is **90,000** characters. A PR over the limit is truncated, every
+unread file becomes a finding and the PR stays blocked until someone acknowledges it.
+`$dev-issue` Step 5 splits an issue that is too large into parts, but that is a remedy: when
+`$dev-issue` reads the issue, its shape is already fixed. This is the moment a boundary is
+chosen with no code written yet.
 
-### Stima ogni issue che scrivi o raffini
+### Estimate every issue you write or refine
 
-Conta, invece di indovinare:
+Count, instead of guessing:
 
-- le **aree** (backend, frontend);
-- i **tipi di superficie** che la issue nomina: un meccanismo, un modello dati, un comando
-  Tauri, una schermata o un controllo UI, uno stato persistente, un client verso una fonte
-  esterna. Un tipo è una PR; due tipi sono di norma due PR;
-- i **criteri di accettazione**: oltre sei o sette, i gruppi in cui cadono sono i confini;
-- i moltiplicatori: i test valgono circa due terzi di un cambiamento con copertura vera.
+- the **areas** (backend, frontend);
+- the **surface kinds** the issue names: a mechanism, a data model, a Tauri command, a UI screen
+  or control, persistent state, a client for an external source. One kind is one PR; two kinds
+  are normally two PRs;
+- the **acceptance criteria**: past six or seven, the groups they fall into are the boundaries;
+- the multipliers: tests are worth about two thirds of a change with real coverage.
 
-Due sintomi che le parti sono più di una, leggibili mentre scrivi il corpo:
+Two symptoms that there is more than one part, readable while you write the body:
 
-- **la sintesi ha bisogno di una "e" tra due nomi di tipo diverso** (un parser *e* una
-  schermata, un client *e* la UI che lo usa);
-- **più di sei o sette criteri di accettazione.**
+- **the summary needs an "and" between two nouns of different kinds** (a parser *and* a screen,
+  a client *and* the UI that uses it);
+- **more than six or seven acceptance criteria.**
 
-### Cosa fare quando una issue è troppo grande
+### What to do when an issue is too large
 
-**Meglio dividere la issue.** Due issue, ciascuna una PR, ciascuna con i suoi criteri e la sua
-riga di `Dipendenze`, sono meglio di una issue e una nota: la milestone conta il lavoro reale e
-`$dev-issue` lavora senza dover decidere da solo.
+**Splitting the issue is better.** Two issues, each one PR, each with its own criteria and its
+own `Dependencies` line, are better than one issue and a note: the milestone counts the real
+work and `$dev-issue` works without having to decide on its own.
 
-**Quando il lavoro è davvero una issue sola**, tienila intera e scrivi il confine nel corpo
-sotto un titolo `Divisione suggerita`, con ogni parte, cosa contiene e l'ordine di merge.
+**When the work really is a single issue**, keep it whole and write the boundary in the body
+under a `Suggested split` heading, with every part, what it contains and the merge order.
 
-**Mai dividere su un conteggio di caratteri.** Il confine è uno che il codice traccia già.
+**Never split on a character count.** The boundary is one the code already draws.
 
-### Scrivi gli assi della stima, non il verdetto
+### Write the axes of the estimate, not the verdict
 
-Metti la stima e il ragionamento nel corpo (o nel commento di raffinamento): aree contate, tipi
-di superficie contati e nominati, moltiplicatori, e una banda dichiarata come **minimo, non come
-conteggio**. Non scrivere "Una PR" come verdetto: un agente che legge un numero già scritto lo
-eredita invece di rifare la stima, e la decisione la prende chi è più lontano dal codice.
+Put the estimate and the reasoning in the body (or in the refinement comment): areas counted,
+surface kinds counted and named, multipliers, and a band stated as a **minimum, not as a
+count**. Do not write "One PR" as a verdict: an agent that reads a number already written
+inherits it instead of redoing the estimate, and the decision is made by whoever is furthest
+from the code.
 
-## Guardrail
+## Guardrails
 
-- Mai creare issue senza conferma della specifica da parte dell'utente.
-- Mai modificare issue o milestone chiuse.
-- Rispetta le aree: niente issue backend per una funzionalità solo frontend.
-- Una funzionalità che porta dati dal backend al frontend ha SEMPRE una parte backend (comando
-  Tauri e tipi serializzati): rendila esplicita invece di nasconderla in una issue di UI.
-- **Dimensiona ogni issue rispetto al limite di 90,000 caratteri prima di assegnarla a una
-  milestone.**
-- Nel dubbio sullo scope, chiedi.
-- **Ogni corpo di issue e ogni commento passa da `bash scripts/check-body-privacy.sh` prima di
-  essere pubblicato** (per esempio `bash scripts/check-body-privacy.sh < /tmp/issue-<numero>.md`):
-  niente email reali, percorsi della propria macchina o indirizzi di rete privati. Nei riferimenti
-  al codice usa percorsi relativi al repository.
-- Le issue di cerimonia (label `ceremony`) sono escluse da tutti i report.
+- Never create issues without the user confirming the specification.
+- Never modify closed issues or milestones.
+- Respect the areas: no backend issues for a frontend-only feature.
+- A feature that brings data from the backend to the frontend ALWAYS has a backend part (Tauri
+  command and serialized types): make it explicit instead of hiding it in a UI issue.
+- **Size every issue against the 90,000-character limit before assigning it to a milestone.**
+- When in doubt about scope, ask.
+- **Every issue body and every comment goes through `bash scripts/check-body-privacy.sh` before
+  being published** (for example `bash scripts/check-body-privacy.sh < /tmp/issue-<number>.md`):
+  no real emails, local machine paths or private network addresses. In code references use
+  repository-relative paths.
+- Ceremony issues (label `ceremony`) are excluded from all reports.
 
-## Riferimenti
+## References
 
-- Contesto, roadmap, architettura, decisioni: `docs/`
-- Template delle issue: `.github/ISSUE_TEMPLATE/`
+- Context, roadmap, architecture, decisions: `docs/`
+- Issue templates: `.github/ISSUE_TEMPLATE/`
 - Pipeline: `AGENTS.md`
-- Limite della review e i suoi costi: `AGENTS.md`, "Review automatica (DeepSeek)"; `$dev-issue` Passo 5
+- Review limit and its costs: `AGENTS.md`, "Automated PR Review (DeepSeek)"; `$dev-issue` Step 5
 - Helper: `scripts/gh-automation.sh`
