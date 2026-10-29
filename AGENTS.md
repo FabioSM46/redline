@@ -86,7 +86,9 @@ is no Windows or macOS version and CI does not build one. In practice:
 ### Interface: inspired by Adrenalin, ruled by simplicity
 
 The UI follows Adrenalin's organisation (dashboard, performance, recording, settings) but keeps
-only what is actually used. In practice:
+only what is actually used. The layout is fixed by D8 in `docs/decisions.md`: four tabs (Home,
+Performance, Record, Settings), an always-visible status bar, and a tray icon that keeps the app
+running when the window is closed. In practice:
 
 - **Few surfaces.** A screen does one thing; advanced options sit behind an "Advanced", not all
   in view.
