@@ -18,6 +18,7 @@
 | Module | Responsibility | Status |
 |---|---|---|
 | `sensors` | Finds AMD GPUs in `/sys/class/drm`, reads temperatures, power, fan, clocks, voltage, usage and VRAM | prototype, tested on RDNA4 |
+| `history` | Ring buffer of timestamped `GpuSnapshot`s: 900 samples (15 minutes at 1 Hz), `push`, `latest` and `window(seconds)` in chronological order. Pure: no clock, no sysfs | tested with synthetic samples |
 | `lact` | Client of the `lactd` socket: devices, statistics, power cap, confirming or reverting changes | prototype, verified on real hardware |
 | `recorder` | Starts GPU Screen Recorder in replay mode, saves the replay, starts and stops recording, one audio track per source | prototype, replay verified on real hardware |
 
@@ -25,14 +26,25 @@
 
 | Module | Responsibility | Commands |
 |---|---|---|
+| `sampler` | Background thread started in `setup`: discovers the AMD GPUs and reads them once per second into one `history` buffer per GPU id (see "Statistics" below) | `gpu_snapshot`, `gpu_history` |
 | `settings` | `Settings { theme: "system" \| "light" \| "dark", start_minimised }` in `settings.json` inside `app_config_dir()`. A missing file means the defaults (`system`, `false`); an unreadable or invalid file means the defaults plus a line on stderr, and a single bad field falls back to its own default. Writes are atomic (temporary file + `rename`) | `get_settings`, `set_settings` |
 | `autostart` | Starting with the system through `tauri-plugin-autostart` (an XDG autostart entry), used only by the backend: the frontend has no `autostart:*` permission. The entry launches the app with `--autostart`. The operating system is the only source of truth: the state is not stored in `settings.json` and is read back after every write | `get_autostart`, `set_autostart` |
 
 ## Flows
 
-**Statistics**: the frontend calls `list_gpus` once (every AMD GPU, sorted by PCI slot; the id
-is the PCI slot, the same one LACT uses), then `gpu_snapshot(gpu_id)` every second; the backend
-reads sysfs. No permissions, no daemon.
+**Statistics**: a sampler thread in the app (`src-tauri/src/sampler.rs`, started in `setup`)
+discovers the AMD GPUs and reads sysfs once per second, then pushes each reading into one
+`history` buffer per GPU id, without holding the lock while it reads. It keeps running while the
+window is hidden in the tray (D8). The frontend calls `list_gpus` once (every AMD GPU, sorted by
+PCI slot; the id is the PCI slot, the same one LACT uses), then `gpu_snapshot(gpu_id)`, which
+returns the sampler's latest reading, and `gpu_history(gpu_id, window_s)` for the charts
+(`window_s` is 60, 300 or 900; samples are `{ timestamp_ms, snapshot }`, oldest first, with
+wall-clock milliseconds and missing sensors as `null`). A GPU the sampler has not recorded yet
+(it appeared since the last round) is read live, so the two commands never disagree with
+`list_gpus`; its history is empty until the next round. An unknown id is an error; a GPU that
+disappears stops being sampled, keeps its history and has no current reading. A failing discovery
+is logged on stderr once when it starts and once when it ends. No permissions, no
+daemon, nothing written to disk.
 
 **Tuning**: the frontend asks for a change → the backend sends it to `lactd` → `lactd` applies it
 pending confirmation → the user confirms or cancels → the backend sends `confirm_pending_config`.
