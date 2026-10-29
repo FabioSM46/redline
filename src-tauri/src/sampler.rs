@@ -187,9 +187,10 @@ pub fn gpu_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use std::fs;
     use std::os::unix::fs::symlink;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     /// Fake sysfs tree: `<root>/drm/cardN/device -> <root>/devices/<slot>`, as in the
     /// kernel, with an edge temperature of `temp_c` and nothing else.
@@ -210,10 +211,9 @@ mod tests {
         fs::remove_dir_all(root.join("devices").join(slot)).unwrap();
     }
 
-    fn temp_root(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("redline-sampler-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    /// Removed when the test ends, also when it fails.
+    fn temp_root(name: &str) -> TempDir {
+        let root = TempDir::new("sampler", name);
         fs::create_dir_all(root.join("drm")).unwrap();
         root
     }
@@ -255,7 +255,6 @@ mod tests {
         let h = sampler.history(B, 60, no_gpu).unwrap();
         let ts: Vec<u64> = h.iter().map(|s| s.timestamp_ms).collect();
         assert_eq!(ts, vec![10_000, 11_000, 12_000]);
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -273,7 +272,6 @@ mod tests {
         .unwrap();
         tick_at(&sampler, &root, 2_000);
         assert_eq!(sampler.latest(A, no_gpu).unwrap().temp_edge_c, Some(55.0));
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -287,7 +285,6 @@ mod tests {
         assert_eq!(json[0]["snapshot"]["temp_edge_c"], 40.0);
         assert!(json[0]["snapshot"]["power_w"].is_null());
         assert!(json[0]["snapshot"]["fan_rpm"].is_null());
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -300,7 +297,6 @@ mod tests {
             .history("0000:ff:00.0", 60, live_in(&root))
             .unwrap_err();
         assert!(err.contains("0000:ff:00.0"), "{err}");
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -327,7 +323,6 @@ mod tests {
             sampler.latest(A, live_in(&root)).unwrap().temp_edge_c,
             Some(40.0)
         );
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -357,7 +352,6 @@ mod tests {
             let err = sampler.history(A, w, no_gpu).unwrap_err();
             assert!(err.contains("window_s"), "{w}: {err}");
         }
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -383,7 +377,6 @@ mod tests {
         fake_card(&root, "card1", B, 61);
         tick_at(&sampler, &root, 4_000);
         assert_eq!(sampler.latest(B, no_gpu).unwrap().temp_edge_c, Some(61.0));
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -396,6 +389,5 @@ mod tests {
         let sampler = Sampler::default();
         sampler.tick(&gpus, 1_000);
         assert!(sampler.latest(A, no_gpu).is_err());
-        fs::remove_dir_all(&root).unwrap();
     }
 }

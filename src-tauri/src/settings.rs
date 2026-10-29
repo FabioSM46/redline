@@ -613,6 +613,7 @@ fn write_atomically(file: &Path, settings: &Settings) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
 
     const VIDEOS: &str = "/videos";
 
@@ -625,12 +626,9 @@ mod tests {
     }
 
     /// A fresh folder under the system temp directory, never the real config folder.
-    fn temp_dir(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("redline-settings-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    /// Removed when the test ends, also when it fails.
+    fn temp_dir(name: &str) -> TempDir {
+        TempDir::new("settings", name)
     }
 
     fn update(settings: &Settings) -> SettingsUpdate {
