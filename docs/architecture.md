@@ -22,6 +22,14 @@
 | `lact` | Client of the `lactd` socket: devices, statistics, power cap, confirming or reverting changes | prototype, verified on real hardware |
 | `recorder` | Starts GPU Screen Recorder in replay mode, saves the replay, starts and stops recording, one audio track per source | prototype, replay verified on real hardware |
 
+## Tauri app modules (`src-tauri/src/`)
+
+| Module | Responsibility | Commands |
+|---|---|---|
+| `sampler` | Background thread started in `setup`: discovers the AMD GPUs and reads them once per second into one `history` buffer per GPU id (see "Statistics" below) | `gpu_snapshot`, `gpu_history` |
+| `settings` | `Settings { theme: "system" \| "light" \| "dark", start_minimised }` in `settings.json` inside `app_config_dir()`. A missing file means the defaults (`system`, `false`); an unreadable or invalid file means the defaults plus a line on stderr, and a single bad field falls back to its own default. Writes are atomic (temporary file + `rename`) | `get_settings`, `set_settings` |
+| `autostart` | Starting with the system through `tauri-plugin-autostart` (an XDG autostart entry), used only by the backend: the frontend has no `autostart:*` permission. The entry launches the app with `--autostart`. The operating system is the only source of truth: the state is not stored in `settings.json` and is read back after every write | `get_autostart`, `set_autostart` |
+
 ## Flows
 
 **Statistics**: a sampler thread in the app (`src-tauri/src/sampler.rs`, started in `setup`)

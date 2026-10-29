@@ -1,4 +1,6 @@
+mod autostart;
 mod sampler;
+mod settings;
 
 use redline_core::sensors::{self, GpuInfo, GpuSnapshot};
 use sampler::Sampler;
@@ -19,7 +21,10 @@ fn gpu_snapshot(gpu_id: String, sampler: State<'_, Sampler>) -> Result<GpuSnapsh
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Backend only: no `autostart:*` permission reaches the frontend (D8).
+        .plugin(autostart::plugin())
         .setup(|app| {
+            settings::init(app.handle());
             sampler::start(app)?;
             Ok(())
         })
@@ -27,6 +32,10 @@ pub fn run() {
             list_gpus,
             gpu_snapshot,
             sampler::gpu_history,
+            settings::get_settings,
+            settings::set_settings,
+            autostart::get_autostart,
+            autostart::set_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
