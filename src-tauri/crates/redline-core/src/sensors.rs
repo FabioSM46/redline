@@ -1,4 +1,4 @@
-//! Lettura diretta dei sensori amdgpu da sysfs. Non servono permessi né LACT.
+//! Direct reading of amdgpu sensors from sysfs. Needs neither permissions nor LACT.
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -9,10 +9,10 @@ const AMD_VENDOR: &str = "0x1002";
 
 #[derive(Debug, Clone)]
 pub struct AmdGpu {
-    /// es. /sys/class/drm/card1/device
+    /// e.g. /sys/class/drm/card1/device
     pub device: PathBuf,
     pub hwmon: PathBuf,
-    /// es. 0000:0d:00.0, lo stesso id che usa LACT
+    /// e.g. 0000:0d:00.0, the same id LACT uses
     pub pci_slot: String,
 }
 
@@ -34,19 +34,19 @@ pub struct GpuSnapshot {
 }
 
 impl AmdGpu {
-    /// Restituisce tutte le GPU AMD presenti (card0, card1, ...).
+    /// Returns every AMD GPU present (card0, card1, ...).
     pub fn discover() -> Result<Vec<AmdGpu>> {
         Self::discover_in(Path::new("/sys/class/drm"))
     }
 
-    /// Come `discover`, ma su una cartella data: i test passano un albero sysfs finto.
+    /// Like `discover`, but on a given directory: tests pass a fake sysfs tree.
     pub fn discover_in(drm: &Path) -> Result<Vec<AmdGpu>> {
         let mut gpus = Vec::new();
-        let entries = fs::read_dir(drm).with_context(|| format!("lettura {}", drm.display()))?;
+        let entries = fs::read_dir(drm).with_context(|| format!("reading {}", drm.display()))?;
         for entry in entries {
             let path = entry?.path();
             let name = path.file_name().unwrap_or_default().to_string_lossy();
-            // solo "cardN", non i connettori tipo "card1-DP-1"
+            // only "cardN", not connectors such as "card1-DP-1"
             if !name.starts_with("card") || name.contains('-') {
                 continue;
             }
@@ -74,7 +74,7 @@ impl AmdGpu {
     pub fn first() -> Result<AmdGpu> {
         match Self::discover()?.into_iter().next() {
             Some(gpu) => Ok(gpu),
-            None => bail!("nessuna GPU AMD trovata in /sys/class/drm"),
+            None => bail!("no AMD GPU found in /sys/class/drm"),
         }
     }
 
@@ -87,7 +87,7 @@ impl AmdGpu {
                 .labeled(h, "temp", "junction")
                 .map(|v| v as f64 / 1000.0),
             temp_mem_c: self.labeled(h, "temp", "mem").map(|v| v as f64 / 1000.0),
-            // alcune GPU espongono power1_average, altre power1_input
+            // some GPUs expose power1_average, others power1_input
             power_w: read_u64(&h.join("power1_average"))
                 .or_else(|| read_u64(&h.join("power1_input")))
                 .map(|uw| uw as f64 / 1e6),
@@ -105,7 +105,7 @@ impl AmdGpu {
         }
     }
 
-    /// Cerca il sensore `<prefix>N_input` la cui etichetta `<prefix>N_label` vale `label`.
+    /// Finds the `<prefix>N_input` sensor whose `<prefix>N_label` equals `label`.
     fn labeled(&self, hwmon: &Path, prefix: &str, label: &str) -> Option<u64> {
         let start = if prefix == "in" { 0 } else { 1 };
         (start..start + 8).find_map(|n| {
@@ -136,7 +136,7 @@ mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
 
-    /// Albero sysfs finto: `<root>/drm/cardN -> <root>/devices/<slot>` come nel kernel.
+    /// Fake sysfs tree: `<root>/drm/cardN -> <root>/devices/<slot>`, as in the kernel.
     fn fake_card(root: &Path, card: &str, slot: &str, vendor: &str, files: &[(&str, &str)]) {
         let device = root.join("devices").join(slot);
         let hwmon = device.join("hwmon/hwmon3");
@@ -207,10 +207,7 @@ mod tests {
         let s = gpu.snapshot();
         assert_eq!(s.temp_edge_c, Some(41.0));
         assert_eq!(s.temp_junction_c, Some(43.5));
-        assert_eq!(
-            s.temp_mem_c, None,
-            "un sensore assente resta None, non zero"
-        );
+        assert_eq!(s.temp_mem_c, None, "a missing sensor stays None, not zero");
         assert_eq!(s.power_w, Some(32.0));
         assert_eq!(s.power_cap_w, Some(317.0));
         assert_eq!(s.sclk_mhz, Some(2460));

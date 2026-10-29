@@ -1,13 +1,13 @@
 [package]
 name = "redline"
 version = "0.1.0"
-description = "Pannello di controllo per GPU AMD su Linux"
+description = "Control panel for AMD GPUs on Linux"
 authors = ["FabioSM46 <124870035+FabioSM46@users.noreply.github.com>"]
 edition = "2024"
 license = "MIT"
 
 [lib]
-# Il suffisso `_lib` evita il conflitto di nomi tra lib e bin.
+# The `_lib` suffix keeps the lib name from clashing with the bin name.
 name = "redline_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -23,8 +23,8 @@ redline-core = { workspace = true }
 [workspace]
 resolver = "3"
 members = [".", "crates/redline-core", "crates/redline-probe"]
-# Senza default-members `cargo test` in src-tauri/ proverebbe solo il pacchetto radice:
-# così i gate della CI coprono tutto il workspace.
+# Without default-members, `cargo test` in src-tauri/ would test only the root package:
+# this way the CI gates cover the whole workspace.
 default-members = [".", "crates/redline-core", "crates/redline-probe"]
 
 [workspace.package]

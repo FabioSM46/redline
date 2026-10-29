@@ -1,35 +1,36 @@
 # Roadmap
 
-Le milestone sono `Iteration N` su GitHub; questa è la direzione, non un calendario.
+Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 
-## M0 — Fondamenta (in corso)
+## M0 — Foundations (in progress)
 
-- [x] Workspace Rust con `redline-core` e la CLI `redline-probe`
-- [x] Lettura dei sensori da sysfs
-- [x] Client di `lactd` e controllo di GPU Screen Recorder (da verificare sulla macchina reale)
-- [x] App Tauri minima con le metriche in tempo reale
-- [x] Pipeline di sviluppo portata da wow-don
+- [x] Rust workspace with `redline-core` and the `redline-probe` CLI
+- [x] Sensor reading from sysfs
+- [x] `lactd` client and GPU Screen Recorder control (replay still to verify on real hardware)
+- [x] Minimal Tauri app with live metrics
+- [x] Development pipeline ported from wow-don
+- [x] Repository in English
 
-## M1 — Prestazioni
+## M1 — Performance
 
-- Dashboard con grafici nel tempo (temperatura, clock, potenza, utilizzo)
-- Più GPU sulla stessa macchina
-- Test di `sensors` su alberi sysfs finti
+- Dashboard with charts over time (temperature, clocks, power, usage)
+- Several GPUs on the same machine
+- Tests of `sensors` on fake sysfs trees
 
-## M2 — Registrazione
+## M2 — Recording
 
-- Replay istantaneo dall'app, con scelta delle tracce audio
-- Registrazione avviata e fermata dall'app
-- Comandi per le scorciatoie del desktop (D5)
-- Notifica con il file salvato
+- Instant replay from the app, with a choice of audio tracks
+- Recording started and stopped from the app
+- Commands for desktop shortcuts (D5)
+- Notification with the saved file
 
 ## M3 — Tuning
 
-- Curva della ventola, limite di potenza, profili
-- Conferma delle modifiche nella UI
-- Configurazione guidata delle dipendenze (D4)
+- Fan curve, power limit, profiles
+- Confirmation of changes in the UI
+- Guided dependency setup (D4)
 
-## M4 — Overlay e rilascio
+## M4 — Overlay and release
 
-- Overlay in gioco tramite MangoHud
-- Primo `.deb` pubblicato
+- In-game overlay through MangoHud
+- First published `.deb`

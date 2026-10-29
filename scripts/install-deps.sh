@@ -1,8 +1,8 @@
 #!/bin/bash
-# Installa le dipendenze di sistema di Redline su Ubuntu 24.04:
-#   - LACT (demone lactd) dal .deb ufficiale
-#   - GPU Screen Recorder via Flatpak, system-wide (serve per catturare il monitor su AMD)
-# Uso: sudo bash scripts/install-deps.sh
+# Installs Redline's system dependencies on Ubuntu 24.04:
+#   - LACT (the lactd daemon) from the official .deb
+#   - GPU Screen Recorder via Flatpak, system-wide (needed to capture a monitor on AMD)
+# Usage: sudo bash scripts/install-deps.sh
 set -e
 
 LACT_VERSION="0.10.1"
@@ -11,7 +11,7 @@ LACT_URL="https://github.com/ilya-zlobintsev/LACT/releases/download/v${LACT_VERS
 GSR_ID="com.dec05eba.gpu_screen_recorder"
 
 if [ "$(id -u)" -ne 0 ]; then
-  echo "Lancia lo script con sudo" >&2
+  echo "Run this script with sudo" >&2
   exit 1
 fi
 
@@ -30,4 +30,4 @@ flatpak remote-add --if-not-exists --system flathub https://dl.flathub.org/repo/
 echo "==> GPU Screen Recorder" >&2
 flatpak install -y --system flathub "$GSR_ID"
 
-echo "Fatto. Se è la prima installazione di Flatpak, fai logout/login per vedere le app nel menu." >&2
+echo "Done. If this is the first Flatpak install, log out and back in to see the apps in the menu." >&2
