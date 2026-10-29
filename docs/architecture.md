@@ -91,7 +91,8 @@ the running kernel's value (false until the reboot) and `reboot_pending` turns t
 of the session; lactd allows one change per daemon start, and its "already toggled" refusal also
 sets `reboot_pending`. Enabling when the bit is already on, a system where LACT cannot set
 kernel parameters (no configurator, as on NixOS) and an unknown configurator are refused at
-`prepare`, before any token exists.
+`prepare`, before any token exists. A request that times out may still run in lactd (it marks
+overdrive as toggled only when done), so no other overdrive request is sent for ten minutes.
 
 **Replay**: the `recorder` app module starts GPU Screen Recorder (the native binary on PATH,
 otherwise the Flatpak) with the buffer in RAM, one audio track per chosen source (`-a` repeated)

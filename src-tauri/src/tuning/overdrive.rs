@@ -41,8 +41,17 @@ pub const NO_CONFIGURATOR: &str = "LACT cannot set kernel parameters on this sys
 pub const NOT_ENABLED_BY_LACT: &str = "Overdrive was not enabled through LACT, so LACT cannot \
     disable it. Remove `amdgpu.ppfeaturemask` from where it was set and reboot.";
 pub const TIMED_OUT: &str = "LACT did not answer in time: it may still be updating the boot \
-    files. Wait a few minutes before trying again; if it finished, LACT will say a reboot is \
-    needed.";
+    files. Redline sends no other overdrive request for ten minutes; after that, if LACT \
+    finished, it will say a reboot is needed.";
+pub const STILL_RUNNING: &str = "LACT may still be updating the boot files after a request that \
+    did not answer in time. Wait ten minutes before trying again, or reboot and check whether \
+    overdrive changed.";
+
+/// How long no overdrive request is sent after one timed out. lactd 0.10.1 marks overdrive as
+/// toggled only once its work is done (`OC_TOGGLED` in `lact-daemon/src/system.rs`), so a
+/// request sent while the timed-out one still runs would start a second initramfs regeneration
+/// next to the first. As long as the request's own timeout: by then lactd has had twice that.
+pub const STALLED_COOLDOWN_MS: u64 = 10 * 60 * 1000;
 
 /// What a plan does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -84,6 +93,8 @@ struct HandshakeState {
     ticket: Option<Ticket>,
     /// A request is with lactd now.
     busy: bool,
+    /// A request timed out: until then lactd may still be running it.
+    stalled_until_ms: Option<u64>,
     reboot_pending: bool,
 }
 
@@ -99,10 +110,13 @@ impl Overdrive {
         lock(&self.state).reboot_pending
     }
 
-    /// Refuses while a request runs or a reboot is pending.
-    fn check_idle(state: &HandshakeState) -> Result<(), String> {
+    /// Refuses while a request runs (or may still run in lactd after a timeout) or a reboot is
+    /// pending.
+    fn check_idle(state: &HandshakeState, now_ms: u64) -> Result<(), String> {
         if state.busy {
             Err(BUSY.to_owned())
+        } else if state.stalled_until_ms.is_some_and(|until| now_ms < until) {
+            Err(STILL_RUNNING.to_owned())
         } else if state.reboot_pending {
             Err(REBOOT_PENDING.to_owned())
         } else {
@@ -172,6 +186,13 @@ pub fn steps(
 
 /// The sentence for a failed `enable_overdrive` / `disable_overdrive`. The second value is true
 /// when lactd says it already changed overdrive since it started (a reboot is pending).
+///
+/// The fragments are lactd 0.10.1's own messages (`lact-daemon/src/system.rs` at `v0.10.1`),
+/// reproduced verbatim by the fake lactd in the tests: "Overdrive support was already toggled -
+/// please reboot to apply the changes", "Overdrive mask already enabled", "Overclocking was not
+/// enabled through LACT (file at … does not exist)", "Overdrive should be toggled through system
+/// config on NixOS". lactd does not localise them. A rewording in another LACT version falls
+/// back to its message as is, and that version is already reported in `TuningStatus.warning`.
 fn refusal(lact: &Lact, error: &LactError) -> (String, bool) {
     match error {
         LactError::Daemon(message) if message.contains("already toggled") => {
@@ -201,7 +222,8 @@ impl Tuning {
     /// the previous one's token. Blocking.
     pub fn prepare_overdrive(&self, action: OverdriveAction) -> Result<OverdrivePlan, String> {
         let overdrive = &self.inner.overdrive;
-        Overdrive::check_idle(&lock(&overdrive.state))?;
+        let now = self.inner.clock.now_ms();
+        Overdrive::check_idle(&lock(&overdrive.state), now)?;
         let lact = &self.inner.lact;
         let system = lact
             .client
@@ -215,7 +237,7 @@ impl Tuning {
         let steps = steps(action, system.params_configurator())?;
 
         let mut state = lock(&overdrive.state);
-        Overdrive::check_idle(&state)?;
+        Overdrive::check_idle(&state, self.inner.clock.now_ms())?;
         let ticket = Ticket {
             action,
             token: new_token(),
@@ -243,7 +265,7 @@ impl Tuning {
         let overdrive = &self.inner.overdrive;
         {
             let mut state = lock(&overdrive.state);
-            Overdrive::check_idle(&state)?;
+            Overdrive::check_idle(&state, self.inner.clock.now_ms())?;
             let ticket = state
                 .ticket
                 .take()
@@ -264,6 +286,16 @@ impl Tuning {
         };
         let mut state = lock(&overdrive.state);
         state.busy = false;
+        if matches!(&sent, Err(LactError::Io(io)) if matches!(io.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut))
+        {
+            // lactd keeps working after the connection is gone: hold every request back.
+            state.stalled_until_ms = Some(
+                self.inner
+                    .clock
+                    .now_ms()
+                    .saturating_add(STALLED_COOLDOWN_MS),
+            );
+        }
         match sent {
             Ok(()) => {
                 state.reboot_pending = true;
@@ -677,9 +709,21 @@ mod tests {
             service.tuning.change_overdrive(ENABLE, &plan.token),
             Err(TIMED_OUT.to_owned())
         );
-        // Not known to be done: no reboot is claimed, and a new plan is possible.
+        // Not known to be done: no reboot is claimed.
         assert!(!service.tuning.status("0000:0d:00.0").reboot_pending);
         std::thread::sleep(Duration::from_millis(400));
+        // lactd may still be regenerating the initramfs: nothing more is sent for a while.
+        assert_eq!(
+            service.tuning.prepare_overdrive(ENABLE),
+            Err(STILL_RUNNING.to_owned())
+        );
+        service.clock.advance(STALLED_COOLDOWN_MS - 1);
+        assert_eq!(
+            service.tuning.prepare_overdrive(DISABLE),
+            Err(STILL_RUNNING.to_owned())
+        );
+        assert_eq!(service.log(), vec!["enable_overdrive"]);
+        service.clock.advance(1);
         assert!(service.tuning.prepare_overdrive(ENABLE).is_ok());
     }
 }
