@@ -67,10 +67,11 @@ dry_run "$apt_path" lact
 assert_eq "Ubuntu 24.04 installs LACT" 0 "$CODE"
 deb_line=$(grep -F 'ubuntu-2404.deb' "$HELPER" | head -n 1)
 sha=$(awk '{ print $3 }' <<<"$deb_line")
-assert_contains "downloads the pinned .deb over https" "$OUT" "run curl -fsSL --proto =https -o"
+assert_contains "downloads the pinned .deb over https, redirects included" "$OUT" "run curl -fsSL --proto =https --proto-redir =https -o"
 assert_contains "from the pinned release" "$OUT" "/releases/download/v0.10.1/lact-0.10.1-0.amd64.ubuntu-2404.deb"
 assert_contains "checks the pinned checksum" "$OUT" "sha256sum -c ($sha lact-0.10.1-0.amd64.ubuntu-2404.deb)"
-assert_contains "apt installs the downloaded file" "$OUT" "run apt-get install -y /"
+assert_contains "refreshes the package index first" "$OUT" "run apt-get update"
+assert_contains "apt installs the downloaded file without questions" "$OUT" "run env DEBIAN_FRONTEND=noninteractive apt-get install -y /"
 assert_contains "enables lactd" "$OUT" "run systemctl enable --now lactd"
 assert_eq "the last line says it is done" "progress Done" "$(tail -n 1 <<<"$OUT")"
 assert_not_contains "every line is a protocol line" "$OUT" $'\n=='

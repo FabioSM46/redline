@@ -15,6 +15,7 @@
 
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -43,6 +44,8 @@ pub const NO_HELPER: &str = "The guided install comes with the Redline package. 
     checkout, run `sudo bash scripts/install-deps.sh` instead.";
 pub const NO_PKEXEC: &str = "The guided install needs pkexec (polkit), which is not installed. \
     Install polkit with your package manager, or install the tool by hand.";
+pub const HELPER_NOT_EXECUTABLE: &str = "The install helper of the Redline package is not \
+    executable: reinstall Redline.";
 pub const BUSY: &str = "Another install is running: wait for it to finish.";
 const NOT_AUTHORIZED: &str = "Authentication failed, so nothing was installed.";
 
@@ -102,8 +105,16 @@ impl Installer {
     }
 
     fn ready(&self) -> Result<PathBuf, &'static str> {
-        if !self.helper.is_file() {
+        let Ok(meta) = std::fs::metadata(&self.helper) else {
             return Err(NO_HELPER);
+        };
+        if !meta.is_file() {
+            return Err(NO_HELPER);
+        }
+        // pkexec cannot run it otherwise, and would say so with the same exit code as a
+        // refused authentication.
+        if meta.permissions().mode() & 0o111 == 0 {
+            return Err(HELPER_NOT_EXECUTABLE);
         }
         find_program(PKEXEC, &self.search_path).ok_or(NO_PKEXEC)
     }
@@ -200,7 +211,7 @@ impl Job {
             Some(0) => event(InstallStage::Succeeded, None),
             Some(PKEXEC_DISMISSED) => event(InstallStage::Cancelled, None),
             Some(PKEXEC_NOT_AUTHORIZED) => {
-                event(InstallStage::Failed, Some(NOT_AUTHORIZED.to_owned()))
+                event(InstallStage::Failed, Some(pkexec_failure(&stderr_tail)))
             }
             _ => {
                 let message = error_line
@@ -218,6 +229,23 @@ impl Job {
         emit(&last);
         last
     }
+}
+
+/// pkexec's 127 means a refused authentication, or that pkexec could not run the helper at all
+/// (the user did authenticate). Its own stderr tells them apart: "Not authorized" is the
+/// refusal; any other last line is pkexec's reason, kept as it is.
+fn pkexec_failure(stderr_tail: &std::collections::VecDeque<String>) -> String {
+    if stderr_tail.is_empty()
+        || stderr_tail
+            .iter()
+            .any(|line| line.contains("Not authorized"))
+    {
+        return NOT_AUTHORIZED.to_owned();
+    }
+    stderr_tail
+        .back()
+        .cloned()
+        .unwrap_or_else(|| NOT_AUTHORIZED.to_owned())
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -284,7 +312,6 @@ mod tests {
     use crate::test_support::TempDir;
     use std::fs;
     use std::io::ErrorKind;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
@@ -459,6 +486,43 @@ mod tests {
         let (_, result) = install(&setup.installer(), DependencyId::Lact);
         assert_eq!(result.stage, InstallStage::Failed);
         assert_eq!(result.message.as_deref(), Some(NOT_AUTHORIZED));
+    }
+
+    #[test]
+    fn a_refused_authentication_is_told_apart_from_pkexec_failing_to_run_the_helper() {
+        let refused = Setup::new(
+            "refused",
+            None,
+            "echo 'Error executing command as another user: Not authorized' >&2\n\
+             echo >&2\necho 'This incident has been reported.' >&2\nexit 127",
+        );
+        let (_, result) = install(&refused.installer(), DependencyId::Lact);
+        assert_eq!(result.message.as_deref(), Some(NOT_AUTHORIZED));
+
+        let cannot_run = Setup::new(
+            "cannot-run",
+            None,
+            "echo 'Error executing command as another user: Cannot run program' >&2\nexit 127",
+        );
+        let (_, result) = install(&cannot_run.installer(), DependencyId::Lact);
+        assert_eq!(result.stage, InstallStage::Failed);
+        assert_eq!(
+            result.message.as_deref(),
+            Some("Error executing command as another user: Cannot run program")
+        );
+    }
+
+    #[test]
+    fn a_helper_without_the_executable_bit_is_not_installable() {
+        let setup = Setup::new("not-executable", None, "exit 0");
+        let helper = setup.dir.join("helper");
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o644)).unwrap();
+        let installer = setup.installer();
+        assert!(!installer.available());
+        assert_eq!(
+            installer.begin().err().as_deref(),
+            Some(HELPER_NOT_EXECUTABLE)
+        );
     }
 
     #[test]

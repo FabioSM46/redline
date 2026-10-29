@@ -125,7 +125,7 @@ install_lact() {
   say progress "Downloading LACT ${LACT_VERSION}"
   DOWNLOADS=$(mktemp -d)
   trap 'rm -rf "$DOWNLOADS"' EXIT
-  run curl -fsSL --proto '=https' -o "$DOWNLOADS/$deb" "$LACT_RELEASES/$deb" ||
+  run curl -fsSL --proto '=https' --proto-redir '=https' -o "$DOWNLOADS/$deb" "$LACT_RELEASES/$deb" ||
     fail "Could not download LACT ${LACT_VERSION}."
   say progress "Checking the LACT package"
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -135,7 +135,11 @@ install_lact() {
       fail "The downloaded LACT package does not match its pinned checksum: nothing was installed."
   fi
   say progress "Installing LACT ${LACT_VERSION}"
-  run apt-get install -y "$DOWNLOADS/$deb" || fail "apt could not install LACT."
+  # The .deb's own dependencies come from the distribution: refresh the index first (a
+  # failing third-party source must not stop the install), and never wait for a question.
+  run apt-get update || true
+  run env DEBIAN_FRONTEND=noninteractive apt-get install -y "$DOWNLOADS/$deb" ||
+    fail "apt could not install LACT."
   say progress "Starting the LACT daemon"
   run systemctl enable --now lactd || fail "LACT is installed, but its daemon did not start."
 }
