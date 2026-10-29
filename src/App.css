@@ -1,4 +1,6 @@
-/* Base tokens. Dark colours are --dark-* values assigned in the dark-theme block. */
+/* Base tokens. Dark colours are --dark-* values assigned in the dark-theme blocks below.
+ * Theme (src/theme.ts): data-theme="light" | "dark" on the root element picks the tokens; with no
+ * attribute (before the saved setting is read) the desktop's prefers-color-scheme decides. */
 :root {
   --text-sm: 13px;
   --text-md: 15px;
@@ -33,7 +35,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: var(--dark-bg);
     --surface: var(--dark-surface);
     --fg: var(--dark-fg);
@@ -41,6 +43,21 @@
     --border: var(--dark-border);
     --high: var(--dark-high);
   }
+}
+
+/* Keep this block identical to the one above: an explicit Dark ignores the desktop. */
+:root[data-theme="dark"] {
+  --bg: var(--dark-bg);
+  --surface: var(--dark-surface);
+  --fg: var(--dark-fg);
+  --muted: var(--dark-muted);
+  --border: var(--dark-border);
+  --high: var(--dark-high);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 body {
@@ -183,6 +200,131 @@ body {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* Settings → General: one row per setting, text on the left and its control on the right. */
+.settings {
+  display: grid;
+  gap: var(--space-sm);
+  max-width: calc(var(--space) * 40);
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  padding: var(--space);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.setting-text {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  flex: 1;
+}
+
+.setting-description {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.setting-error {
+  font-size: var(--text-sm);
+  color: var(--accent);
+}
+
+.setting-control {
+  flex-shrink: 0;
+}
+
+.settings-notice {
+  margin: 0;
+  padding: var(--space);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.segmented {
+  display: inline-flex;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segment {
+  position: relative;
+}
+
+.segment input {
+  position: absolute;
+  opacity: 0;
+}
+
+.segment span {
+  display: block;
+  padding: calc(var(--space-sm) / 2) var(--space);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segment + .segment span {
+  border-left: var(--border-width) solid var(--border);
+}
+
+.segment input:checked + span {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 0 calc(var(--indicator) * -1) 0 var(--accent);
+}
+
+.segment input:focus-visible + span,
+.switch:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.segment input[aria-disabled="true"] + span,
+.switch[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.switch {
+  appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  width: calc(var(--space) * 2.5);
+  height: calc(var(--space) * 1.5);
+  margin: 0;
+  border: var(--border-width) solid var(--border);
+  border-radius: calc(var(--space) * 1.5);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--indicator) - var(--border-width));
+  left: calc(var(--indicator) - var(--border-width));
+  width: calc(var(--space) * 1.5 - var(--indicator) * 2);
+  height: calc(var(--space) * 1.5 - var(--indicator) * 2);
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.switch:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.switch:checked::before {
+  left: calc(var(--space) * 2.5 - var(--space) * 1.5 + var(--indicator) - var(--border-width));
+  background: var(--surface);
 }
 
 .figures {
