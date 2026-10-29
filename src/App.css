@@ -993,3 +993,36 @@ body {
 .tuning-plan > p {
   margin: 0;
 }
+
+/* Settings → Dependencies: a tool's state and its Install button, then what to do about it. */
+.dependency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.dependency-state {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.dependency-installed {
+  color: var(--fg);
+}
+
+/* Colour signals state: a missing or unreachable tool is the "high" warning colour. */
+.dependency-missing,
+.dependency-attention {
+  color: var(--high);
+}
+
+.dependency-text {
+  max-width: 100%;
+}
+
+/* Settings → About: version and license figures. */
+.about-value {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}

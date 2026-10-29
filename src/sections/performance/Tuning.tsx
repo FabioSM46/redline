@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useGpu } from "../../GpuContext.tsx";
-import type { TabId } from "../../tabs.ts";
+import type { Navigate } from "../../tabs.ts";
 import { changeLabel, lactUnreachable, outcomeSentence, type TuningStatus } from "../../tuning.ts";
 import type { TuningBlockProps } from "./tuning/block.ts";
 import { ConfirmationPanel } from "./tuning/ConfirmationPanel.tsx";
@@ -19,7 +19,7 @@ type Detail = { gpuId: string; deadlineMs: number; text: string };
  * thing to tune. Blocks get `TuningBlockProps` (`./tuning/block.ts`) and change the GPU only
  * through `apply`; the fan editor (#60) and profiles (#61) are added as blocks in `blocks()`.
  */
-export function Tuning({ navigate }: { navigate: (tab: TabId) => void }) {
+export function Tuning({ navigate }: { navigate: Navigate }) {
   const { gpu, gpus } = useGpu();
   const { state, reload } = useTuningStatus(gpu.id);
   const [pending, dispatch] = usePendingChange(reload);
@@ -103,7 +103,7 @@ function TuningBody({
   onOverdriveBusy,
   ...block
 }: TuningBlockProps & {
-  navigate: (tab: TabId) => void;
+  navigate: Navigate;
   reload: () => void;
   onOverdriveBusy: (busy: boolean) => void;
 }) {
@@ -145,18 +145,18 @@ function Unavailable({
   reload,
 }: {
   status: TuningStatus;
-  navigate: (tab: TabId) => void;
+  navigate: Navigate;
   reload: () => void;
 }) {
   const unreachable = lactUnreachable(status);
   return (
     <div className="settings-notice tuning-unavailable" role="status">
       <p>{status.unavailable_reason ?? "Tuning is not available for this GPU."}</p>
-      {unreachable && <p>Settings → Dependencies shows what is installed and what is missing.</p>}
+      {unreachable && <p>Settings → Dependencies shows what is installed and can install what is missing.</p>}
       <div className="tuning-actions">
         {unreachable && (
-          <button type="button" className="button" onClick={() => navigate("settings")}>
-            Open Settings
+          <button type="button" className="button" onClick={() => navigate("settings", "dependencies")}>
+            Open Dependencies
           </button>
         )}
         <button type="button" className="button" onClick={reload}>
