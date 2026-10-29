@@ -489,3 +489,132 @@ body {
 .chart-plot .u-hz .u-cursor-x {
   border-right-color: var(--muted);
 }
+
+/* Recorder (src/RecorderContext.tsx): the replay switch in the status bar and on Home, and Home's
+   latest clips. Red only while something records: an active replay or recording, or an error. */
+:root {
+  --thumb-width: 180px;
+}
+
+.statusbar-recorder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space);
+  margin-left: auto;
+}
+
+.statusbar-replay {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.statusbar-replay:hover,
+.statusbar-replay[data-state="starting"] {
+  color: var(--fg);
+}
+
+.statusbar-replay[data-state="on"],
+.statusbar-rec,
+.replay-rec {
+  color: var(--accent);
+}
+
+.statusbar-rec {
+  font-weight: 600;
+}
+
+.statusbar-replay[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.statusbar-replay:focus-visible,
+.link-button:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.home-panel {
+  margin-top: calc(var(--space) * 1.5);
+}
+
+.clips-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.clips-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.clips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-width), 1fr));
+  gap: var(--space);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clip {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  min-width: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.clip-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: calc(var(--radius) / 2);
+}
+
+/* No preview (or not yet): a neutral block, never a colour. */
+.clip-thumb-empty {
+  background: var(--border);
+}
+
+.clip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-meta {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
