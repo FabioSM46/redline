@@ -140,6 +140,31 @@ else is.
 Left out compared to AMD's software: the "Gaming" section with a game library (Steam and Lutris
 own that on Linux), the built-in browser, streaming, driver notifications and display settings.
 
+## D9 — Charts with uPlot (2026-10-29)
+
+The charts over time in Performance → Metrics use **uPlot** (`uplot`, MIT, no dependencies of
+its own), pinned to an exact version. It draws time series on a canvas, which keeps a 15-minute
+window of four charts updated every second cheap, and it is small enough not to weigh on the
+bundle.
+
+How it is used:
+
+- A thin React wrapper (`src/charts/TimeChart.tsx`) owns the chart's lifetime: one instance per
+  chart, fed with `setData`, resized with its container, destroyed on unmount, rebuilt only when
+  the series layout or the theme changes.
+- The conversion from `gpu_history` to uPlot columns is a pure, tested function
+  (`src/metrics.ts`). A missing sensor is `null` and draws a gap, never a zero; a hole of more
+  than a few seconds in the sampling also breaks the line.
+- A canvas cannot read CSS variables: the colours are the tokens in `src/App.css`, read with
+  `getComputedStyle` and read again when the colour scheme or the root's attributes change.
+
+Rejected: a general-purpose chart or component library (heavier, SVG-based charts slow down with
+hundreds of points per series, and AGENTS.md asks for no component library without a decision);
+hand-written canvas or SVG charts (axes, cursor and scaling are exactly what uPlot already does
+well).
+
+`uplot` is the only package this decision approves; no other chart or component library.
+
 ## Open
 
 - How the overlay arrives: a MangoHud configuration managed by Redline, or an overlay of its own.
