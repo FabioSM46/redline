@@ -26,5 +26,12 @@ export const SETTINGS_TABS = [
 
 export type SettingsTabId = (typeof SETTINGS_TABS)[number]["id"];
 
+/** Opens a tab; for Settings, optionally on one of its pages (Tuning → Settings → Dependencies). */
+export type Navigate = (tab: TabId, settingsTab?: SettingsTabId) => void;
+
 /** What the shell gives every section: Home's "Show all" opens the Record tab with it. */
-export type SectionProps = { navigate: (tab: TabId) => void };
+export type SectionProps = {
+  navigate: Navigate;
+  /** The Settings page the last `navigate` asked for; the others ignore it. */
+  settingsTab?: SettingsTabId;
+};
