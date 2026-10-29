@@ -1,0 +1,78 @@
+/* Token di base. I colori scuri sono --dark-* assegnati nei blocchi del tema scuro. */
+:root {
+  --text-sm: 13px;
+  --text-md: 15px;
+  --text-lg: 22px;
+  --space: 16px;
+  --radius: 10px;
+
+  --bg: #f6f6f7;
+  --surface: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --accent: #d7263d;
+
+  --dark-bg: #141416;
+  --dark-surface: #1f1f23;
+  --dark-fg: #f2f2f4;
+  --dark-muted: #a1a1a8;
+
+  font-family: system-ui, sans-serif;
+  font-size: var(--text-md);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: var(--dark-bg);
+    --surface: var(--dark-surface);
+    --fg: var(--dark-fg);
+    --muted: var(--dark-muted);
+  }
+}
+
+body {
+  margin: 0;
+}
+
+.state {
+  padding: calc(var(--space) * 2);
+  color: var(--muted);
+}
+
+.dashboard {
+  padding: calc(var(--space) * 2);
+}
+
+.dashboard h1 {
+  margin: 0 0 var(--space);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space);
+  margin: 0;
+}
+
+.metric {
+  padding: var(--space);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.metric dt {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.metric dd {
+  margin: 4px 0 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}

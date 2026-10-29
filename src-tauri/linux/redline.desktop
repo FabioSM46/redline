@@ -1,0 +1,9 @@
+[Desktop Entry]
+Categories=System;Settings;HardwareSettings;
+Comment={{comment}}
+Exec={{exec}}
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name=Redline
+Terminal=false
+Type=Application

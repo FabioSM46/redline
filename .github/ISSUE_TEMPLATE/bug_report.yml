@@ -1,0 +1,85 @@
+name: Bug
+description: Segnala un bug o un comportamento inatteso
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: dropdown
+    id: workspace
+    attributes:
+      label: Area
+      description: Quale parte del repository è coinvolta?
+      options:
+        - backend (Rust / Tauri)
+        - frontend (React / TypeScript)
+        - shared (Trasversale)
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: Cosa è successo?
+      description: Il comportamento osservato. Includi messaggi di errore, panic e stack trace esatti.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Cosa doveva succedere?
+      description: Il comportamento corretto, abbastanza preciso da poterne ricavare un test.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Passi per riprodurre
+      description: Passi in ordine. L'agente prova a riprodurre il bug prima di correggerlo.
+      placeholder: |
+        1. Avvia il replay con le tracce `default_output` e `default_input`
+        2. Salva un replay
+        3. Il file salvato ha una sola traccia audio invece di due
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical_context
+    attributes:
+      label: Contesto tecnico
+      description: |
+        **OBBLIGATORIO**. Log, errori e percorsi del codice coinvolti.
+      placeholder: |
+        Log:
+        ```
+        thread 'main' panicked at src-tauri/crates/redline-core/src/recorder.rs:42:18
+        ```
+
+        File rilevanti:
+        - src-tauri/crates/redline-core/src/recorder.rs (origine del panic)
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Fuori scope
+      description: |
+        **OBBLIGATORIO**. Cosa questa correzione NON deve toccare.
+      placeholder: |
+        - Non cambiare il contenitore di default (mkv)
+        - Non toccare il client di lactd
+    validations:
+      required: true
+
+  - type: textarea
+    id: code_pointers
+    attributes:
+      label: Riferimenti nel codice
+      description: |
+        Riferimenti `file:riga` da leggere per primi. Formato `path/to/file.rs:42`.
+      placeholder: |
+        - src-tauri/crates/redline-core/src/recorder.rs:42 (origine dell'errore)
+    validations:
+      required: false

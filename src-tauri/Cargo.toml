@@ -1,0 +1,55 @@
+[package]
+name = "redline"
+version = "0.1.0"
+description = "Pannello di controllo per GPU AMD su Linux"
+authors = ["FabioSM46 <124870035+FabioSM46@users.noreply.github.com>"]
+edition = "2024"
+license = "MIT"
+
+[lib]
+# Il suffisso `_lib` evita il conflitto di nomi tra lib e bin.
+name = "redline_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+redline-core = { workspace = true }
+
+[workspace]
+resolver = "3"
+members = [".", "crates/redline-core", "crates/redline-probe"]
+# Senza default-members `cargo test` in src-tauri/ proverebbe solo il pacchetto radice:
+# così i gate della CI coprono tutto il workspace.
+default-members = [".", "crates/redline-core", "crates/redline-probe"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+clap = { version = "4", features = ["derive"] }
+redline-core = { path = "crates/redline-core" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+# https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
