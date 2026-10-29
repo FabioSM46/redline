@@ -1,7 +1,7 @@
 import { useGpu } from "../GpuContext.tsx";
-import { formatValue, percentOf } from "../format.ts";
+import { type Figure, homeFigures } from "../home.ts";
 
-/** The GPU state at a glance. The Home issue reshapes these figures (D8). */
+/** The GPU state at a glance: five large figures, then the secondary ones (D8). */
 export function Home() {
   const { reading } = useGpu();
 
@@ -12,31 +12,28 @@ export function Home() {
     return <p className="state">Reading sensors…</p>;
   }
 
-  const s = reading.snapshot;
-  const vram = percentOf(s.vram_used_mib, s.vram_total_mib);
-  const metrics: [string, string][] = [
-    ["Temperature", formatValue(s.temp_edge_c, "°C")],
-    ["Hotspot", formatValue(s.temp_junction_c, "°C")],
-    ["Memory", formatValue(s.temp_mem_c, "°C")],
-    ["Power", `${formatValue(s.power_w, "W")} / ${formatValue(s.power_cap_w, "W")}`],
-    ["Fan", formatValue(s.fan_rpm, "rpm")],
-    ["GPU clock", formatValue(s.sclk_mhz, "MHz")],
-    ["VRAM clock", formatValue(s.mclk_mhz, "MHz")],
-    ["Voltage", formatValue(s.vddgfx_mv, "mV")],
-    ["GPU usage", formatValue(s.gpu_busy_pct, "%")],
-    ["VRAM", `${formatValue(s.vram_used_mib, "MiB")} (${formatValue(vram, "%")})`],
-  ];
-
+  const { primary, secondary } = homeFigures(reading.snapshot);
   return (
     <section className="section">
-      <dl className="metrics">
-        {metrics.map(([label, value]) => (
-          <div className="metric" key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
+      <Figures figures={primary} className="figures figures-primary" />
+      <Figures figures={secondary} className="figures figures-secondary" />
     </section>
+  );
+}
+
+function Figures({ figures, className }: { figures: Figure[]; className: string }) {
+  return (
+    <dl className={className}>
+      {figures.map((f) => (
+        <div className="figure" key={f.label}>
+          <dt>{f.label}</dt>
+          <dd className={f.high ? "figure-value figure-high" : "figure-value"}>
+            {f.value}
+            {f.high && <span className="visually-hidden"> (high)</span>}
+          </dd>
+          {f.detail !== undefined && <dd className="figure-detail">{f.detail}</dd>}
+        </div>
+      ))}
+    </dl>
   );
 }
