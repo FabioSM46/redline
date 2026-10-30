@@ -94,6 +94,9 @@ function Controls({
   send: (command: () => Promise<PendingChange>, detail: string) => void;
 }) {
   const [draft, setDraft] = useState<ClockDraft>({});
+  // A refusal shows once the field is left: while typing, almost every prefix is out of range, and
+  // each would be announced as an alert. Apply stays off from `request` in the meantime.
+  const [left, setLeft] = useState<{ [Key in ClockKey]?: boolean }>({});
   const request = clockRequest(clocks, draft);
   const controls = listedControls(clocks);
   const editable = controls.some(({ key, control }) => clockLimits(key, control) !== null);
@@ -112,9 +115,13 @@ function Controls({
           name={key}
           control={control}
           text={draft[key] ?? String(control.current)}
-          error={request.errors[key] ?? null}
+          error={left[key] === true ? (request.errors[key] ?? null) : null}
           locked={locked}
-          onChange={(text) => setDraft((d) => ({ ...d, [key]: text }))}
+          onChange={(text) => {
+            setDraft((d) => ({ ...d, [key]: text }));
+            setLeft((l) => ({ ...l, [key]: false }));
+          }}
+          onBlur={() => setLeft((l) => ({ ...l, [key]: true }))}
         />
       ))}
       {editable && (
@@ -142,6 +149,7 @@ function ClockRow({
   error,
   locked,
   onChange,
+  onBlur,
 }: {
   name: ClockKey;
   control: ClockControl;
@@ -149,6 +157,7 @@ function ClockRow({
   error: string | null;
   locked: boolean;
   onChange: (text: string) => void;
+  onBlur: () => void;
 }) {
   const limits = clockLimits(name, control);
   const range = firmwareRange(control);
@@ -195,6 +204,7 @@ function ClockRow({
               disabled={locked}
               aria-invalid={error !== null || undefined}
               onChange={(e) => onChange(e.target.value)}
+              onBlur={onBlur}
             />
             <span>{clockUnit(name)}</span>
           </label>

@@ -66,7 +66,10 @@ export function firmwareRange(control: ClockControl): { min: number; max: number
   return { min: control.min, max: control.max };
 }
 
-/** The voltage offset is the one control the backend accepts without a firmware range. */
+/**
+ * The voltage offset is the one control the backend accepts without a firmware range.
+ * `ClockControl` reports both bounds or neither, so one missing bound means there is no range.
+ */
 export function hasFloorOnly(key: ClockKey, control: ClockControl): boolean {
   return key === "voltage_offset" && (control.min === null || control.max === null);
 }
