@@ -45,7 +45,8 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 - [ ] With nothing else installed, Settings → Dependencies shows the four tools as missing and the
       features that need them say what to do.
 - [ ] Guided install of **LACT**, of **GPU Screen Recorder**, of **ffmpeg** and of **MangoHud**,
-      each with its real `pkexec` prompt.
+      each with its real `pkexec` prompt. No guided MangoHud install is recorded through a real
+      `pkexec` yet.
 - [ ] After each one, the row turns to installed without restarting the app.
 - [ ] Cancelling the password prompt changes nothing and the page says so.
 - [ ] On a clean install of each of Ubuntu 24.04, Ubuntu 26.04 and Debian 13: the package installs,
@@ -131,10 +132,12 @@ Anything that fails goes to an issue and a PR on `develop`, and the checks start
 
 ## Manual checks run
 
-Reported by the maintainer on one machine (Ubuntu, GNOME on Wayland, an RDNA4 GPU) with the
-published `0.1.0` package, on 2026-10-30. All passed:
+The list above is a template and stays unchecked: this section is the record of a run. Reported by
+the maintainer on one machine (Ubuntu, GNOME on Wayland, an RDNA4 GPU) on 2026-10-30, with the
+published `0.1.0` package unless a line says otherwise. All passed:
 
-- install of the `.deb`, guided install, autostart, tray, light and dark;
+- install of the `.deb`, guided install (the report does not name each of the four tools, so a
+  real MangoHud install through `pkexec` is not recorded), autostart, tray, light and dark;
 - power limit: revert at the timeout, and confirmation;
 - overdrive enabled, with the reboot;
 - undervolt: revert at the timeout, manual revert, confirmation that survives a reboot;
@@ -143,10 +146,13 @@ published `0.1.0` package, on 2026-10-30. All passed:
 - core and VRAM clocks;
 - overlay: presets, position, toggle key, Copy, take-over, in a game started from Lutris;
 - replay and recording.
+- `dpkg-deb -c` on `redline_0.2.0_amd64.deb`, built locally with the release commands and
+  `deb-desktop-id.sh`: the checks of "The package";
 - overdrive switch from a `develop` build: the guard, "Back to default", the stop until the
   reboot, and the fans under the firmware after turning overdrive off.
 
-Not run: a clean virtual machine, Ubuntu 26.04, Debian 13, and the shortcuts on GNOME 48 or KDE.
+Not run: a clean virtual machine, Ubuntu 26.04, Debian 13, the shortcuts on GNOME 48 or KDE, and
+the recovery routes of D13.
 
 ## 3. Merge and tag
 
