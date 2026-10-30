@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The guided install's helper (src-tauri/linux/install-dependency), run in --dry-run against
 # a fake os-release and a PATH of stubs: which commands it would run on each system, that it
-# refuses every component name but the three fixed ones, and that the pinned values agree
+# refuses every component name but the four fixed ones, and that the pinned values agree
 # across the helper, redline-core, the app, the polkit policy and the .deb configuration.
 #
 # Run: bash scripts/test/install-dependency.test.sh
@@ -117,6 +117,19 @@ assert_contains "pacman" "$OUT" "run pacman -S --needed --noconfirm ffmpeg"
 dry_run "$(make_path none)" ffmpeg
 assert_eq "no package manager is not supported" 3 "$CODE"
 
+echo "== MangoHud"
+dry_run "$apt_path" mangohud
+assert_eq "apt installs it" 0 "$CODE"
+assert_contains "from the distribution" "$OUT" "run env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y mangohud"
+assert_eq "the last line says it is done" "progress Done" "$(tail -n 1 <<<"$OUT")"
+dry_run "$(make_path dnf dnf)" mangohud
+assert_contains "dnf" "$OUT" "run dnf install -y mangohud"
+dry_run "$(make_path pacman pacman)" mangohud
+assert_contains "pacman" "$OUT" "run pacman -S --needed --noconfirm mangohud"
+dry_run "$(make_path none)" mangohud
+assert_eq "no package manager is not supported" 3 "$CODE"
+assert_contains "and says so" "$OUT" "error No supported package manager"
+
 echo "== Only fixed names"
 for arg in "" "LACT" "../lact" "https://example.com/x.deb" "/bin/sh" "lact;id" "--dry-run"; do
   dry_run "$apt_path" "$arg"
@@ -125,6 +138,10 @@ for arg in "" "LACT" "../lact" "https://example.com/x.deb" "/bin/sh" "lact;id" "
 done
 dry_run "$apt_path" lact ffmpeg
 assert_eq "refuses two components" 2 "$CODE"
+for arg in $(sed -n 's/.*DependencyId::[A-Za-z]* => "\([a-z-]*\)",$/\1/p' "$ROOT/src-tauri/src/installer.rs"); do
+  dry_run "$apt_path" "$arg"
+  assert_eq "accepts the app's '$arg'" 0 "$CODE"
+done
 if [ "$(id -u)" -ne 0 ]; then
   out=$(bash "$HELPER" ffmpeg 2>/dev/null)
   assert_eq "a real run needs root" 2 $?
@@ -148,6 +165,7 @@ assert_eq "install-deps.sh skips an unsupported component and goes on" 0 $?
 assert_contains "the unsupported LACT is reported" "$out" "error The guided install of LACT needs apt"
 assert_contains "the components after it still run" "$out" "run flatpak install -y --noninteractive --system flathub"
 assert_contains "all of them" "$out" "run pacman -S --needed --noconfirm ffmpeg"
+assert_contains "MangoHud too" "$out" "run pacman -S --needed --noconfirm mangohud"
 out=$(PATH="$(make_path wrapper-bad pacman)" bash "$ROOT/scripts/install-deps.sh" --dry-run nonsense ffmpeg 2>/dev/null)
 assert_eq "install-deps.sh stops on any other failure" 2 $?
 assert_not_contains "without running the rest" "$out" "run pacman"
@@ -158,6 +176,8 @@ assert_eq "the helper is executable in git" 100755 "$(git -C "$ROOT" ls-files -s
 assert_contains "the polkit action runs only the installed helper" "$(cat "$POLICY")" \
   "<annotate key=\"org.freedesktop.policykit.exec.path\">$INSTALLED_AT</annotate>"
 assert_contains "the polkit action is com.fabiosm46.redline.install" "$(cat "$POLICY")" '<action id="com.fabiosm46.redline.install">'
+assert_contains "the polkit comment lists the new name" "$(cat "$POLICY")" "ffmpeg and mangohud"
+assert_contains "the password prompt names MangoHud" "$(cat "$POLICY")" "ffmpeg or MangoHud"
 assert_contains "the app runs the installed helper" "$(cat "$ROOT/src-tauri/src/installer.rs")" "pub const HELPER: &str = \"$INSTALLED_AT\";"
 for conf in tauri.conf.json tauri.release.linux.conf.json; do
   files=$(jq -c '.bundle.linux.deb.files' "$ROOT/src-tauri/$conf")

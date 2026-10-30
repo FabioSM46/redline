@@ -3,10 +3,11 @@
 #   - LACT (the lactd daemon) from the official .deb of the pinned version, checksum verified
 #   - GPU Screen Recorder via Flatpak, system-wide (needed to capture a monitor on AMD)
 #   - ffmpeg from the distribution's package manager (previews of clips)
+#   - MangoHud from the distribution's package manager (in-game overlay)
 # It runs the same helper the .deb ships at /usr/share/redline/install-dependency, which the
 # app starts through pkexec: the pinned versions and checksums live only in that helper.
 # Usage: sudo bash scripts/install-deps.sh [--dry-run] [lact] [gpu-screen-recorder] [ffmpeg]
-# (all three when none is named).
+#        [mangohud] (all four when none is named).
 set -euo pipefail
 
 HELPER="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src-tauri/linux/install-dependency"
@@ -16,7 +17,7 @@ if [ "${1:-}" = --dry-run ]; then
   options+=(--dry-run)
   shift
 fi
-[ $# -gt 0 ] || set -- lact gpu-screen-recorder ffmpeg
+[ $# -gt 0 ] || set -- lact gpu-screen-recorder ffmpeg mangohud
 
 # A component this system does not support (the helper's exit code 3, for example LACT without
 # apt) is skipped; any other failure stops the run with the helper's code.

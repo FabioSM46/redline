@@ -21,10 +21,11 @@ import {
 import { IDLE, type Loaded, Setting, Value } from "./Setting.tsx";
 
 /**
- * Settings → Dependencies: LACT, GPU Screen Recorder and ffmpeg, whether they are installed, their
- * version against the verified one, what to do when one is missing, and the guided install
- * (`install_dependency`, one password prompt through polkit). One install at a time. There is no
- * Cancel: the install runs as root and Redline cannot stop it, so the page shows it as busy.
+ * Settings → Dependencies: LACT, GPU Screen Recorder, ffmpeg and MangoHud, whether they are
+ * installed, their version against the verified one, what to do when one is missing, and the
+ * guided install (`install_dependency`, one password prompt through polkit). One install at a time.
+ * There is no Cancel: the install runs as root and Redline cannot stop it, so the page shows it as
+ * busy.
  */
 export function Dependencies() {
   const [deps, setDeps] = useState<Loaded<Dependency[]>>({ status: "loading" });

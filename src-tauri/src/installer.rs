@@ -56,6 +56,7 @@ impl DependencyId {
             DependencyId::Lact => "lact",
             DependencyId::GpuScreenRecorder => "gpu-screen-recorder",
             DependencyId::Ffmpeg => "ffmpeg",
+            DependencyId::Mangohud => "mangohud",
         }
     }
 }
@@ -298,7 +299,7 @@ pub async fn install_dependency(
         };
         let result = job.run(name, &emit);
         // A recorder installed while Redline runs is picked up at once: replay becomes
-        // available without a restart. LACT and ffmpeg are looked up on every request.
+        // available without a restart. LACT, ffmpeg and MangoHud are looked up on every request.
         if name == DependencyId::GpuScreenRecorder
             && result.stage == InstallStage::Succeeded
             && let Some(recorder) = app.try_state::<Recorder>()
@@ -426,6 +427,7 @@ mod tests {
             (DependencyId::Lact, "lact"),
             (DependencyId::GpuScreenRecorder, "gpu-screen-recorder"),
             (DependencyId::Ffmpeg, "ffmpeg"),
+            (DependencyId::Mangohud, "mangohud"),
         ] {
             let (events, result) = install(&setup.installer(), id);
             assert_eq!(events[0], progress(id, &format!("got {arg}")));
