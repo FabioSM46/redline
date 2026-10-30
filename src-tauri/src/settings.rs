@@ -20,6 +20,9 @@
 //! Other modules read the settings through [`recording_settings`] (for example the replay and
 //! recording folders), never from the file.
 //!
+//! `overlay` holds what the in-game overlay shows. It is stored here and rendered into MangoHud's
+//! own file by `overlay`, which saves it through [`save_overlay`]: `set_settings` never changes it.
+//!
 //! Starting with the system is not a setting stored here: the operating system owns it (see
 //! `autostart`).
 
@@ -46,6 +49,11 @@ const DEFAULT_FPS: u32 = 60;
 /// Capture values gsr accepts for `-w` that are neither the portal nor a monitor.
 const NOT_A_MONITOR: &[&str] = &["focused", "region", "screen-direct", "window"];
 const UNAVAILABLE: &str = "Settings are not available: restart the app.";
+/// MangoHud's own default for `toggle_hud`.
+const DEFAULT_TOGGLE_KEY: &str = "Shift_R+F12";
+/// More keys than this cannot be a real shortcut.
+const MAX_TOGGLE_KEYS: usize = 4;
+const MAX_KEY_NAME: usize = 32;
 
 /// The interface theme: `system` follows the desktop.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +63,74 @@ pub enum Theme {
     System,
     Light,
     Dark,
+}
+
+/// How much the in-game overlay shows. `off` keeps it hidden until its key is pressed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayPreset {
+    Off,
+    Minimal,
+    #[default]
+    Standard,
+    Full,
+}
+
+/// The corners of the screen. MangoHud has more positions, but only these are offered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OverlayPosition {
+    #[default]
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+/// One figure the overlay can show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OverlayMetric {
+    Fps,
+    Frametime,
+    GpuTemp,
+    GpuPower,
+    GpuCoreClock,
+    Vram,
+    CpuTemp,
+    Ram,
+}
+
+/// What the in-game overlay shows, where, and the key that toggles it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OverlaySettings {
+    pub preset: OverlayPreset,
+    pub position: OverlayPosition,
+    /// "Advanced": when not empty, these figures replace the ones of the preset.
+    pub metrics: Vec<OverlayMetric>,
+    /// MangoHud's `toggle_hud`: X key names joined by `+`, such as `Shift_R+F12`.
+    pub toggle_key: String,
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        Self {
+            preset: OverlayPreset::default(),
+            position: OverlayPosition::default(),
+            metrics: Vec::new(),
+            toggle_key: DEFAULT_TOGGLE_KEY.to_owned(),
+        }
+    }
+}
+
+impl OverlaySettings {
+    /// Every invalid field, worded for the user. Empty when the settings can be used.
+    pub fn problems(&self) -> Vec<String> {
+        check_toggle_key(&self.toggle_key)
+            .err()
+            .into_iter()
+            .collect()
+    }
 }
 
 /// How replays and recordings are made.
@@ -234,6 +310,29 @@ fn check_bool(_: &bool) -> Result<(), String> {
     Ok(())
 }
 
+/// For fields whose type already allows only valid values.
+fn check_any<T>(_: &T) -> Result<(), String> {
+    Ok(())
+}
+
+/// Key names joined by `+`. The value lands in MangoHud's file, where `#` starts a comment, a new
+/// line starts another option and `,` and `:` separate keys as `+` does, so only the characters of
+/// an X key name pass. Whether a name is a real key only MangoHud can say.
+// `&T` of the stored type: `read_field` takes `fn(&T)`.
+#[allow(clippy::ptr_arg)]
+fn check_toggle_key(value: &String) -> Result<(), String> {
+    let keys: Vec<&str> = value.split('+').collect();
+    let valid = keys.len() <= MAX_TOGGLE_KEYS
+        && keys.iter().all(|key| {
+            !key.is_empty()
+                && key.len() <= MAX_KEY_NAME
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    valid
+        .then_some(())
+        .ok_or_else(|| "toggle_key must be key names joined by +, such as Shift_R+F12".to_owned())
+}
+
 /// The default replay and recording folders, as `recording_defaults` returns them. `None` when
 /// the video folder is not known: the default would be a relative path, which is not offered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -261,6 +360,7 @@ pub struct Settings {
     /// Start minimised to the tray when launched by the autostart entry.
     pub start_minimised: bool,
     pub recording: RecordingSettings,
+    pub overlay: OverlaySettings,
 }
 
 impl Settings {
@@ -269,6 +369,7 @@ impl Settings {
             theme: Theme::default(),
             start_minimised: false,
             recording: RecordingSettings::defaults(video_dir),
+            overlay: OverlaySettings::default(),
         }
     }
 }
@@ -315,6 +416,23 @@ impl SettingsState {
 pub fn recording_settings<R: Runtime>(app: &AppHandle<R>) -> Option<RecordingSettings> {
     app.try_state::<SettingsState>()
         .map(|state| state.current().recording)
+}
+
+/// Validates the overlay settings and saves them, leaving every other setting as it is. Returns
+/// them as read back from the file.
+pub fn save_overlay(
+    state: &SettingsState,
+    overlay: OverlaySettings,
+) -> Result<OverlaySettings, String> {
+    let mut current = state.current.lock().map_err(|_| UNAVAILABLE.to_owned())?;
+    let file = state
+        .file
+        .as_deref()
+        .ok_or_else(|| "Could not save the settings: no settings folder.".to_owned())?;
+    let saved = apply_overlay(file, &state.video_dir, &current, overlay)?;
+    let overlay = saved.overlay.clone();
+    *current = saved;
+    Ok(overlay)
 }
 
 /// Loads the settings and registers them as managed state. Never fails: every problem is
@@ -423,6 +541,7 @@ fn apply(
         recording: update
             .recording
             .unwrap_or_else(|| current.recording.clone()),
+        overlay: current.overlay.clone(),
     };
     let problems = wanted.recording.problems();
     if !problems.is_empty() {
@@ -438,6 +557,27 @@ fn apply(
         forget_portal_session(token);
     }
     Ok(saved)
+}
+
+/// Validates new overlay settings and saves them with the rest of `current`.
+fn apply_overlay(
+    file: &Path,
+    video_dir: &Path,
+    current: &Settings,
+    overlay: OverlaySettings,
+) -> Result<Settings, String> {
+    let problems = overlay.problems();
+    if !problems.is_empty() {
+        return Err(format!(
+            "The overlay settings were not saved: {}.",
+            problems.join("; ")
+        ));
+    }
+    let wanted = Settings {
+        overlay,
+        ..current.clone()
+    };
+    save(file, &wanted, video_dir)
 }
 
 /// Deletes the saved portal session, so the desktop asks for the screen again.
@@ -552,6 +692,31 @@ fn load_recording(
     recording
 }
 
+/// The `overlay` object, field by field over the defaults.
+fn load_overlay(value: &Value, problems: &mut Vec<String>) -> OverlaySettings {
+    let mut overlay = OverlaySettings::default();
+    let Value::Object(fields) = value else {
+        problems.push(format!(
+            "{SETTINGS_FILE}: overlay is not an object, using the defaults"
+        ));
+        return overlay;
+    };
+    let p = "overlay.";
+    let o = &mut overlay;
+    read_field(fields, p, "preset", check_any, &mut o.preset, problems);
+    read_field(fields, p, "position", check_any, &mut o.position, problems);
+    read_field(fields, p, "metrics", check_any, &mut o.metrics, problems);
+    read_field(
+        fields,
+        p,
+        "toggle_key",
+        check_toggle_key,
+        &mut o.toggle_key,
+        problems,
+    );
+    overlay
+}
+
 /// Reads the settings file. Returns the settings to use and the problems found, already worded
 /// for stderr; a missing file is not a problem.
 fn load(file: &Path, video_dir: &Path) -> (Settings, Vec<String>) {
@@ -599,6 +764,9 @@ fn load(file: &Path, video_dir: &Path) -> (Settings, Vec<String>) {
     }
     if let Some(value) = fields.get("recording") {
         settings.recording = load_recording(value, video_dir, &mut problems);
+    }
+    if let Some(value) = fields.get("overlay") {
+        settings.overlay = load_overlay(value, &mut problems);
     }
     (settings, problems)
 }
@@ -923,6 +1091,12 @@ mod tests {
                     "fps": 60,
                     "replay_on_start": false,
                 },
+                "overlay": {
+                    "preset": "standard",
+                    "position": "top-left",
+                    "metrics": [],
+                    "toggle_key": "Shift_R+F12",
+                },
             })
         );
     }
@@ -1008,6 +1182,113 @@ mod tests {
         after.capture = "DP-2".into();
         assert!(needs_restart(&before, &after));
         assert!(!needs_restart(&before, &before));
+    }
+
+    #[test]
+    fn invalid_overlay_fields_fall_back_one_by_one() {
+        let dir = temp_dir("overlay-fields");
+        let file = dir.join(SETTINGS_FILE);
+        fs::write(
+            &file,
+            r#"{"overlay": {
+                "preset": "huge",
+                "position": "bottom-right",
+                "metrics": ["fps", "battery"],
+                "toggle_key": "F1#x"
+            }}"#,
+        )
+        .unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(
+            settings.overlay,
+            OverlaySettings {
+                position: OverlayPosition::BottomRight,
+                ..OverlaySettings::default()
+            }
+        );
+        // preset, metrics, toggle_key.
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(problems.iter().all(|p| p.contains("overlay.")));
+
+        fs::write(&file, r#"{"overlay": 7}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(settings.overlay, OverlaySettings::default());
+        assert_eq!(problems.len(), 1);
+
+        // A file saved before the overlay existed.
+        fs::write(&file, r#"{"theme": "dark"}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(settings.overlay, OverlaySettings::default());
+        assert!(problems.is_empty());
+    }
+
+    #[test]
+    fn the_toggle_key_is_key_names_joined_by_plus() {
+        for key in ["F12", "Shift_R+F12", "Control_L+Alt_L+h", "KP_Add"] {
+            assert_eq!(check_toggle_key(&key.to_owned()), Ok(()), "{key:?}");
+        }
+        for key in [
+            "",
+            "+",
+            "F12+",
+            "+F12",
+            "F1,F2",
+            "F1:F2",
+            "F12 # comment",
+            "F12\nno_display",
+            "F12\r",
+            "Shift_R+Shift_L+Alt_L+Alt_R+F12",
+            &"a".repeat(33),
+        ] {
+            assert!(check_toggle_key(&key.to_owned()).is_err(), "{key:?}");
+        }
+    }
+
+    #[test]
+    fn saving_the_overlay_keeps_every_other_setting() {
+        let dir = temp_dir("overlay-save");
+        let file = dir.join(SETTINGS_FILE);
+        let mut current = defaults();
+        current.theme = Theme::Dark;
+        current.recording.fps = 144;
+        let overlay = OverlaySettings {
+            preset: OverlayPreset::Full,
+            position: OverlayPosition::TopRight,
+            metrics: vec![OverlayMetric::Fps, OverlayMetric::GpuCoreClock],
+            toggle_key: "F10".into(),
+        };
+        let saved = apply_overlay(&file, videos(), &current, overlay.clone()).unwrap();
+        assert_eq!(
+            saved,
+            Settings {
+                overlay,
+                ..current.clone()
+            }
+        );
+        assert_eq!(load(&file, videos()), (saved, Vec::new()));
+    }
+
+    #[test]
+    fn an_invalid_overlay_is_refused_and_saves_nothing() {
+        let dir = temp_dir("overlay-refused");
+        let file = dir.join(SETTINGS_FILE);
+        let overlay = OverlaySettings {
+            toggle_key: "F12\nno_display".into(),
+            ..OverlaySettings::default()
+        };
+        let error = apply_overlay(&file, videos(), &defaults(), overlay).unwrap_err();
+        assert!(error.contains("toggle_key"), "{error}");
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn set_settings_never_changes_the_overlay() {
+        let dir = temp_dir("overlay-kept");
+        let file = dir.join(SETTINGS_FILE);
+        let mut current = defaults();
+        current.overlay.preset = OverlayPreset::Off;
+        let saved = apply(&file, videos(), None, &current, update(&defaults())).unwrap();
+        assert_eq!(saved.overlay.preset, OverlayPreset::Off);
     }
 
     #[test]
