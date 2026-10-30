@@ -83,7 +83,7 @@ and `max` are `null` there.
 `set_clocks` reads the same table under the control lock, after the pending check, and refuses
 before lactd changes anything: an unknown key, a value that is not a whole number, a control the
 GPU does not expose, a value outside the range, a clock with no range, a voltage offset above 0
-on any GPU, or whatever `clocks` itself says (overdrive off, GCN, no table). What passes goes in
+on any GPU, one below -450 mV where the firmware gives no range, or whatever `clocks` itself says (overdrive off, GCN, no table). What passes goes in
 one `batch_set_clocks_value`. `reset_clocks` sends `{ type: "reset", value: null }` alone through
 `set_clocks_value`, because `batch_set_clocks_value` never calls `reset_clocks()` at 0.10.1; it
 reads no table, so it also works with overdrive off. Neither sends `set_gpu_config` or sets the

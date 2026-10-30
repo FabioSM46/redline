@@ -274,8 +274,10 @@ Clocks and voltages moved out of M3 when M3 was specified; they arrive before th
   for GPUs Redline cannot test: `clocks` says the family is not supported.
 - **Undervolt only.** The backend refuses a voltage offset above 0 on every GPU, whatever range
   the firmware reports. Raising the voltage is the one setting here that can damage a GPU over
-  time, and RDNA2 gives no range, so lactd would check nothing. RDNA2 also has no lower bound:
-  a value below 0 is sent as given, and the confirmation is what protects it.
+  time, and RDNA2 gives no range, so lactd would check nothing. Without a range Redline also
+  refuses anything below -450 mV, the widest firmware range known (RX 7900 XT): a value that
+  hangs the GPU cannot be answered in the confirmation, so a typo must not reach it. This floor
+  is a sanity limit, not a safe value, and `clocks` keeps reporting no range.
 - **Overdrive required.** Without it the kernel takes no clock or voltage value: the status and
   the setter give the same sentence, which points to overdrive (D11).
 - **Checked before lactd.** Every value is checked against the current table, because lactd checks

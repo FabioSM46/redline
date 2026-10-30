@@ -36,7 +36,7 @@
 //!
 //! - A core clock offset goes into the table with no range check.
 //! - A voltage offset without a range goes in with no check at all, which is why a value above 0
-//!   is refused here on every GPU.
+//!   is refused here on every GPU and one below [`VOLTAGE_FLOOR_MV`] where there is no range.
 //! - A value lactd cannot apply fails the whole batch, with nothing to say which one.
 //!
 //! lactd handles the performance level itself, `REQUIRE_MANUAL_DEVICE_IDS` included, in
@@ -62,6 +62,11 @@ pub const NO_CONTROLS: &str = "LACT did not report the clock and voltage control
 pub const NOTHING_TO_APPLY: &str = "No clock or voltage value was given.";
 pub const UNDERVOLT_ONLY: &str = "Redline only undervolts: the voltage offset must be 0 mV or \
     lower.";
+
+/// The lowest voltage offset sent when the firmware gives no range: the widest firmware range
+/// known here, the RX 7900 XT's. Not a range of the GPU, so `ClocksStatus` does not report it. It
+/// stops a typo or a wild value, since lactd checks nothing without a range.
+const VOLTAGE_FLOOR_MV: i32 = -450;
 
 /// One control: its value now and the range the firmware allows. `min` and `max` are both set or
 /// both `null`, and `null` means the firmware gives no range.
@@ -254,20 +259,25 @@ fn check(field: &Field, value: Option<i32>, control: Option<ClockControl>) -> Re
     if voltage && value > 0 {
         return Err(UNDERVOLT_ONLY.to_owned());
     }
-    match (control.min, control.max) {
-        (Some(min), Some(max)) if value < min || value > max => Err(format!(
+    let (min, max) = match (control.min, control.max) {
+        (Some(min), Some(max)) => (min, max),
+        // RDNA2: no range for the voltage offset, and lactd would forward any number.
+        _ if voltage => (VOLTAGE_FLOOR_MV, 0),
+        _ => {
+            return Err(format!(
+                "This GPU does not report the range of its {}, so Redline cannot check the value.",
+                field.name
+            ));
+        }
+    };
+    if value < min || value > max {
+        return Err(format!(
             "The {name} must be between {min} {unit} and {max} {unit}.",
             name = field.name,
             unit = field.unit,
-        )),
-        (Some(_), Some(_)) => Ok(()),
-        // RDNA2: no range for the voltage offset, and 0 or below is all that was asked of it.
-        _ if voltage => Ok(()),
-        _ => Err(format!(
-            "This GPU does not report the range of its {}, so Redline cannot check the value.",
-            field.name
-        )),
+        ));
     }
+    Ok(())
 }
 
 /// The commands for `requested`, each checked against the table `status` was read from.
@@ -924,6 +934,20 @@ mod tests {
         bench.refuses(json!({ "voltage_offset": 50 }), UNDERVOLT_ONLY);
         bench.accepts(json!({ "voltage_offset": 0 }));
         bench.accepts(json!({ "voltage_offset": -50 }));
+    }
+
+    #[test]
+    fn a_voltage_offset_without_a_range_has_a_floor() {
+        let bench = Bench::start("floor", rdna2_rx6800(), Some(true));
+        bench.accepts(json!({ "voltage_offset": VOLTAGE_FLOOR_MV }));
+        let sentence = "The voltage offset must be between -450 mV and 0 mV.";
+        bench.refuses(json!({ "voltage_offset": VOLTAGE_FLOOR_MV - 1 }), sentence);
+        bench.refuses(json!({ "voltage_offset": -4500 }), sentence);
+        bench.refuses(json!({ "voltage_offset": i32::MIN }), sentence);
+        // The floor is Redline's, not the firmware's: the status keeps saying "no range".
+        let status = bench.tuning.status(SLOT).clocks.unwrap();
+        let offset = status.voltage_offset.unwrap();
+        assert_eq!((offset.min, offset.max), (None, None));
     }
 
     #[test]
