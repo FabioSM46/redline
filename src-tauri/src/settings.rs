@@ -315,6 +315,9 @@ fn check_any<T>(_: &T) -> Result<(), String> {
     Ok(())
 }
 
+/// What a toggle key has to be, for the two sentences that refuse one.
+const TOGGLE_KEY_RULE: &str = "must be key names joined by +, such as Shift_R+F12";
+
 /// Key names joined by `+`. The value lands in MangoHud's file, where `#` starts a comment, a new
 /// line starts another option and `,` and `:` separate keys as `+` does, so only the characters of
 /// an X key name pass. Whether a name is a real key only MangoHud can say.
@@ -328,16 +331,16 @@ fn check_toggle_key(value: &String) -> Result<(), String> {
                 && key.len() <= MAX_KEY_NAME
                 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
-    valid.then_some(()).ok_or_else(|| {
-        "The toggle key must be key names joined by +, such as Shift_R+F12".to_owned()
-    })
+    valid
+        .then_some(())
+        .ok_or_else(|| format!("The toggle key {TOGGLE_KEY_RULE}"))
 }
 
 /// [`check_toggle_key`] for the settings file: `read_field` writes the reason straight after the
 /// field's path, so here it opens with the field's name and not with the sentence for the screen.
 #[allow(clippy::ptr_arg)]
 fn check_stored_toggle_key(value: &String) -> Result<(), String> {
-    check_toggle_key(value).map_err(|_| "toggle_key is not key names joined by +".to_owned())
+    check_toggle_key(value).map_err(|_| format!("toggle_key {TOGGLE_KEY_RULE}"))
 }
 
 /// The default replay and recording folders, as `recording_defaults` returns them. `None` when
@@ -1217,7 +1220,8 @@ mod tests {
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems.iter().all(|p| p.contains("overlay.")));
         assert!(
-            problems.iter().any(|p| p.contains("overlay.toggle_key is")),
+            problems.iter().any(|p| p
+                .contains("overlay.toggle_key must be key names joined by +, such as Shift_R+F12")),
             "{problems:?}"
         );
 
