@@ -160,7 +160,8 @@ struct HandshakeState {
     /// A request is with lactd now.
     busy: bool,
     /// A disable reached lactd or may have: from then until the reboot nothing that needs
-    /// overdrive may be set. A request that timed out counts, it may still finish.
+    /// overdrive may be set. Only an answer that proves nothing changed lifts it
+    /// ([`proves_nothing_changed`]).
     disabling: bool,
     /// A request timed out: until then lactd may still be running it.
     stalled_until_ms: Option<u64>,
@@ -348,6 +349,21 @@ fn refusal(lact: &Lact, error: &LactError) -> (String, bool) {
     }
 }
 
+/// `error` proves a disable changed nothing, so the stop on setters can go. The request never
+/// reached lactd, or lactd refused before touching anything: its two refusals that come first in
+/// `disable_overdrive` at `v0.10.1`. Anything else keeps the stop. "Already toggled" means
+/// overdrive changed since lactd started. An error from the initramfs comes after the modprobe
+/// file is gone. A transport or decoding error may have followed a finished request.
+fn proves_nothing_changed(error: &LactError) -> bool {
+    match error {
+        LactError::SocketMissing | LactError::NotRunning | LactError::PermissionDenied => true,
+        LactError::Daemon(message) => {
+            message.contains("not enabled through LACT") || message.contains("NixOS")
+        }
+        LactError::Io(_) | LactError::Protocol(_) => false,
+    }
+}
+
 impl Lact {
     /// What depends on overdrive on every GPU, read from what lactd stores now, and the note on
     /// saved profiles. An answer that cannot be read is an error, never an empty list.
@@ -478,9 +494,12 @@ impl Tuning {
         token: &str,
     ) -> Result<OverdriveResult, String> {
         let overdrive = &self.inner.overdrive;
+        // An earlier disable left the outcome open: no later answer can settle it.
+        let already_disabling;
         {
             let mut state = lock(&overdrive.state);
             Overdrive::check_idle(&state, self.inner.clock.now_ms())?;
+            already_disabling = state.disabling;
             let ticket = state
                 .ticket
                 .take()
@@ -516,7 +535,10 @@ impl Tuning {
                     .now_ms()
                     .saturating_add(STALLED_COOLDOWN_MS),
             );
-        } else if sent.is_err() {
+        } else if action == OverdriveAction::Disable
+            && !already_disabling
+            && sent.as_ref().is_err_and(proves_nothing_changed)
+        {
             state.disabling = false;
         }
         match sent {
@@ -1382,6 +1404,90 @@ mod tests {
             service.tuning.inner.overdrive.refuse_while_disabling(),
             Err(DISABLE_UNDER_WAY.to_owned())
         );
+    }
+
+    #[test]
+    fn a_disable_that_may_have_changed_something_keeps_the_stop() {
+        let stopped = Err(DISABLE_UNDER_WAY.to_owned());
+
+        // Changed since lactd started, by this request's predecessor or by another program.
+        let service = Service::on("toggled-stop", vec![]);
+        service.daemon.lock().unwrap().toggled = true;
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert_eq!(
+            service.tuning.change_overdrive(DISABLE, token(&plan)),
+            Err(REBOOT_PENDING.to_owned())
+        );
+        assert!(service.tuning.status(SLOT_B).reboot_pending);
+        assert_eq!(
+            service.tuning.inner.overdrive.refuse_while_disabling(),
+            stopped
+        );
+
+        // lactd removed its file before the initramfs failed. A retry, told the file is gone,
+        // proves nothing about the first attempt.
+        let service = Service::on("initramfs-stop", vec![]);
+        service.daemon.lock().unwrap().fail = Some("Initramfs generation command failed");
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert!(
+            service
+                .tuning
+                .change_overdrive(DISABLE, token(&plan))
+                .is_err()
+        );
+        assert_eq!(
+            service.tuning.inner.overdrive.refuse_while_disabling(),
+            stopped
+        );
+        service.daemon.lock().unwrap().file = false;
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert_eq!(
+            service.tuning.change_overdrive(DISABLE, token(&plan)),
+            Err(NOT_ENABLED_BY_LACT.to_owned())
+        );
+        assert_eq!(
+            service.tuning.inner.overdrive.refuse_while_disabling(),
+            stopped
+        );
+
+        // A failed enable says nothing about an earlier disable.
+        service.daemon.lock().unwrap().enabled = false;
+        service.daemon.lock().unwrap().fail = Some("Initramfs generation command failed");
+        let plan = service.tuning.prepare_overdrive(ENABLE).unwrap();
+        assert!(
+            service
+                .tuning
+                .change_overdrive(ENABLE, token(&plan))
+                .is_err()
+        );
+        assert_eq!(
+            service.tuning.inner.overdrive.refuse_while_disabling(),
+            stopped
+        );
+    }
+
+    #[test]
+    fn only_a_request_that_did_nothing_proves_nothing_changed() {
+        let daemon = |message: &str| LactError::Daemon(message.to_owned());
+        assert!(proves_nothing_changed(&LactError::SocketMissing));
+        assert!(proves_nothing_changed(&LactError::NotRunning));
+        assert!(proves_nothing_changed(&LactError::PermissionDenied));
+        assert!(proves_nothing_changed(&daemon(
+            "Overclocking was not enabled through LACT (file at x does not exist)"
+        )));
+        assert!(proves_nothing_changed(&daemon(
+            "Overdrive should be toggled through system config on NixOS"
+        )));
+        assert!(!proves_nothing_changed(&daemon(
+            "Overdrive support was already toggled - please reboot to apply the changes"
+        )));
+        assert!(!proves_nothing_changed(&daemon("Initramfs failed")));
+        assert!(!proves_nothing_changed(&LactError::Protocol(
+            "?".to_owned()
+        )));
+        assert!(!proves_nothing_changed(&LactError::Io(
+            std::io::ErrorKind::ConnectionReset.into()
+        )));
     }
 
     #[test]
