@@ -1087,7 +1087,7 @@ mod tests {
 
     #[test]
     fn the_clock_requests_use_the_0_10_1_shapes() {
-        let dir = temp("clocks");
+        let dir = temp("clock-requests");
         let socket = dir.0.join("lactd.sock");
         let client = LactClient::new(&socket).with_timeout(Duration::from_secs(2));
 
