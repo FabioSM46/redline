@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   BACKUP_FILE,
   chosenMetrics,
@@ -97,29 +97,52 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
   const [draftKey, setDraftKey] = useState<string | null>(null);
   const key = draftKey ?? settings.toggle_key;
 
-  // One write at a time, so a second change never overwrites the first with stale values. Busy is
-  // `aria-disabled` plus an early return, not `disabled`, so keyboard focus stays on the control.
-  // On failure the controls keep showing the saved values, and the backend's sentence is shown.
-  const busy = save.status === "saving" || takeOver.status === "saving";
+  // Writes run one at a time, and each is built on the newest saved settings when its turn comes.
+  // Nothing is dropped: leaving the key field for another control starts a save, and the click
+  // that caused it follows that save. On failure the controls keep showing the saved values, and
+  // the backend's sentence stays until the next change.
+  const latest = useRef(settings);
+  latest.current = settings;
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const [pending, setPending] = useState(0);
 
-  function saveSettings(next: OverlaySettings) {
-    if (busy) return;
+  function enqueue(write: () => Promise<void>) {
     setNote(null);
-    setSave({ status: "saving" });
-    invoke<OverlayStatus>("set_overlay", { settings: next }).then(
-      (reply) => {
-        onStatus(reply);
-        setSave(IDLE);
-        setDraftKey(null);
-        setNote(savedNote(reply.config));
-      },
-      (e) => setSave({ status: "error", message: String(e) }),
-    );
+    setPending((count) => count + 1);
+    queue.current = queue.current.then(write).finally(() => setPending((count) => count - 1));
+  }
+
+  function accept(reply: OverlayStatus) {
+    latest.current = reply.settings;
+    onStatus(reply);
+  }
+
+  function saveSettings(change: (current: OverlaySettings) => OverlaySettings) {
+    setSave(IDLE);
+    enqueue(() => {
+      const current = latest.current;
+      const next = change(current);
+      if (next === current) return Promise.resolve();
+      return invoke<OverlayStatus>("set_overlay", { settings: next }).then(
+        (reply) => {
+          accept(reply);
+          setDraftKey((draft) => (draft === reply.settings.toggle_key ? null : draft));
+          setNote(savedNote(reply.config));
+        },
+        (e) => setSave({ status: "error", message: String(e) }),
+      );
+    });
+  }
+
+  /** A change to anything but the key: a key that was refused goes back to the saved one. */
+  function saveChoice(change: (current: OverlaySettings) => OverlaySettings) {
+    setDraftKey(null);
+    saveSettings(change);
   }
 
   function saveKey() {
     if (key === settings.toggle_key) setDraftKey(null);
-    else saveSettings({ ...settings, toggle_key: key });
+    else saveSettings((current) => ({ ...current, toggle_key: key }));
   }
 
   function onKeySubmit(event: FormEvent) {
@@ -127,18 +150,21 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
     saveKey();
   }
 
+  const takingOver = takeOver.status === "saving";
+
   function confirmTakeOver() {
-    if (busy) return;
-    setNote(null);
+    if (takingOver) return;
     setTakeOver({ status: "saving" });
-    invoke<OverlayStatus>("take_over_overlay_config").then(
-      (reply) => {
-        onStatus(reply);
-        setTakeOver(IDLE);
-        setConfirming(false);
-        setNote(`Redline now manages MangoHud.conf. Your file is kept as ${BACKUP_FILE}.`);
-      },
-      (e) => setTakeOver({ status: "error", message: String(e) }),
+    enqueue(() =>
+      invoke<OverlayStatus>("take_over_overlay_config").then(
+        (reply) => {
+          accept(reply);
+          setTakeOver(IDLE);
+          setConfirming(false);
+          setNote(`Redline now manages MangoHud.conf. Your file is kept as ${BACKUP_FILE}.`);
+        },
+        (e) => setTakeOver({ status: "error", message: String(e) }),
+      ),
     );
   }
 
@@ -172,7 +198,7 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
                   <button
                     type="button"
                     className="button button-primary"
-                    aria-disabled={busy}
+                    aria-disabled={takingOver}
                     onClick={confirmTakeOver}
                   >
                     Keep my file and continue
@@ -181,9 +207,9 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
                     type="button"
                     className="button"
                     autoFocus
-                    aria-disabled={busy}
+                    aria-disabled={takingOver}
                     onClick={() => {
-                      if (busy) return;
+                      if (takingOver) return;
                       setConfirming(false);
                       setTakeOver(IDLE);
                     }}
@@ -193,7 +219,7 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
                 </div>
               </div>
             ) : (
-              <button type="button" className="button" aria-disabled={busy} onClick={() => !busy && setConfirming(true)}>
+              <button type="button" className="button" onClick={() => setConfirming(true)}>
                 Let Redline manage it
               </button>
             )}
@@ -221,8 +247,7 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
                 name="overlay-preset"
                 value={option.value}
                 checked={settings.preset === option.value}
-                aria-disabled={busy}
-                onChange={() => saveSettings({ ...settings, preset: option.value })}
+                onChange={() => saveChoice((current) => ({ ...current, preset: option.value }))}
               />
               <span>{option.label}</span>
             </label>
@@ -235,9 +260,9 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
           className="setting-select"
           aria-label="Position"
           value={settings.position}
-          aria-disabled={busy}
           onChange={(event) => {
-            if (!busy) saveSettings({ ...settings, position: event.target.value as OverlayPosition });
+            const position = event.target.value as OverlayPosition;
+            saveChoice((current) => ({ ...current, position }));
           }}
         >
           {OVERLAY_POSITIONS.map((option) => (
@@ -260,7 +285,6 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
             aria-label="Toggle key"
             spellCheck={false}
             value={key}
-            readOnly={busy}
             aria-invalid={save.status === "error" && draftKey !== null}
             onChange={(event) => setDraftKey(event.target.value)}
             onBlur={saveKey}
@@ -286,10 +310,8 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
                     role="switch"
                     className="switch"
                     checked={chosen.includes(metric.value)}
-                    aria-disabled={busy || isLastMetric(settings, metric.value)}
-                    onChange={() => {
-                      if (!isLastMetric(settings, metric.value)) saveSettings(toggleMetric(settings, metric.value));
-                    }}
+                    aria-disabled={isLastMetric(settings, metric.value)}
+                    onChange={() => saveChoice((current) => toggleMetric(current, metric.value))}
                   />
                 </label>
               ))}
@@ -298,8 +320,7 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
               <button
                 type="button"
                 className="link-button"
-                aria-disabled={busy}
-                onClick={() => saveSettings({ ...settings, metrics: [] })}
+                onClick={() => saveChoice((current) => ({ ...current, metrics: [] }))}
               >
                 Use the preset's figures
               </button>
@@ -313,9 +334,9 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
           {save.message}
         </p>
       )}
-      {note !== null && (
+      {(pending > 0 || note !== null) && (
         <p className="setting-note overlay-message" role="status">
-          {note}
+          {pending > 0 ? "Saving…" : note}
         </p>
       )}
 
