@@ -17,7 +17,15 @@ import {
   lactUnreachable,
   NO_PENDING,
   outcomeSentence,
+  dependencyAction,
+  dependencyDetail,
+  NOT_ENABLED_BY_LACT,
+  notEnabledByLact,
+  type OverdriveDependency,
+  overdriveAction,
+  overdriveBlocked,
   overdriveView,
+  planConfirmable,
   PENDING_EVENT,
   type PendingChange,
   pendingReducer,
@@ -30,6 +38,22 @@ import {
   TUNING_CHANGES,
   type TuningStatus,
 } from "./tuning.ts";
+
+const plan = {
+  action: "disable" as const,
+  steps: [],
+  reboot_required: true,
+  dependencies: [],
+  saved_profiles: null,
+  token: "t",
+  expires_ms: 1_000,
+};
+const fanItem: OverdriveDependency = {
+  gpu_id: "0000:0d:00.0",
+  kind: "fan",
+  profile: null,
+  sentence: "The GPU has a fan curve stored in LACT.",
+};
 
 const power: PowerLimit = { current_w: 250, min_w: 150, max_w: 300, default_w: 250 };
 
@@ -246,9 +270,46 @@ describe("status views", () => {
   });
 
   it("an overdrive plan expires at its deadline", () => {
-    const plan = { action: "enable" as const, steps: [], reboot_required: true, token: "t", expires_ms: 1_000 };
     assert.equal(planExpired(plan, 999), false);
     assert.equal(planExpired(plan, 1_000), true);
+  });
+
+  it("the switch goes the way overdrive is not, and nowhere while a reboot is due", () => {
+    assert.equal(overdriveAction("enabled"), "disable");
+    assert.equal(overdriveAction("disabled"), "enable");
+    assert.equal(overdriveAction("reboot"), null);
+    assert.equal(overdriveAction("unknown"), null);
+  });
+
+  it("a switch that cannot act gives one reason, the most immediate first", () => {
+    const free = { running: false, locked: false, refusal: null };
+    assert.equal(overdriveBlocked("enabled", free), null);
+    assert.equal(overdriveBlocked("disabled", free), null);
+    assert.equal(/request/.test(overdriveBlocked("enabled", { ...free, running: true }) ?? ""), true);
+    assert.equal(/waiting for an answer/.test(overdriveBlocked("enabled", { ...free, locked: true }) ?? ""), true);
+    assert.equal(/Reboot/.test(overdriveBlocked("reboot", free) ?? ""), true);
+    assert.equal(/does not report/.test(overdriveBlocked("unknown", free) ?? ""), true);
+    assert.equal(overdriveBlocked("enabled", { ...free, refusal: "Not through LACT." }), "Not through LACT.");
+    assert.equal(/request/.test(overdriveBlocked("reboot", { ...free, running: true, locked: true }) ?? ""), true);
+  });
+
+  it("a plan with something depending on overdrive cannot be confirmed", () => {
+    assert.equal(planConfirmable(plan), true);
+    assert.equal(planConfirmable({ ...plan, token: null }), false);
+    assert.equal(planConfirmable({ ...plan, dependencies: [fanItem] }), false);
+  });
+
+  it("an item's action says which profile it changes", () => {
+    assert.equal(dependencyAction(fanItem), "Back to default");
+    assert.equal(dependencyDetail(fanItem), "fan back to automatic");
+    const clocksInProfile = { ...fanItem, kind: "clocks" as const, profile: "Gaming" };
+    assert.equal(dependencyAction(clocksInProfile), 'Back to default in "Gaming"');
+    assert.equal(dependencyDetail(clocksInProfile), 'back to factory values, saved in the profile "Gaming"');
+  });
+
+  it("tells a refusal that holds until LACT changes from any other", () => {
+    assert.equal(notEnabledByLact(`${NOT_ENABLED_BY_LACT}, so LACT cannot disable it.`), true);
+    assert.equal(notEnabledByLact("LACT could not change overdrive: failed"), false);
   });
 });
 
@@ -274,7 +335,8 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
     assert.deepEqual(fields(rust, "Settled"), ["gpu_id", "outcome"]);
     assert.deepEqual(fields(clocksSource, "ClocksStatus"), Object.keys(clocks).sort());
     assert.deepEqual(fields(clocksSource, "ClockControl"), Object.keys(clockControl).sort());
-    assert.deepEqual(fields(overdrive, "OverdrivePlan"), ["action", "expires_ms", "reboot_required", "steps", "token"]);
+    assert.deepEqual(fields(overdrive, "OverdrivePlan"), Object.keys(plan).sort());
+    assert.deepEqual(fields(overdrive, "OverdriveDependency"), Object.keys(fanItem).sort());
   });
 
   it("has every field of the fan structs", () => {
@@ -292,6 +354,13 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
     assert.deepEqual(fields(fanSource, "SpeedRange"), keys(rules.speed));
     assert.deepEqual(fields(fanSource, "FanSettings"), keys(fanSettings));
     assert.deepEqual(fields(fanSource, "PmfwSettings"), keys(pmfwSettings));
+  });
+
+  it("has the same overdrive kinds and refusal", () => {
+    const body = overdrive.slice(overdrive.indexOf("pub enum OverdriveDependencyKind {"));
+    const kinds = [...body.slice(0, body.indexOf("\n}")).matchAll(/^\s+(\w+),/gm)].map((m) => m[1].toLowerCase());
+    assert.deepEqual(kinds, ["clocks", "fan"]);
+    assert.equal(overdrive.includes(`NOT_ENABLED_BY_LACT: &str = "${NOT_ENABLED_BY_LACT}`), true);
   });
 
   it("has the same fan modes", () => {

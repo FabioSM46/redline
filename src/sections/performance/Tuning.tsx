@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useGpu } from "../../GpuContext.tsx";
 import { PROFILE_EVENT } from "../../profiles.ts";
 import type { Navigate } from "../../tabs.ts";
-import { changeLabel, lactUnreachable, outcomeSentence, type TuningStatus } from "../../tuning.ts";
+import { changeLabel, lactUnreachable, outcomeSentence, type PendingState, type TuningStatus } from "../../tuning.ts";
 import type { TuningBlockProps } from "./tuning/block.ts";
 import { ClocksBlock } from "./tuning/Clocks.tsx";
 import { FanBlock } from "./tuning/Fan.tsx";
@@ -118,6 +118,7 @@ export function Tuning({ navigate }: { navigate: Navigate }) {
           apply={apply}
           navigate={navigate}
           reload={reload}
+          settled={settled}
           onOverdriveBusy={setOverdriveBusy}
         />
       )}
@@ -128,11 +129,13 @@ export function Tuning({ navigate }: { navigate: Navigate }) {
 function TuningBody({
   navigate,
   reload,
+  settled,
   onOverdriveBusy,
   ...block
 }: TuningBlockProps & {
   navigate: Navigate;
   reload: () => void;
+  settled: PendingState["settled"];
   onOverdriveBusy: (busy: boolean) => void;
 }) {
   const { status } = block;
@@ -147,7 +150,14 @@ function TuningBody({
       {status.available && <Blocks {...block} />}
       {/* Overdrive is system-wide: it needs LACT running, not a GPU LACT manages. */}
       {status.lact_version !== null && (
-        <OverdriveBlock status={status} locked={block.locked} onBusy={onOverdriveBusy} onChanged={reload} />
+        <OverdriveBlock
+          status={status}
+          locked={block.locked}
+          apply={block.apply}
+          settled={settled}
+          onBusy={onOverdriveBusy}
+          onChanged={reload}
+        />
       )}
     </>
   );

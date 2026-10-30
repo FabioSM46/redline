@@ -34,8 +34,7 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 ### The package
 
 - [ ] `dpkg-deb -c <file>.deb` lists `usr/share/applications/com.fabiosm46.redline.desktop` and no
-      `redline.desktop`. This has only run on test packages since `deb-desktop-id.sh` last
-      changed, never on a real build with `tauri.release.linux.conf.json`.
+      `redline.desktop`.
 - [ ] It also lists `usr/share/doc/redline/THIRD-PARTY-LICENSES`,
       `usr/share/redline/install-dependency` and the polkit action.
 
@@ -46,7 +45,7 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 - [ ] With nothing else installed, Settings → Dependencies shows the four tools as missing and the
       features that need them say what to do.
 - [ ] Guided install of **LACT**, of **GPU Screen Recorder**, of **ffmpeg** and of **MangoHud**,
-      each with its real `pkexec` prompt. No guided MangoHud install has run through a real
+      each with its real `pkexec` prompt. No guided MangoHud install is recorded through a real
       `pkexec` yet.
 - [ ] After each one, the row turns to installed without restarting the app.
 - [ ] Cancelling the password prompt changes nothing and the page says so.
@@ -63,7 +62,7 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       the tray when that option is on.
 - [ ] Old autostart entry: with a Redline-written `~/.config/autostart/redline.desktop` in place
       and no new entry, start the app. Only `com.fabiosm46.redline.desktop` remains, and the next
-      login starts the app once. Only unit tests have exercised this, not a real autostart folder.
+      login starts the app once.
 - [ ] Light and dark: every tab reads correctly in both.
 
 ### Shortcuts (GNOME 48 or later, or KDE)
@@ -95,6 +94,19 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       reverts without it.
 - [ ] An instant replay saves a clip with its audio tracks.
 
+### Overdrive switch (AMD GPU, overdrive on, enabled through LACT)
+
+Run these in light and dark.
+
+- [ ] With a fan curve and a stored undervolt, turn the switch off: the plan lists both, names the
+      GPU and, if there is one, the active profile, and the confirmation stays disabled.
+- [ ] Back to default on the fan and on the clocks: each asks to keep or revert. Revert one and it
+      stays listed; keep both and the list empties, which enables the confirmation.
+- [ ] Confirm: the section says a reboot is needed, and a fan curve, a clock value and a profile
+      switch are refused until then.
+- [ ] Reboot: overdrive is off and the fans still respond to temperature under the firmware.
+- [ ] Turn the switch on, confirm and reboot: overdrive is back.
+
 ### Clocks and voltage (AMD GPU, overdrive on)
 
 Use small, safe values, and keep a console or SSH session at hand: an unstable value can freeze
@@ -111,12 +123,36 @@ the machine. Run these in light and dark.
 - [ ] A value outside the range, and a positive voltage offset, are refused inline and nothing
       changes.
 - [ ] With overdrive off the block points to the Overdrive section, and with `lactd` stopped it
-      says what to do. No clock or voltage change has run on real hardware yet.
+      says what to do.
 - [ ] Recovery as D13 describes it: with a confirmed value stored, turn overdrive off, reboot and
       reset from the app; then the console route, stopping `lactd` and restarting it after removing
       the values from `/etc/lact/config.yaml`.
 
 Anything that fails goes to an issue and a PR on `develop`, and the checks start again.
+
+## Manual checks run
+
+The list above is a template and stays unchecked: this section is the record of a run. Reported by
+the maintainer on one machine (Ubuntu, GNOME on Wayland, an RDNA4 GPU) on 2026-10-30, with the
+published `0.1.0` package unless a line says otherwise. All passed:
+
+- install of the `.deb`, guided install (the report does not name each of the four tools, so a
+  real MangoHud install through `pkexec` is not recorded), autostart, tray, light and dark;
+- power limit: revert at the timeout, and confirmation;
+- overdrive enabled, with the reboot;
+- undervolt: revert at the timeout, manual revert, confirmation that survives a reboot;
+- reset to factory values, also after a reboot;
+- positive and out-of-range values refused;
+- core and VRAM clocks;
+- overlay: presets, position, toggle key, Copy, take-over, in a game started from Lutris;
+- replay and recording.
+- `dpkg-deb -c` on `redline_0.2.0_amd64.deb`, built locally with the release commands and
+  `deb-desktop-id.sh`: the checks of "The package";
+- overdrive switch from a `develop` build: the guard, "Back to default", the stop until the
+  reboot, and the fans under the firmware after turning overdrive off.
+
+Not run: a clean virtual machine, Ubuntu 26.04, Debian 13, the shortcuts on GNOME 48 or KDE, and
+the recovery routes of D13.
 
 ## 3. Merge and tag
 

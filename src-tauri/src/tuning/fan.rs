@@ -479,6 +479,30 @@ impl Lact {
             .ok();
     }
 
+    /// The fan is driven by the firmware, so anything but automatic needs overdrive.
+    fn has_firmware_fan(&self, lact_id: &str) -> Result<bool, String> {
+        self.client
+            .device_info(lact_id)
+            .map(|info| info.has(&DeviceFlag::HasPmfw))
+            .map_err(|error| self.reason(&error))
+    }
+
+    /// Gives the fan back to the firmware and clears the stored firmware options: `pmfw` replaces
+    /// them as a whole, and `mode: null` leaves the stored curve in place, unused. The curve is
+    /// still there if the user switches back to it.
+    fn reset_fan(&self, lact_id: &str) -> Result<u64, String> {
+        self.client
+            .set_fan_control(&FanOptions {
+                id: lact_id.to_owned(),
+                enabled: false,
+                mode: None,
+                static_speed: None,
+                curve: None,
+                pmfw: PmfwOptions::default(),
+            })
+            .map_err(|error| self.refusal(&error))
+    }
+
     /// Checks `settings` against the GPU and sends `set_fan_control`.
     fn set_fan(&self, gpu_id: &str, lact_id: &str, settings: &FanSettings) -> Result<u64, String> {
         let reason = |error| self.reason(&error);
@@ -502,8 +526,23 @@ impl Tuning {
     /// The fan of `gpu_id`, checked against what the GPU can do. Pending until confirmed.
     /// Blocking.
     pub fn set_fan(&self, gpu_id: &str, settings: &FanSettings) -> Result<PendingChange, String> {
+        // Automatic with no new firmware option is the way back, and needs no overdrive.
+        let way_back =
+            settings.mode == FanSetting::Auto && settings.pmfw == PmfwSettings::default();
         self.apply(gpu_id, TuningChange::Fan, |lact, lact_id| {
+            let stop = self.inner.overdrive.refuse_while_disabling();
+            if stop.is_err() && !way_back && lact.has_firmware_fan(lact_id)? {
+                stop?;
+            }
             lact.set_fan(gpu_id, lact_id, settings)
+        })
+    }
+
+    /// The fan of `gpu_id` back under the firmware's control, with no firmware option stored.
+    /// Pending until confirmed. Blocking.
+    pub fn reset_fan(&self, gpu_id: &str) -> Result<PendingChange, String> {
+        self.apply(gpu_id, TuningChange::Fan, |lact, lact_id| {
+            lact.reset_fan(lact_id)
         })
     }
 }
@@ -518,6 +557,13 @@ pub async fn set_fan(
     tuning: State<'_, Tuning>,
 ) -> Result<PendingChange, String> {
     super::blocking(&tuning, move |tuning| tuning.set_fan(&gpu_id, &settings)).await?
+}
+
+/// Gives the fan of `gpu_id` back to the firmware and clears its stored firmware options. The
+/// change is pending like any other.
+#[tauri::command]
+pub async fn reset_fan(gpu_id: String, tuning: State<'_, Tuning>) -> Result<PendingChange, String> {
+    super::blocking(&tuning, move |tuning| tuning.reset_fan(&gpu_id)).await?
 }
 
 #[cfg(test)]

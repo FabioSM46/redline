@@ -9,11 +9,10 @@ actually use and leaves the rest out.
 
 ## Status
 
-**M0 — Foundations**, **M1 — Performance**, **M2 — Recording** and **M3 — Tuning** are done, and
-**M4 — Overlay and release** closes with the first published package, 0.1.0 (see the
-[roadmap](docs/roadmap.md) and the [changelog](CHANGELOG.md)). Until it appears on
-[GitHub Releases](https://github.com/FabioSM46/redline/releases), build from source (see
-[Development](#development)).
+**M0 — Foundations**, **M1 — Performance**, **M2 — Recording**, **M3 — Tuning** and
+**M4 — Overlay and release** are done. Published packages are on
+[GitHub Releases](https://github.com/FabioSM46/redline/releases) (see the
+[roadmap](docs/roadmap.md) and the [changelog](CHANGELOG.md)).
 
 ## Features
 
@@ -88,8 +87,10 @@ sudo bash scripts/install-deps.sh
 The fan curve on RDNA3/4 GPUs needs overdrive, the `0x4000` bit of the `amdgpu.ppfeaturemask`
 kernel parameter. In **Performance → Tuning → Overdrive** Redline shows what LACT will change (it
 sets the parameter for the next boot and updates the boot files) and asks it to go ahead only
-after you confirm. Redline never edits those files itself and never reboots: the change takes
-effect after you reboot.
+after you confirm. The same switch turns it off, and refuses while a fan curve, a firmware fan
+setting or a stored clock value still needs it, on any GPU and including the active profile: each
+one has a **Back to default** action that you keep or revert. Redline never edits those files
+itself and never reboots: the change takes effect after you reboot.
 
 ### Overlay
 
