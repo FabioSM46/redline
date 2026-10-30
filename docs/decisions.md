@@ -231,10 +231,33 @@ B, #56): **Redline may ask `lactd` to enable or disable it, after an explicit co
 - It is not a pending change: lactd has nothing to confirm or revert, and the running kernel keeps
   its value until the reboot. `tuning_status.overdrive_enabled` keeps reading the live value;
   `reboot_pending` says it was changed in this session. lactd allows one change per daemon start.
+- **One switch, and a guard on the way off** (#119). Overdrive is never disabled while something
+  needs it, because the fans would stop being controlled. `prepare_disable_overdrive` lists what
+  depends on it on every `amdgpu` GPU, read from what lactd stores (`get_gpu_config`, which is the
+  active profile's copy when one is active): clock or voltage values, and on a firmware fan
+  (`HasPmfw`) a curve or fixed speed in use or firmware fan options. A plan with a list has no token,
+  and `disable_overdrive` reads the list again, refusing if it is not empty, if it cannot be read
+  or while a change is pending. A saved profile that is not active does not block, and the plan
+  says so.
+- **Default values are never restored silently.** Each item has a "Back to default" action:
+  `reset_clocks`, or `reset_fan`, which is `set_fan_control` with the fan automatic and the firmware
+  options cleared (`set_fan` keeps the stored ones). Each is a pending change the user keeps or
+  reverts, and under an active profile it changes that profile's copy, which the action says. A
+  reset inside the disable request would confirm on the user's behalf.
+- **From the disable until the reboot, nothing that needs overdrive can be set.** The running
+  kernel keeps it, so `set_fan` on a firmware fan (other than back to automatic), `set_clocks` and `activate_profile`
+  would be accepted and left stored for a boot without it. The stop lives in the session, like
+  `reboot_pending`. Only an answer that proves nothing changed lifts it: lactd unreachable, or its
+  refusals that come before it touches anything. A timeout, "already toggled", an initramfs failure
+  or an unreadable answer all keep it.
+- Known limits: lactd holds its one pending change in memory with no request to read it, so one
+  left by the LACT app is invisible here; and LACT's automatic profile switching can activate a
+  saved profile later, which the plan says.
 
 Rejected: writing the modprobe file or the boot arguments from Redline (it would need root);
 keeping overdrive manual-only (the fan curve, the main M3 feature on RDNA3/4, would need the user
-to edit boot files by hand).
+to edit boot files by hand); resetting the dependent settings inside the disable request (see
+above).
 
 ## D12 — The overlay is MangoHud, configured through its user config file (2026-10-30)
 

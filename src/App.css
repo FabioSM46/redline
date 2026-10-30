@@ -1004,6 +1004,27 @@ body {
   margin: 0;
 }
 
+.tuning-block > .tuning-plan {
+  margin-top: var(--space-sm);
+}
+
+.tuning-dependencies {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tuning-dependency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--text-sm);
+}
+
 /* Performance → Tuning → Fan: the curve editor is SVG, so its colours are these tokens and follow
  * light and dark through the base ones. The accent is the curve the user edits; the current
  * temperature is muted, and speeds the GPU refuses are shaded. */

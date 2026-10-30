@@ -260,6 +260,8 @@ pub struct Lact {
     search_path: OsString,
     /// Where the DRM cards are read (the firmware fan curve); tests pass a fake tree.
     drm: PathBuf,
+    /// The file LACT writes to enable overdrive; tests pass a temporary one.
+    modprobe_file: PathBuf,
 }
 
 impl Lact {
@@ -268,6 +270,7 @@ impl Lact {
             client,
             search_path,
             drm: PathBuf::from(redline_core::sensors::DRM_ROOT),
+            modprobe_file: PathBuf::from(lact::OVERDRIVE_MODPROBE_FILE),
         }
     }
 
@@ -275,6 +278,13 @@ impl Lact {
     #[cfg(test)]
     pub fn with_drm_root(mut self, drm: impl Into<PathBuf>) -> Self {
         self.drm = drm.into();
+        self
+    }
+
+    /// The same, looking for LACT's overdrive file at `file`.
+    #[cfg(test)]
+    pub fn with_modprobe_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.modprobe_file = file.into();
         self
     }
 
@@ -640,8 +650,33 @@ impl Tuning {
         what: TuningChange,
         send: impl FnOnce(&Lact, &str) -> Result<u64, String>,
     ) -> Result<PendingChange, String> {
+        self.apply_checked(gpu_id, what, false, send)
+    }
+
+    /// [`Tuning::apply`] for a change that may need overdrive at the next boot, refused once
+    /// overdrive is being turned off. The check is under the control lock, where disabling reads
+    /// what depends on overdrive: a change lands before that read or is refused.
+    fn apply_needing_overdrive(
+        &self,
+        gpu_id: &str,
+        what: TuningChange,
+        send: impl FnOnce(&Lact, &str) -> Result<u64, String>,
+    ) -> Result<PendingChange, String> {
+        self.apply_checked(gpu_id, what, true, send)
+    }
+
+    fn apply_checked(
+        &self,
+        gpu_id: &str,
+        what: TuningChange,
+        needs_overdrive: bool,
+        send: impl FnOnce(&Lact, &str) -> Result<u64, String>,
+    ) -> Result<PendingChange, String> {
         let _control = lock(&self.inner.control);
         self.refuse_if_pending(gpu_id)?;
+        if needs_overdrive {
+            self.inner.overdrive.refuse_while_disabling()?;
+        }
         let lact = &self.inner.lact;
         let seconds = send(lact, &lact.device_id(gpu_id)?)?;
         Ok(self.begin_pending(gpu_id, what, seconds.saturating_mul(1000), None))

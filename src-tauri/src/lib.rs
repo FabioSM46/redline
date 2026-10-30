@@ -102,6 +102,7 @@ pub fn run() {
             tuning::profiles::activate_profile,
             tuning::profiles::delete_profile,
             tuning::fan::set_fan,
+            tuning::fan::reset_fan,
             tuning::clocks::set_clocks,
             tuning::clocks::reset_clocks,
             tuning::overdrive::prepare_enable_overdrive,

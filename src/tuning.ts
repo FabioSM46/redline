@@ -137,12 +137,28 @@ export type TuningStatus = {
   pending: PendingChange | null;
 };
 
-/** Mirrors `tuning::overdrive::OverdrivePlan` (`prepare_enable_overdrive`). */
+/** Mirrors `tuning::overdrive::OverdriveAction`. */
+export type OverdriveAction = "enable" | "disable";
+
+/** Mirrors `tuning::overdrive::OverdriveDependency`: one setting that stops a disable. */
+export type OverdriveDependency = {
+  gpu_id: string;
+  /** Mirrors `tuning::overdrive::OverdriveDependencyKind`: `reset_clocks` or `reset_fan`. */
+  kind: "clocks" | "fan";
+  /** The active LACT profile that holds it; null is LACT's default configuration. */
+  profile: string | null;
+  sentence: string;
+};
+
+/** Mirrors `tuning::overdrive::OverdrivePlan` (`prepare_enable_overdrive` and its disable twin). */
 export type OverdrivePlan = {
-  action: "enable" | "disable";
+  action: OverdriveAction;
   steps: string[];
   reboot_required: boolean;
-  token: string;
+  dependencies: OverdriveDependency[];
+  saved_profiles: string | null;
+  /** Null while `dependencies` is not empty: the plan cannot be confirmed. */
+  token: string | null;
   expires_ms: number;
 };
 
@@ -307,6 +323,48 @@ export function overdriveView(status: TuningStatus): OverdriveView {
   if (status.overdrive_enabled === true) return "enabled";
   if (status.overdrive_enabled === false) return "disabled";
   return "unknown";
+}
+
+/** The start of `tuning::overdrive::NOT_ENABLED_BY_LACT`: LACT can never turn this one off. */
+export const NOT_ENABLED_BY_LACT = "Overdrive was not enabled through LACT";
+
+export function notEnabledByLact(message: string): boolean {
+  return message.startsWith(NOT_ENABLED_BY_LACT);
+}
+
+/** Which way the switch goes, or null when overdrive is in no state to change. */
+export function overdriveAction(view: OverdriveView): OverdriveAction | null {
+  if (view === "enabled") return "disable";
+  return view === "disabled" ? "enable" : null;
+}
+
+/** Why the switch cannot act now, as one sentence, or null when it can. */
+export function overdriveBlocked(
+  view: OverdriveView,
+  { running, locked, refusal }: { running: boolean; locked: boolean; refusal: string | null },
+): string | null {
+  if (running) return "Wait for the current overdrive request to finish.";
+  if (refusal !== null) return refusal;
+  if (view === "reboot") return "Reboot to apply the last overdrive change before changing it again.";
+  if (view === "unknown") return "The switch cannot act because LACT does not report the state of overdrive.";
+  if (locked) return "A tuning change is waiting for an answer: finish it first.";
+  return null;
+}
+
+/** A plan the user can confirm: it carries a token and nothing depends on overdrive. */
+export function planConfirmable(plan: OverdrivePlan): boolean {
+  return plan.token !== null && plan.dependencies.length === 0;
+}
+
+/** The label of an item's way back: it names the profile the action changes. */
+export function dependencyAction(item: OverdriveDependency): string {
+  return item.profile === null ? "Back to default" : `Back to default in "${item.profile}"`;
+}
+
+/** What the confirmation panel says an item's way back changed. */
+export function dependencyDetail(item: OverdriveDependency): string {
+  const what = item.kind === "clocks" ? "back to factory values" : "fan back to automatic";
+  return item.profile === null ? what : `${what}, saved in the profile "${item.profile}"`;
 }
 
 /** An overdrive plan's token is accepted until `expires_ms`. */
