@@ -95,6 +95,19 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       reverts without it.
 - [ ] An instant replay saves a clip with its audio tracks.
 
+### Overdrive switch (AMD GPU, overdrive on, enabled through LACT)
+
+Run these in light and dark.
+
+- [ ] With a fan curve and a stored undervolt, turn the switch off: the plan lists both, names the
+      GPU and, if there is one, the active profile, and the confirmation stays disabled.
+- [ ] Back to default on the fan and on the clocks: each asks to keep or revert. Revert one and it
+      stays listed; keep both and the list empties, which enables the confirmation.
+- [ ] Confirm: the section says a reboot is needed, and a fan curve, a clock value and a profile
+      switch are refused until then.
+- [ ] Reboot: overdrive is off and the fans still respond to temperature under the firmware.
+- [ ] Turn the switch on, confirm and reboot: overdrive is back.
+
 ### Clocks and voltage (AMD GPU, overdrive on)
 
 Use small, safe values, and keep a console or SSH session at hand: an unstable value can freeze

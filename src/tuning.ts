@@ -325,6 +325,48 @@ export function overdriveView(status: TuningStatus): OverdriveView {
   return "unknown";
 }
 
+/** The start of `tuning::overdrive::NOT_ENABLED_BY_LACT`: LACT can never turn this one off. */
+export const NOT_ENABLED_BY_LACT = "Overdrive was not enabled through LACT";
+
+export function notEnabledByLact(message: string): boolean {
+  return message.startsWith(NOT_ENABLED_BY_LACT);
+}
+
+/** Which way the switch goes, or null when overdrive is in no state to change. */
+export function overdriveAction(view: OverdriveView): OverdriveAction | null {
+  if (view === "enabled") return "disable";
+  return view === "disabled" ? "enable" : null;
+}
+
+/** Why the switch cannot act now, as one sentence, or null when it can. */
+export function overdriveBlocked(
+  view: OverdriveView,
+  { running, locked, refusal }: { running: boolean; locked: boolean; refusal: string | null },
+): string | null {
+  if (running) return "Wait for the current overdrive request to finish.";
+  if (refusal !== null) return refusal;
+  if (view === "reboot") return "Reboot to apply the last overdrive change before changing it again.";
+  if (view === "unknown") return "The switch cannot act because LACT does not report the state of overdrive.";
+  if (locked) return "A tuning change is waiting for an answer: finish it first.";
+  return null;
+}
+
+/** A plan the user can confirm: it carries a token and nothing depends on overdrive. */
+export function planConfirmable(plan: OverdrivePlan): boolean {
+  return plan.token !== null && plan.dependencies.length === 0;
+}
+
+/** The label of an item's way back: it names the profile the action changes. */
+export function dependencyAction(item: OverdriveDependency): string {
+  return item.profile === null ? "Back to default" : `Back to default in "${item.profile}"`;
+}
+
+/** What the confirmation panel says an item's way back changed. */
+export function dependencyDetail(item: OverdriveDependency): string {
+  const what = item.kind === "clocks" ? "back to factory values" : "fan back to automatic";
+  return item.profile === null ? what : `${what}, saved in the profile "${item.profile}"`;
+}
+
 /** An overdrive plan's token is accepted until `expires_ms`. */
 export function planExpired(plan: OverdrivePlan, nowMs: number): boolean {
   return nowMs >= plan.expires_ms;
