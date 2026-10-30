@@ -94,9 +94,12 @@ effect after you reboot.
 ### Overlay
 
 The overlay is MangoHud, and **Performance → Metrics → Overlay** chooses what it shows. It appears
-only in the games you enable it for: in Steam, paste `mangohud %command%` into the game's
-Launch options (the page has a Copy button). A `MangoHud.conf` of your own stays untouched until
-you agree, in the same page, to let Redline manage it.
+only in the games you start with MangoHud. In Steam, paste `mangohud %command%` into the game's
+Launch options (the page has a Copy button). In Lutris, open the game's Configure → System options
+and turn on **FPS counter (MangoHud)**, or enter `mangohud`, without `%command%`, as the Command
+prefix, under Advanced; under Wine the overlay is reliable only on Vulkan, which normally means
+DXVK. A `MangoHud.conf` of your own stays untouched until you agree, in the same page, to let
+Redline manage it.
 
 ## Stack
 
