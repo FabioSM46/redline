@@ -10,7 +10,7 @@ export function Performance({ navigate }: SectionProps) {
   return (
     <section className="section">
       <TabList className="subtabs" label="Performance" tabs={PERFORMANCE_TABS} active={tab} onSelect={setTab} />
-      {tab === "metrics" ? <Metrics /> : <Tuning navigate={navigate} />}
+      {tab === "metrics" ? <Metrics navigate={navigate} /> : <Tuning navigate={navigate} />}
     </section>
   );
 }

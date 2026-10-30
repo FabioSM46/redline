@@ -4,6 +4,8 @@ import { useGpu } from "../../GpuContext.tsx";
 import { TimeChart } from "../../charts/TimeChart.tsx";
 import { useChartPalette } from "../../charts/useChartPalette.ts";
 import { CHARTS, DEFAULT_WINDOW, type HistorySample, toColumns, WINDOWS, type WindowS, xRange } from "../../metrics.ts";
+import type { Navigate } from "../../tabs.ts";
+import { Overlay } from "./Overlay.tsx";
 
 type HistoryState = { status: "error"; message: string } | { status: "ok"; samples: HistorySample[] };
 
@@ -13,8 +15,11 @@ type StoredHistory = { gpuId: string; windowS: WindowS; state: HistoryState };
 const REFRESH_MS = 1000;
 const REQUEST_TIMEOUT_MS = 5 * REFRESH_MS;
 
-/** Charts over time of the selected GPU, from `gpu_history`, refreshed every second. */
-export function Metrics() {
+/**
+ * Charts over time of the selected GPU, from `gpu_history`, refreshed every second, and the
+ * in-game overlay's settings below them.
+ */
+export function Metrics({ navigate }: { navigate: Navigate }) {
   const { gpu } = useGpu();
   const [windowS, setWindowS] = useState<WindowS>(DEFAULT_WINDOW);
   const [stored, setStored] = useState<StoredHistory | null>(null);
@@ -100,6 +105,7 @@ export function Metrics() {
         ))}
       </div>
       {body}
+      <Overlay navigate={navigate} />
     </div>
   );
 }
