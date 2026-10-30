@@ -51,7 +51,7 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 - [ ] After each one, the row turns to installed without restarting the app.
 - [ ] Cancelling the password prompt changes nothing and the page says so.
 - [ ] On the other systems the README names (Ubuntu 26.04 or 24.04, Debian 13): the package
-      installs, starts, and the guided install of LACT succeeds.
+      installs, starts, and the guided install of all four tools succeeds.
 
 ### Tray, autostart and themes
 
@@ -113,7 +113,8 @@ git push origin v0.1.0
 - [ ] Download `redline_0.1.0_amd64.deb` from the draft and repeat the `dpkg-deb -c` checks of
       "The package".
 - [ ] Install it on the clean virtual machine; it starts from the menu.
-- [ ] Replace the draft's notes with the `CHANGELOG.md` entry.
+- [ ] Replace the draft's notes with the `CHANGELOG.md` entry, with `Unreleased` replaced by the
+      release date.
 
 If the package is wrong, do not publish: fix it through `develop` and `main`, then move the tag to
 the new commit. The workflow replaces the package of a draft, and refuses to touch a published

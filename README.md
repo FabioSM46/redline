@@ -62,14 +62,15 @@ signed.
 | Windows, macOS | Not supported: Redline is Linux only |
 
 **Redline itself is not available as a Flatpak**: the sandbox gets in the way of sysfs and of the
-`lactd` socket. GPU Screen Recorder is a separate program, and the guided install takes its
-Flatpak from Flathub.
+`lactd` socket. GPU Screen Recorder is a separate program: its guided install takes the Flatpak
+from Flathub, and first installs Flatpak and adds the Flathub remote if they are missing.
 
 ### Requirements
 
 - x86-64 Linux with an AMD GPU on the `amdgpu` driver (every recent Radeon)
 - Wayland or X11
-- For tuning: LACT 0.10.1 with the `lactd` daemon running
+- For tuning: LACT with the `lactd` daemon running (verified with 0.10.1, the version the guided
+  install takes; another version works with a warning)
 - For replay and recording: GPU Screen Recorder (verified with 6.1.6; another version works
   with a warning)
 - For previews of saved clips: ffmpeg
