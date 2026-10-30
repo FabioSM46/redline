@@ -77,7 +77,7 @@ export function Dependencies() {
     <div className="settings">
       <p className="settings-notice">
         Redline uses these tools. A missing one only turns its feature off: tuning needs LACT, replays and recordings
-        need GPU Screen Recorder, clip previews need ffmpeg.
+        need GPU Screen Recorder, clip previews need ffmpeg, the in-game overlay needs MangoHud.
       </p>
 
       {busy && (

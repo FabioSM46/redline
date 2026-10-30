@@ -106,6 +106,22 @@ export type FanSettings = {
   pmfw?: PmfwSettings;
 };
 
+/** Mirrors `tuning::clocks::ClockControl`. `min`/`max` are `null` when the firmware gives no range. */
+export type ClockControl = {
+  current: number;
+  min: number | null;
+  max: number | null;
+};
+
+/** Mirrors `tuning::clocks::ClocksStatus`. A control the GPU does not expose is `null`. */
+export type ClocksStatus = {
+  unavailable_reason: string | null;
+  max_core_clock: ClockControl | null;
+  core_clock_offset: ClockControl | null;
+  max_vram_clock: ClockControl | null;
+  voltage_offset: ClockControl | null;
+};
+
 /** Mirrors `tuning::TuningStatus` (`tuning_status`). */
 export type TuningStatus = {
   available: boolean;
@@ -116,6 +132,7 @@ export type TuningStatus = {
   reboot_pending: boolean;
   power: PowerLimit | null;
   fan: FanStatus | null;
+  clocks: ClocksStatus | null;
   profile: string | null;
   pending: PendingChange | null;
 };

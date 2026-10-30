@@ -19,6 +19,7 @@
 //! | `list_devices` | — | `Vec<`[`DeviceListEntry`]`>` |
 //! | `device_info` | `{ id, include_api_info: false }` | [`DeviceInfo`] |
 //! | `device_stats` | `{ id }` | [`DeviceStats`] |
+//! | `device_clocks_info` | `{ id }` | [`ClocksInfo`] (a refusal = no overdrive table) |
 //! | `get_gpu_config` | `{ id }` | `Option<`[`GpuConfig`]`>` (`null` = never configured) |
 //! | `list_profiles` | `{ include_state: false }` | [`ProfilesInfo`] |
 //! | `set_power_cap` | `{ id, cap }` (`cap: null` = default) | seconds until lactd reverts |
@@ -332,6 +333,96 @@ pub struct DeviceStats {
     pub performance_level: Option<String>,
 }
 
+/// A range of the overdrive table (`amdgpu_sysfs::…::Range`); either end may be missing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ClockRange {
+    pub min: Option<i32>,
+    pub max: Option<i32>,
+}
+
+impl ClockRange {
+    /// `(min, max)` when the range has both ends in order. lactd's own checks need both too
+    /// (`check_clockspeed_in_range` in `amdgpu-sysfs` 0.21.0 refuses a partial range).
+    pub fn full(self) -> Option<(i32, i32)> {
+        self.min.zip(self.max).filter(|(min, max)| min <= max)
+    }
+}
+
+/// The `od_range` of an RDNA table: what the firmware allows. In MHz, the offsets in mV for
+/// voltage. Each is `None` when the firmware does not expose it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct RdnaOdRange {
+    /// RDNA1–3.
+    pub sclk: Option<ClockRange>,
+    /// RDNA4.
+    pub sclk_offset: Option<ClockRange>,
+    /// Discrete GPUs only.
+    pub mclk: Option<ClockRange>,
+    /// When present, its last entry is what lactd checks a maximum core clock against
+    /// (`get_max_sclk_range`), before `sclk`.
+    pub curve_sclk_points: Vec<ClockRange>,
+    /// RDNA3 and later: RDNA2 has a voltage offset but gives no range for it.
+    pub voltage_offset: Option<ClockRange>,
+}
+
+/// The overdrive table of the format `amdgpu-sysfs` calls RDNA (Vega20 and newer), without the
+/// V/F curve.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct RdnaClocksTable {
+    /// MHz. Empty on RDNA4, which uses [`sclk_offset`](Self::sclk_offset).
+    pub current_sclk_range: ClockRange,
+    /// MHz.
+    pub sclk_offset: Option<i32>,
+    /// MHz. Empty on integrated GPUs.
+    pub current_mclk_range: ClockRange,
+    /// mV.
+    pub voltage_offset: Option<i32>,
+    pub od_range: RdnaOdRange,
+}
+
+/// LACT's `ClocksTable`, with `ClocksTableGen` flattened into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClocksTable {
+    Rdna(RdnaClocksTable),
+    /// The older format (Vega10 and earlier). Nothing in it is read.
+    Gcn,
+    /// A table of another vendor, of a shape this client does not know, or unreadable: kept out
+    /// of the way instead of failing the whole answer.
+    Other,
+}
+
+impl ClocksTable {
+    /// On the wire `{ "type": "amd", "value": { "kind": "rdna", "data": {...} } }`: two nested
+    /// tags, `ClocksTable` in lact-schema and `ClocksTableGen` in `amdgpu-sysfs` 0.21.0.
+    fn from_wire(table: Value) -> Self {
+        let value = &table["value"];
+        match (table["type"].as_str(), value["kind"].as_str()) {
+            (Some("amd"), Some("gcn")) => ClocksTable::Gcn,
+            (Some("amd"), Some("rdna")) => serde_json::from_value(value["data"].clone())
+                .map_or(ClocksTable::Other, ClocksTable::Rdna),
+            _ => ClocksTable::Other,
+        }
+    }
+}
+
+/// `device_clocks_info`, without `max_sclk`, `max_mclk` and `max_voltage`, which repeat the table.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct ClocksInfo {
+    #[serde(deserialize_with = "clocks_table")]
+    pub table: Option<ClocksTable>,
+}
+
+fn clocks_table<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ClocksTable>, D::Error> {
+    let table = Option::<Value>::deserialize(deserializer)?;
+    Ok(table.map(ClocksTable::from_wire))
+}
+
 /// `PmfwOptions`: the PMFW fan values stored in a GPU's configuration.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -569,6 +660,13 @@ impl LactClient {
 
     pub fn device_stats(&self, id: &str) -> LactResult<DeviceStats> {
         self.call("device_stats", Some(json!({ "id": id })))
+    }
+
+    /// The overdrive table of a GPU. Read-only. Without one lactd 0.10.1 refuses with "Clocks
+    /// table not available" (`get_clocks_info` in `gpu_controller/amd.rs`): that is the expected
+    /// answer with overdrive off, not a failure.
+    pub fn device_clocks_info(&self, id: &str) -> LactResult<ClocksInfo> {
+        self.call("device_clocks_info", Some(json!({ "id": id })))
     }
 
     /// `None` when LACT has never stored a configuration for this GPU.
@@ -1135,6 +1233,90 @@ mod tests {
             configurator(json!("Systemd")),
             Some(ParamsConfigurator::Other(_))
         ));
+    }
+
+    /// `parse_7900xt_full` of `amdgpu-sysfs` 0.21.0 under lact-schema 0.10.1's two tags.
+    const CLOCKS_RDNA3: &str = r#"{"max_sclk":2735,"max_mclk":1250,"max_voltage":null,"table":{"type":"amd","value":{"kind":"rdna","data":{"current_sclk_range":{"min":500,"max":2735},"sclk_offset":null,"current_mclk_range":{"min":97,"max":1250},"vddc_curve":[],"voltage_offset":0,"od_range":{"sclk":{"min":500,"max":5000},"sclk_offset":null,"mclk":{"min":97,"max":1500},"curve_sclk_points":[],"curve_voltage_points":[],"voltage_offset":{"min":-450,"max":0}}}}}}"#;
+
+    #[test]
+    fn parses_both_tags_of_an_rdna_clocks_table() {
+        let info: ClocksInfo = serde_json::from_str(CLOCKS_RDNA3).unwrap();
+        let Some(ClocksTable::Rdna(table)) = info.table else {
+            panic!("{info:?}");
+        };
+        assert_eq!(table.current_sclk_range.full(), Some((500, 2735)));
+        assert_eq!(table.sclk_offset, None);
+        assert_eq!(table.voltage_offset, Some(0));
+        assert_eq!(table.od_range.sclk.unwrap().full(), Some((500, 5000)));
+        assert_eq!(table.od_range.sclk_offset, None);
+        assert_eq!(
+            table.od_range.voltage_offset.unwrap().full(),
+            Some((-450, 0))
+        );
+    }
+
+    #[test]
+    fn other_clocks_tables_do_not_fail_the_answer() {
+        let table = |value: Value| {
+            serde_json::from_value::<ClocksInfo>(json!({ "table": value }))
+                .unwrap()
+                .table
+        };
+        assert_eq!(
+            table(json!({ "type": "amd", "value": { "kind": "gcn", "data": {
+                "sclk_levels": [], "mclk_levels": [],
+                "od_range": { "sclk": { "min": 852, "max": 2400 } }
+            } } })),
+            Some(ClocksTable::Gcn)
+        );
+        assert_eq!(
+            table(json!({ "type": "nvidia", "value": { "gpu_offsets": {} } })),
+            Some(ClocksTable::Other)
+        );
+        assert_eq!(
+            table(json!({ "type": "amd", "value": { "kind": "rdna5", "data": {} } })),
+            Some(ClocksTable::Other)
+        );
+        // A field of an unexpected type loses the table, not the answer.
+        assert_eq!(
+            table(json!({ "type": "amd", "value": { "kind": "rdna", "data": {
+                "od_range": "none"
+            } } })),
+            Some(ClocksTable::Other)
+        );
+        assert_eq!(table(Value::Null), None);
+        assert_eq!(
+            serde_json::from_str::<ClocksInfo>("{}").unwrap(),
+            ClocksInfo::default()
+        );
+    }
+
+    #[test]
+    fn a_clock_range_is_full_only_with_both_ends_in_order() {
+        let range = |min, max| ClockRange { min, max };
+        assert_eq!(range(Some(97), Some(1500)).full(), Some((97, 1500)));
+        assert_eq!(range(Some(97), None).full(), None);
+        assert_eq!(range(None, Some(1500)).full(), None);
+        assert_eq!(range(Some(1500), Some(97)).full(), None);
+    }
+
+    #[test]
+    fn device_clocks_info_names_the_gpu_and_a_refusal_is_the_daemons_message() {
+        let dir = temp("clocks");
+        let socket = dir.0.join("lactd.sock");
+        let client = LactClient::new(&socket).with_timeout(Duration::from_secs(2));
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"error","data":{"description":"Clocks table not available","source":{"description":"No such file or directory","source":null}}}"#,
+        );
+        let error = client.device_clocks_info("x-0000:0d:00.0").unwrap_err();
+        assert!(
+            matches!(&error, LactError::Daemon(m) if m.starts_with("Clocks table not available"))
+        );
+        assert_eq!(
+            server.join().unwrap(),
+            json!({ "command": "device_clocks_info", "args": { "id": "x-0000:0d:00.0" } })
+        );
     }
 
     #[test]
