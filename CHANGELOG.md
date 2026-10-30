@@ -42,6 +42,10 @@ The first release: a control panel for AMD GPUs on Linux, packaged as a `.deb`.
 - In-game overlay through MangoHud: presets, position, toggle key and figures, with the
   `mangohud %command%` launch option to enable it per game. A `MangoHud.conf` of the user's is
   changed only after they agree, and is kept as a backup.
+- Clocks and undervolt through LACT on RDNA GPUs with overdrive on: maximum core clock or core
+  clock offset, maximum VRAM clock and a voltage offset at or below 0, checked against the GPU's
+  ranges, confirmed like every change, with a reset to factory values. A confirmed value comes
+  back after a reboot.
 - MangoHud in Settings → Dependencies, with its guided install.
 - The `.deb` installs `com.fabiosm46.redline.desktop`, so the desktop entry, the autostart entry
   and the portal app id are the same however Redline is started. An older autostart entry is

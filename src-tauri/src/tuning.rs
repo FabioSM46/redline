@@ -116,6 +116,8 @@ pub enum TuningChange {
     Fan,
     /// Every GPU: the active LACT profile ([`profiles`]).
     Profile,
+    /// Clock and voltage values, or their reset ([`clocks`]).
+    Clocks,
 }
 
 /// A change lactd has applied and will revert unless the user confirms it: the payload of

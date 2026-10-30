@@ -260,3 +260,50 @@ it renders its settings into MangoHud's user config file, `MangoHud/MangoHud.con
 Rejected: an overlay of Redline's own (a Vulkan layer is a project of its own, and MangoHud
 already does it); `MANGOHUD_CONFIG` or a global `MANGOHUD=1` (they reach every application, and a
 variable set by the player would be overridden without warning).
+
+## D13 — Clocks and voltages: RDNA only, undervolt only, overdrive required (2026-10-30)
+
+Clocks and voltages moved out of M3 when M3 was specified; they arrive before the first published
+`.deb` (#102, #103). Redline offers what a player uses and leaves the rest to LACT.
+
+- **Four controls, from the overdrive table.** Maximum core clock (RDNA1–3), core clock offset
+  (RDNA4), maximum VRAM clock (discrete GPUs) and voltage offset. The table decides which ones a
+  GPU has, never a list of GPU names. Minimum clocks, V/F curve points, power states, the
+  performance level and power profile modes stay in LACT.
+- **RDNA only.** A GCN table has per-level clocks and voltages, a different and riskier interface
+  for GPUs Redline cannot test: `clocks` says the family is not supported.
+- **Undervolt only.** The backend refuses a voltage offset above 0 on every GPU, whatever range
+  the firmware reports. Raising the voltage is the one setting here that can damage a GPU over
+  time, and RDNA2 gives no range, so lactd would check nothing. Without a range Redline also
+  refuses anything below -450 mV, the widest firmware range known (RX 7900 XT): a value that
+  hangs the GPU cannot be answered in the confirmation, so a typo must not reach it. This floor
+  is a sanity limit, not a safe value, and `clocks` keeps reporting no range.
+- **Overdrive required.** Without it the kernel takes no clock or voltage value: the status and
+  the setter give the same sentence, which points to overdrive (D11).
+- **Checked before lactd.** Every value is checked against the current table, because lactd checks
+  no core clock offset and no voltage offset without a range, and a refused value fails the whole
+  batch without saying which one. A clock with no firmware range is refused: there is nothing to
+  check it against.
+- **One change, always pending.** The values go in one `batch_set_clocks_value`, so they apply and
+  revert together, and the confirmation is the usual one. `set_gpu_config` is never sent: it replaces
+  the whole GPU configuration, fan and power limit included, with a copy that can be out of date. Redline does not set the
+  performance level either: lactd's `apply_config` handles it, including the GPUs that need
+  `manual`.
+- **A confirmed value persists.** lactd stores it and applies it at every start
+  (`apply_current_config`), so an undervolt that passes the confirmation and fails later comes back
+  after every reboot. Keeping a value only until the next reboot would mean changing how lactd
+  stores its configuration, which Redline does not do. The way out is the reset: `reset_clocks`
+  checks no table and works with overdrive off, and it clears the stored values. If the machine
+  crashes before the app can be reached, stop lactd from a console
+  (`sudo systemctl stop lactd`, or `systemd.mask=lactd.service` on the kernel command line for one
+  boot), or remove the clock values of the GPU from `/etc/lact/config.yaml`, then restart it.
+- **A reset is sent alone**, through `set_clocks_value`: at LACT 0.10.1 only that request calls
+  `reset_clocks()`. It runs before lactd checks for a pending change, so while another program
+  (the LACT app) holds one, lactd resets the table and then refuses. Redline reports the refusal;
+  the stored values take over again when that change settles or at the next lactd start.
+
+Rejected: offering the V/F curve or minimum clocks (Adrenalin's depth, not what Redline is for,
+D8); a positive voltage offset behind a second warning (a confirmation does not undo wear); a
+per-GPU list of supported models (the table already says it, and a list goes stale); applying
+values on Redline's start instead of confirming them in lactd (Redline would have to run for the
+tuning to hold, and it would be a second store of the same values).

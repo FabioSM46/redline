@@ -21,11 +21,10 @@ actually use and leaves the rest out.
 |---|---|
 | Live statistics and charts | read directly from sysfs (`/sys/class/drm/cardN/device`), no permissions needed |
 | In-game overlay (FPS, frametime, temperatures) | [MangoHud](https://github.com/flightlessmango/MangoHud), configured by Redline |
-| Tuning: fans, power limit, profiles | the [LACT](https://github.com/ilya-zlobintsev/LACT) daemon (`lactd`) through its socket |
+| Tuning: fans, power limit, profiles, clocks and undervolt | the [LACT](https://github.com/ilya-zlobintsev/LACT) daemon (`lactd`) through its socket |
 | Instant replay and recording, with audio on separate tracks | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/about/) as an external process, with hardware encoding |
 
-Clock offsets, voltages and undervolting are planned for a later version. Redline does not
-rewrite these tools: it coordinates them behind a single interface. The why is in
+Redline does not rewrite these tools: it coordinates them behind a single interface. The why is in
 [docs/context.md](docs/context.md), the choices in [docs/decisions.md](docs/decisions.md).
 
 ## Install

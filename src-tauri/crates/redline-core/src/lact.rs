@@ -24,6 +24,8 @@
 //! | `list_profiles` | `{ include_state: false }` | [`ProfilesInfo`] |
 //! | `set_power_cap` | `{ id, cap }` (`cap: null` = default) | seconds until lactd reverts |
 //! | `set_fan_control` | [`FanOptions`] | seconds until lactd reverts |
+//! | `batch_set_clocks_value` | `{ id, commands }` ([`ClockCommand`]s) | seconds until lactd reverts |
+//! | `set_clocks_value` | `{ id, command: { type: "reset", value: null } }` | seconds until lactd reverts |
 //! | `confirm_pending_config` | `{ command: "confirm" \| "revert" }` | — |
 //! | `set_profile` | `{ name, auto_switch: false }` (`name: null` = default profile) | — |
 //! | `create_profile` | `{ name, base }` ([`ProfileBase`]) | — |
@@ -499,6 +501,28 @@ pub enum ProfileBase {
 
 // ---- Requests ----
 
+/// What a [`ClockCommand`] sets: the subset of LACT's `ClockspeedType` that Redline offers. Its
+/// `reset` is left out on purpose: at 0.10.1 only `set_clocks_value` acts on it, so a batch cannot
+/// carry one ([`LactClient::reset_clocks`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClockSetting {
+    MaxCoreClock,
+    /// The core clock offset of one power state. On RDNA lactd reads state 0 only.
+    GpuClockOffset(u32),
+    MaxMemoryClock,
+    VoltageOffset,
+}
+
+/// One entry of `batch_set_clocks_value`: `SetClocksCommand` in lact-schema. `value: None` clears
+/// the setting from lactd's configuration, which leaves it at the firmware's value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ClockCommand {
+    #[serde(rename = "type")]
+    pub setting: ClockSetting,
+    pub value: Option<i32>,
+}
+
 /// The arguments of `set_fan_control` (`FanOptions` in lact-schema 0.10.1, without
 /// `spindown_delay_ms` and `change_threshold`, which lactd then keeps as stored).
 ///
@@ -728,6 +752,29 @@ impl LactClient {
     pub fn set_fan_control(&self, options: &FanOptions) -> LactResult<u64> {
         let args = serde_json::to_value(options).map_err(|e| LactError::Protocol(e.to_string()))?;
         self.call("set_fan_control", Some(args))
+    }
+
+    /// Applies `commands` as one change and returns how many seconds LACT waits for
+    /// [`confirm_pending`](Self::confirm_pending), like [`set_power_cap`](Self::set_power_cap).
+    pub fn batch_set_clocks(&self, id: &str, commands: &[ClockCommand]) -> LactResult<u64> {
+        self.call(
+            "batch_set_clocks_value",
+            Some(json!({ "id": id, "commands": commands })),
+        )
+    }
+
+    /// Returns the GPU's clocks to the firmware's values and clears them from lactd's
+    /// configuration, pending like any other setter.
+    ///
+    /// In 0.10.1 only `set_clocks_value` calls `reset_clocks()`: `batch_set_clocks_value` would
+    /// clear the stored values without resetting the table, so a reset is always sent alone. That
+    /// call also runs **before** `edit_gpu_config` checks for a pending change: while another
+    /// program holds one, lactd resets the table and then refuses.
+    pub fn reset_clocks(&self, id: &str) -> LactResult<u64> {
+        self.call(
+            "set_clocks_value",
+            Some(json!({ "id": id, "command": { "type": "reset", "value": null } })),
+        )
     }
 
     /// `confirm_pending_config` with `confirm` (keep and save the pending change) or `revert`
@@ -1035,6 +1082,56 @@ mod tests {
         assert_eq!(
             server.join().unwrap(),
             json!({ "command": "confirm_pending_config", "args": { "command": "revert" } })
+        );
+    }
+
+    #[test]
+    fn the_clock_requests_use_the_0_10_1_shapes() {
+        let dir = temp("clock-requests");
+        let socket = dir.0.join("lactd.sock");
+        let client = LactClient::new(&socket).with_timeout(Duration::from_secs(2));
+
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"ok","data":5}"#,
+        );
+        let command = |setting, value| ClockCommand { setting, value };
+        let commands = [
+            command(ClockSetting::MaxCoreClock, Some(2600)),
+            command(ClockSetting::GpuClockOffset(0), Some(-100)),
+            command(ClockSetting::MaxMemoryClock, Some(1300)),
+            command(ClockSetting::VoltageOffset, None),
+        ];
+        assert_eq!(client.batch_set_clocks("gpu", &commands).unwrap(), 5);
+        assert_eq!(
+            server.join().unwrap(),
+            json!({
+                "command": "batch_set_clocks_value",
+                "args": {
+                    "id": "gpu",
+                    "commands": [
+                        { "type": "max_core_clock", "value": 2600 },
+                        { "type": { "gpu_clock_offset": 0 }, "value": -100 },
+                        { "type": "max_memory_clock", "value": 1300 },
+                        { "type": "voltage_offset", "value": null }
+                    ]
+                }
+            })
+        );
+        std::fs::remove_file(&socket).unwrap();
+
+        // `reset` goes through the single command: the batch never calls `reset_clocks()`.
+        let server = answer_once(
+            UnixListener::bind(&socket).unwrap(),
+            r#"{"status":"ok","data":5}"#,
+        );
+        assert_eq!(client.reset_clocks("gpu").unwrap(), 5);
+        assert_eq!(
+            server.join().unwrap(),
+            json!({
+                "command": "set_clocks_value",
+                "args": { "id": "gpu", "command": { "type": "reset", "value": null } }
+            })
         );
     }
 
