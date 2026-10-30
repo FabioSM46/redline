@@ -192,7 +192,7 @@ export function installLine(state: InstallState, id: DependencyId): { text: stri
 /** Redline's own license (package.json, LICENSE). */
 export const REDLINE_LICENSE = "MIT";
 
-/** The tools Redline starts, and their licenses. None of their code is part of Redline. */
+/** The tools Redline works with, and their licenses. None of their code is part of Redline. */
 export const THIRD_PARTY_LICENSES = [
   {
     name: "LACT",
@@ -205,5 +205,17 @@ export const THIRD_PARTY_LICENSES = [
     license: "GPL-3.0",
     use: "Started as an external program for replays and recordings; none of its code is in Redline.",
     url: "https://git.dec05eba.com/gpu-screen-recorder/tree/LICENSE",
+  },
+  {
+    name: "ffmpeg",
+    license: "LGPL or GPL, depending on the build",
+    use: "Started as an external program for clip previews; how your distribution builds it decides its license.",
+    url: "https://github.com/FFmpeg/FFmpeg/blob/master/LICENSE.md",
+  },
+  {
+    name: "MangoHud",
+    license: "MIT",
+    use: "Draws the in-game overlay in the games you turn it on for; Redline only writes its config file.",
+    url: "https://github.com/flightlessmango/MangoHud/blob/master/LICENSE",
   },
 ] as const;
