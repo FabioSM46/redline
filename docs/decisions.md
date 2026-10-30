@@ -245,7 +245,7 @@ B, #56): **Redline may ask `lactd` to enable or disable it, after an explicit co
   reverts, and under an active profile it changes that profile's copy, which the action says. A
   reset inside the disable request would confirm on the user's behalf.
 - **From the disable until the reboot, nothing that needs overdrive can be set.** The running
-  kernel keeps it, so `set_fan` (other than back to automatic), `set_clocks` and `activate_profile`
+  kernel keeps it, so `set_fan` on a firmware fan (other than back to automatic), `set_clocks` and `activate_profile`
   would be accepted and left stored for a boot without it. The stop lives in the session, like
   `reboot_pending`. Only an answer that proves nothing changed lifts it: lactd unreachable, or its
   refusals that come before it touches anything. A timeout, "already toggled", an initramfs failure

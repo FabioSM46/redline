@@ -152,7 +152,7 @@ lactd's refusal as a sentence. `disable_overdrive` works the same way, with a gu
 token, and an answer it cannot read means no plan. It refuses at once when LACT's modprobe file is
 missing, which is what lactd would answer after the user had put everything back. Under the
 control lock, right before the request, `disable_overdrive` refuses a pending change and reads the
-list again; from there `set_fan` (other than back to automatic), `set_clocks` and
+list again; from there `set_fan` on a firmware fan (other than back to automatic), `set_clocks` and
 `activate_profile` are refused until the reboot, and `reset_clocks` and `reset_fan` stay open.
 `reset_fan(gpu_id)` sends `set_fan_control` with `enabled: false`, `mode: null` and empty firmware
 options, and returns a `PendingChange` with `what: "fan"`. The stored curve stays, unused. The page

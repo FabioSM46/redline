@@ -544,6 +544,8 @@ impl Tuning {
         match sent {
             Ok(()) => {
                 state.reboot_pending = true;
+                // lactd accepted an enable for the next boot: no earlier disable stands.
+                state.disabling &= action != OverdriveAction::Enable;
                 Ok(OverdriveResult {
                     reboot_required: true,
                 })
@@ -1488,6 +1490,54 @@ mod tests {
         assert!(!proves_nothing_changed(&LactError::Io(
             std::io::ErrorKind::ConnectionReset.into()
         )));
+    }
+
+    #[test]
+    fn an_accepted_enable_lifts_the_stop() {
+        let service = Service::on("enable-lifts", vec![]);
+        service.daemon.lock().unwrap().fail = Some("Initramfs generation command failed");
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert!(
+            service
+                .tuning
+                .change_overdrive(DISABLE, token(&plan))
+                .is_err()
+        );
+        assert_eq!(
+            service.tuning.inner.overdrive.refuse_while_disabling(),
+            Err(DISABLE_UNDER_WAY.to_owned())
+        );
+        service.daemon.lock().unwrap().enabled = false;
+        let plan = service.tuning.prepare_overdrive(ENABLE).unwrap();
+        assert!(
+            service
+                .tuning
+                .change_overdrive(ENABLE, token(&plan))
+                .is_ok()
+        );
+        assert_eq!(
+            service.tuning.inner.overdrive.refuse_while_disabling(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_stop_leaves_a_fan_that_needs_no_overdrive_alone() {
+        let service = Service::on("older-stop", vec![OLDER_FAN]);
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        service
+            .tuning
+            .change_overdrive(DISABLE, token(&plan))
+            .unwrap();
+        let curve = FanSettings {
+            mode: FanSetting::Curve,
+            static_speed: None,
+            curve: Some(Vec::new()),
+            pmfw: PmfwSettings::default(),
+        };
+        // Past the stop: the fake has no fan to read, which is a different refusal.
+        let refused = service.tuning.set_fan(SLOT_A, &curve).unwrap_err();
+        assert_ne!(refused, DISABLE_UNDER_WAY);
     }
 
     #[test]

@@ -479,6 +479,14 @@ impl Lact {
             .ok();
     }
 
+    /// The fan is driven by the firmware, so anything but automatic needs overdrive.
+    fn has_firmware_fan(&self, lact_id: &str) -> Result<bool, String> {
+        self.client
+            .device_info(lact_id)
+            .map(|info| info.has(&DeviceFlag::HasPmfw))
+            .map_err(|error| self.reason(&error))
+    }
+
     /// Gives the fan back to the firmware and clears the stored firmware options: `pmfw` replaces
     /// them as a whole, and `mode: null` leaves the stored curve in place, unused. The curve is
     /// still there if the user switches back to it.
@@ -518,13 +526,16 @@ impl Tuning {
     /// The fan of `gpu_id`, checked against what the GPU can do. Pending until confirmed.
     /// Blocking.
     pub fn set_fan(&self, gpu_id: &str, settings: &FanSettings) -> Result<PendingChange, String> {
-        let send = |lact: &Lact, lact_id: &str| lact.set_fan(gpu_id, lact_id, settings);
         // Automatic with no new firmware option is the way back, and needs no overdrive.
-        if settings.mode == FanSetting::Auto && settings.pmfw == PmfwSettings::default() {
-            self.apply(gpu_id, TuningChange::Fan, send)
-        } else {
-            self.apply_needing_overdrive(gpu_id, TuningChange::Fan, send)
-        }
+        let way_back =
+            settings.mode == FanSetting::Auto && settings.pmfw == PmfwSettings::default();
+        self.apply(gpu_id, TuningChange::Fan, |lact, lact_id| {
+            let stop = self.inner.overdrive.refuse_while_disabling();
+            if stop.is_err() && !way_back && lact.has_firmware_fan(lact_id)? {
+                stop?;
+            }
+            lact.set_fan(gpu_id, lact_id, settings)
+        })
     }
 
     /// The fan of `gpu_id` back under the firmware's control, with no firmware option stored.
