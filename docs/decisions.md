@@ -236,6 +236,27 @@ Rejected: writing the modprobe file or the boot arguments from Redline (it would
 keeping overdrive manual-only (the fan curve, the main M3 feature on RDNA3/4, would need the user
 to edit boot files by hand).
 
-## Open
+## D12 — The overlay is MangoHud, configured through its user config file (2026-10-30)
 
-- How the overlay arrives: a MangoHud configuration managed by Redline, or an overlay of its own.
+This closes the open point on how the overlay arrives (#85). Redline has no overlay of its own:
+it renders its settings into MangoHud's user config file, `MangoHud/MangoHud.conf` in
+`$XDG_CONFIG_HOME` (otherwise `~/.config`).
+
+- **The player enables MangoHud per game.** MangoHud's implicit layer loads only with `MANGOHUD=1`
+  in the game's environment, so the file changes nothing by itself. Redline shows the Steam launch
+  option `mangohud %command%` and does not set `MANGOHUD=1` globally: no `environment.d`, no
+  `/etc/environment`, no edits to Steam's configuration. A global switch would inject a layer into
+  every Vulkan application of the session.
+- **The file has an owner.** Redline's file starts with the line `# Managed by Redline`. A file
+  without it is the user's and is never overwritten silently: `set_overlay` saves the settings and
+  leaves the file alone until the user agrees to a take-over, which keeps the file as
+  `MangoHud.conf.redline-backup` and never replaces an existing backup.
+- **The file lists everything, with `legacy_layout=0`.** Without that key MangoHud draws its
+  defaults (GPU, CPU, FPS and the frame graph) whatever else is written, so a preset could only
+  add figures. `gpu_stats`, `cpu_stats` and `legacy_layout` are therefore written although no
+  setting exposes them: `gpu_temp`, `gpu_power` and `gpu_core_clock` are drawn inside `gpu_stats`
+  and `cpu_temp` inside `cpu_stats`.
+
+Rejected: an overlay of Redline's own (a Vulkan layer is a project of its own, and MangoHud
+already does it); `MANGOHUD_CONFIG` or a global `MANGOHUD=1` (they reach every application, and a
+variable set by the player would be overridden without warning).

@@ -5,6 +5,7 @@ mod desktop;
 mod gallery;
 mod global_shortcuts;
 mod installer;
+mod overlay;
 mod recorder;
 mod sampler;
 mod settings;
@@ -47,6 +48,7 @@ pub fn run() {
         .plugin(autostart::plugin())
         .setup(|app| {
             settings::init(app.handle());
+            overlay::init(app.handle());
             sampler::start(app)?;
             tuning::init(app);
             installer::init(app);
@@ -106,6 +108,9 @@ pub fn run() {
             tuning::overdrive::disable_overdrive,
             dependencies::dependency_status,
             installer::install_dependency,
+            overlay::overlay_status,
+            overlay::set_overlay,
+            overlay::take_over_overlay_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
