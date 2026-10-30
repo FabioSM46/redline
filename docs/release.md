@@ -91,6 +91,27 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       reverts without it.
 - [ ] An instant replay saves a clip with its audio tracks.
 
+### Clocks and voltage (AMD GPU, overdrive on)
+
+Use small, safe values, and keep a console or SSH session at hand: an unstable value can freeze
+the machine. Run these in light and dark.
+
+- [ ] Performance → Tuning → Advanced → Clocks and voltage shows only the controls of this GPU,
+      with units and ranges, and warns before the first apply.
+- [ ] Apply a small undervolt and let the countdown run out: the value goes back and the page says
+      so. LACT's own view of the GPU agrees.
+- [ ] Apply it and revert: the previous value is back.
+- [ ] Apply it and confirm: the value stays, and it is still there after a reboot.
+- [ ] Reset to factory values, confirm: the firmware's values are back and stay after a reboot.
+- [ ] Reset and revert: the previous value is back.
+- [ ] A value outside the range, and a positive voltage offset, are refused inline and nothing
+      changes.
+- [ ] With overdrive off the block points to the Overdrive section, and with `lactd` stopped it
+      says what to do. No clock or voltage change has run on real hardware yet.
+- [ ] Recovery as D13 describes it: with a confirmed value stored, turn overdrive off, reboot and
+      reset from the app; then the console route, stopping `lactd` and restarting it after removing
+      the values from `/etc/lact/config.yaml`.
+
 Anything that fails goes to an issue and a PR on `develop`, and the checks start again.
 
 ## 3. Merge and tag

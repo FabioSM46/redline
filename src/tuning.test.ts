@@ -223,7 +223,8 @@ describe("sentences", () => {
   it("names the change and every outcome", () => {
     assert.equal(changeLabel("power_limit"), "Power limit");
     assert.equal(changeLabel("fan"), "Fan");
-    assert.equal(changeLabel("clocks" as never), "Tuning change");
+    assert.equal(changeLabel("clocks"), "Clocks and voltage");
+    assert.equal(changeLabel("voltage_curve" as never), "Tuning change");
     for (const outcome of ["confirmed", "reverted", "expired"] as const) {
       assert.equal(outcomeSentence({ gpu_id: "x", outcome }).length > 0, true);
     }
