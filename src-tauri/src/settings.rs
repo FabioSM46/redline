@@ -333,6 +333,13 @@ fn check_toggle_key(value: &String) -> Result<(), String> {
     })
 }
 
+/// [`check_toggle_key`] for the settings file: `read_field` writes the reason straight after the
+/// field's path, so here it opens with the field's name and not with the sentence for the screen.
+#[allow(clippy::ptr_arg)]
+fn check_stored_toggle_key(value: &String) -> Result<(), String> {
+    check_toggle_key(value).map_err(|_| "toggle_key is not key names joined by +".to_owned())
+}
+
 /// The default replay and recording folders, as `recording_defaults` returns them. `None` when
 /// the video folder is not known: the default would be a relative path, which is not offered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -710,7 +717,7 @@ fn load_overlay(value: &Value, problems: &mut Vec<String>) -> OverlaySettings {
         fields,
         p,
         "toggle_key",
-        check_toggle_key,
+        check_stored_toggle_key,
         &mut o.toggle_key,
         problems,
     );
@@ -1209,6 +1216,10 @@ mod tests {
         // preset, metrics, toggle_key.
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems.iter().all(|p| p.contains("overlay.")));
+        assert!(
+            problems.iter().any(|p| p.contains("overlay.toggle_key is")),
+            "{problems:?}"
+        );
 
         fs::write(&file, r#"{"overlay": 7}"#).unwrap();
         let (settings, problems) = load(&file, videos());
