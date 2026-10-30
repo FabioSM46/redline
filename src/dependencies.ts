@@ -3,7 +3,7 @@
 // `dependencies.test.ts` reads both files and fails if they drift.
 
 /** `DependencyId` in dependencies.rs (serde snake_case), in the order `dependency_status` lists them. */
-export const DEPENDENCY_IDS = ["lact", "gpu_screen_recorder", "ffmpeg"] as const;
+export const DEPENDENCY_IDS = ["lact", "gpu_screen_recorder", "ffmpeg", "mangohud"] as const;
 
 export type DependencyId = (typeof DEPENDENCY_IDS)[number];
 

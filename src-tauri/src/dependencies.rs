@@ -9,6 +9,9 @@
 //!   or the `Version:` line of `flatpak info`.
 //! - **ffmpeg** (previews of clips): on PATH, with the version from `ffmpeg -version`. Redline
 //!   verifies no ffmpeg version, so `verified_version` is `null`.
+//! - **MangoHud** (in-game overlay): detected the way the overlay does, by
+//!   [`overlay::mangohud_installed`], which runs nothing. MangoHud has no version flag, so
+//!   `version` and `verified_version` are always `null`.
 //!
 //! A missing tool is not an error: `installed: false` with a `hint` that says what to do. Every
 //! tool is run with a timeout, from a blocking thread, never from the main thread.
@@ -19,7 +22,7 @@ use redline_core::thumbnail::{self, find_program};
 use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -27,6 +30,7 @@ use std::time::{Duration, Instant};
 use tauri::State;
 
 use crate::installer::Installer;
+use crate::overlay;
 use crate::recorder::MISSING as GSR_MISSING;
 use crate::tuning::{self, Lact, Tuning};
 
@@ -50,6 +54,7 @@ pub enum DependencyId {
     Lact,
     GpuScreenRecorder,
     Ffmpeg,
+    Mangohud,
 }
 
 impl DependencyId {
@@ -59,6 +64,7 @@ impl DependencyId {
             DependencyId::Lact => "LACT",
             DependencyId::GpuScreenRecorder => "GPU Screen Recorder",
             DependencyId::Ffmpeg => "ffmpeg",
+            DependencyId::Mangohud => "MangoHud",
         }
     }
 }
@@ -69,9 +75,10 @@ pub struct Dependency {
     pub id: DependencyId,
     pub name: &'static str,
     pub installed: bool,
-    /// The installed version; `null` when unknown (LACT: while `lactd` does not answer).
+    /// The installed version; `null` when unknown (LACT: while `lactd` does not answer; MangoHud:
+    /// always).
     pub version: Option<String>,
-    /// The version Redline is verified with; `null` when Redline verifies none (ffmpeg).
+    /// The version Redline is verified with; `null` when Redline verifies none (ffmpeg, MangoHud).
     pub verified_version: Option<&'static str>,
     /// A notice that blocks nothing, such as an unverified version.
     pub warning: Option<String>,
@@ -95,12 +102,15 @@ pub struct DaemonStatus {
     pub socket_accessible: bool,
 }
 
-/// Every dependency: LACT, GPU Screen Recorder, ffmpeg. Blocking: the three checks run side by
-/// side (one request to `lactd`, bounded by the LACT client's own timeout, and up to three tool
-/// runs, each bounded by `timeout`), so the worst case is about one timeout, not their sum.
+/// Every dependency: LACT, GPU Screen Recorder, ffmpeg, MangoHud. Blocking: the checks that run
+/// something go side by side (one request to `lactd`, bounded by the LACT client's own timeout,
+/// and up to three tool runs, each bounded by `timeout`), so the worst case is about one timeout,
+/// not their sum. MangoHud only reads the file system. `layer_dirs` is where its manifest can be
+/// ([`overlay::layer_dirs`]).
 pub fn status(
     lact: &Lact,
     search_path: &OsStr,
+    layer_dirs: &[PathBuf],
     timeout: Duration,
     can_install: bool,
 ) -> Vec<Dependency> {
@@ -112,6 +122,7 @@ pub fn status(
             lact,
             recorder.join().expect("the recorder check panicked"),
             ffmpeg.join().expect("the ffmpeg check panicked"),
+            mangohud_status(search_path, layer_dirs),
         ]
     });
     for dep in &mut deps {
@@ -225,6 +236,15 @@ fn ffmpeg_status(search_path: &OsStr, timeout: Duration) -> Dependency {
     }
 }
 
+fn mangohud_status(search_path: &OsStr, layer_dirs: &[PathBuf]) -> Dependency {
+    let id = DependencyId::Mangohud;
+    if overlay::mangohud_installed(search_path, layer_dirs) {
+        found(id, None, None)
+    } else {
+        missing(id, None, overlay::MISSING)
+    }
+}
+
 /// The first non-empty line, trimmed, as gsr prints its version.
 fn first_line(text: &str) -> Option<String> {
     text.lines()
@@ -322,8 +342,8 @@ fn process_path() -> OsString {
     std::env::var_os("PATH").unwrap_or_default()
 }
 
-/// LACT, GPU Screen Recorder and ffmpeg, in that order. Never an error for a missing tool:
-/// that is `installed: false` with a hint.
+/// LACT, GPU Screen Recorder, ffmpeg and MangoHud, in that order. Never an error for a missing
+/// tool: that is `installed: false` with a hint.
 #[tauri::command]
 pub async fn dependency_status(
     tuning: State<'_, Tuning>,
@@ -332,7 +352,14 @@ pub async fn dependency_status(
     let tuning = tuning.inner().clone();
     let can_install = installer.available();
     tauri::async_runtime::spawn_blocking(move || {
-        status(tuning.lact(), &process_path(), TOOL_TIMEOUT, can_install)
+        let layer_dirs = overlay::layer_dirs(std::env::var_os("XDG_DATA_DIRS").as_deref());
+        status(
+            tuning.lact(),
+            &process_path(),
+            &layer_dirs,
+            TOOL_TIMEOUT,
+            can_install,
+        )
     })
     .await
     .map_err(|error| format!("The dependency check did not answer: {error}"))
@@ -402,8 +429,25 @@ mod tests {
             )
         }
 
+        /// A fake folder for MangoHud's layer manifest, so no test sees the machine's own.
+        fn layers(&self) -> PathBuf {
+            self.dir.join("layers")
+        }
+
         fn status(&self) -> Vec<Dependency> {
-            status(&self.lact(), self.bin().as_os_str(), TIMEOUT, true)
+            let layers = [self.layers()];
+            status(&self.lact(), self.bin().as_os_str(), &layers, TIMEOUT, true)
+        }
+
+        fn status_within(&self, timeout: Duration) -> Vec<Dependency> {
+            let layers = [self.layers()];
+            status(
+                &self.lact(),
+                self.bin().as_os_str(),
+                &layers,
+                timeout,
+                false,
+            )
         }
 
         fn get(&self, id: DependencyId) -> Dependency {
@@ -436,7 +480,8 @@ mod tests {
             [
                 DependencyId::Lact,
                 DependencyId::GpuScreenRecorder,
-                DependencyId::Ffmpeg
+                DependencyId::Ffmpeg,
+                DependencyId::Mangohud
             ]
         );
         assert!(
@@ -458,6 +503,9 @@ mod tests {
         assert_eq!(deps[1].daemon, None);
         assert_eq!(deps[2].hint.as_deref(), Some(thumbnail::INSTALL_HINT));
         assert_eq!(deps[2].verified_version, None);
+        assert_eq!(deps[3].hint.as_deref(), Some(overlay::MISSING));
+        assert_eq!(deps[3].verified_version, None);
+        assert_eq!(deps[3].daemon, None);
     }
 
     #[test]
@@ -585,13 +633,7 @@ mod tests {
     fn a_flatpak_that_does_not_answer_is_not_called_missing() {
         let setup = Setup::new("gsr-flatpak-hangs");
         setup.tool(FLATPAK, "[ \"$1\" = info ] && exec sleep 30");
-        let dep = status(
-            &setup.lact(),
-            setup.bin().as_os_str(),
-            Duration::from_millis(200),
-            false,
-        )
-        .remove(1);
+        let dep = setup.status_within(Duration::from_millis(200)).remove(1);
         assert!(!dep.installed);
         assert_eq!(dep.hint.as_deref(), Some(FLATPAK_UNANSWERED));
     }
@@ -632,6 +674,30 @@ mod tests {
         assert_eq!(dep.warning.as_deref(), Some(FFMPEG_UNREADABLE));
     }
 
+    fn assert_mangohud_found(dep: Dependency) {
+        assert!(dep.installed);
+        assert_eq!(
+            (dep.version, dep.verified_version, dep.hint, dep.warning),
+            (None, None, None, None)
+        );
+    }
+
+    #[test]
+    fn mangohud_is_found_by_its_launcher_without_running_it() {
+        let setup = Setup::new("mangohud-launcher");
+        // Fails the check if anything takes its exit status for an answer.
+        setup.tool("mangohud", "exit 1");
+        assert_mangohud_found(setup.get(DependencyId::Mangohud));
+    }
+
+    #[test]
+    fn mangohud_is_found_by_its_layer_manifest() {
+        let setup = Setup::new("mangohud-layer");
+        fs::create_dir_all(setup.layers()).unwrap();
+        fs::write(setup.layers().join("MangoHud.x86_64.json"), "{}").unwrap();
+        assert_mangohud_found(setup.get(DependencyId::Mangohud));
+    }
+
     #[test]
     fn a_process_left_holding_the_output_does_not_stall_the_check() {
         let setup = Setup::new("ffmpeg-child");
@@ -641,13 +707,7 @@ mod tests {
             "[ \"$1\" = -version ] || exit 0\nsleep 3 &\necho 'ffmpeg version 7.1'",
         );
         let started = Instant::now();
-        let dep = status(
-            &setup.lact(),
-            setup.bin().as_os_str(),
-            Duration::from_millis(300),
-            false,
-        )
-        .remove(2);
+        let dep = setup.status_within(Duration::from_millis(300)).remove(2);
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "{:?}",
@@ -666,7 +726,7 @@ mod tests {
         );
         let timeout = Duration::from_secs(1);
         let started = Instant::now();
-        let deps = status(&setup.lact(), setup.bin().as_os_str(), timeout, false);
+        let deps = setup.status_within(timeout);
         // Two hanging tools one after the other would take two timeouts.
         assert!(started.elapsed() < timeout * 2, "{:?}", started.elapsed());
         assert!(deps[1].installed && deps[2].installed);
@@ -677,13 +737,7 @@ mod tests {
         let setup = Setup::new("ffmpeg-hangs");
         setup.tool(FFMPEG, "[ \"$1\" = -version ] && exec sleep 30");
         let started = Instant::now();
-        let dep = status(
-            &setup.lact(),
-            setup.bin().as_os_str(),
-            Duration::from_millis(200),
-            false,
-        )
-        .remove(2);
+        let dep = setup.status_within(Duration::from_millis(200)).remove(2);
         assert!(started.elapsed() < Duration::from_secs(10));
         assert!(dep.installed);
         assert_eq!(dep.version, None);
@@ -716,5 +770,7 @@ mod tests {
         }
         let id: DependencyId = serde_json::from_value(json!("ffmpeg")).unwrap();
         assert_eq!(id, DependencyId::Ffmpeg);
+        let id: DependencyId = serde_json::from_value(json!("mangohud")).unwrap();
+        assert_eq!(id, DependencyId::Mangohud);
     }
 }

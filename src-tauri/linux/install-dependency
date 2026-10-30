@@ -3,7 +3,7 @@
 # `pkexec /usr/share/redline/install-dependency <component>` (polkit action
 # com.fabiosm46.redline.install), or by scripts/install-deps.sh under sudo.
 #
-# Usage: install-dependency [--dry-run] lact|gpu-screen-recorder|ffmpeg
+# Usage: install-dependency [--dry-run] lact|gpu-screen-recorder|ffmpeg|mangohud
 #
 # The component is the only input: a fixed name, never a URL, a path or a command. Everything
 # else (versions, checksums, URLs) is pinned below. This file is the single place the pinned
@@ -14,6 +14,7 @@
 #   gpu-screen-recorder  the Flatpak from Flathub, system-wide (flatpak itself from the
 #                        distribution's package manager when missing)
 #   ffmpeg               from the distribution's package manager (apt, dnf or pacman)
+#   mangohud             from the distribution's package manager (apt, dnf or pacman)
 #
 # Output protocol (stdout, one line each), read by Redline:
 #   progress <sentence>   a step starts
@@ -172,17 +173,22 @@ install_ffmpeg() {
   install_packages "$package" || fail "The package manager could not install ffmpeg."
 }
 
+install_mangohud() {
+  say progress "Installing MangoHud"
+  install_packages mangohud || fail "The package manager could not install MangoHud."
+}
+
 main() {
   if [ "${1:-}" = --dry-run ]; then
     DRY_RUN=1
     OS_RELEASE=${REDLINE_OS_RELEASE:-$OS_RELEASE}
     shift
   fi
-  [ $# -eq 1 ] || fail "Usage: install-dependency [--dry-run] lact|gpu-screen-recorder|ffmpeg" 2
+  [ $# -eq 1 ] || fail "Usage: install-dependency [--dry-run] lact|gpu-screen-recorder|ffmpeg|mangohud" 2
   local component=$1
   case "$component" in
-    lact | gpu-screen-recorder | ffmpeg) ;;
-    *) fail "Unknown component; expected lact, gpu-screen-recorder or ffmpeg." 2 ;;
+    lact | gpu-screen-recorder | ffmpeg | mangohud) ;;
+    *) fail "Unknown component; expected lact, gpu-screen-recorder, ffmpeg or mangohud." 2 ;;
   esac
   if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
     fail "Run this as root (Redline runs it through pkexec)." 2
@@ -191,6 +197,7 @@ main() {
     lact) install_lact ;;
     gpu-screen-recorder) install_gpu_screen_recorder ;;
     ffmpeg) install_ffmpeg ;;
+    mangohud) install_mangohud ;;
   esac
   say progress "Done"
 }

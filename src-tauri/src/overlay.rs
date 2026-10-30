@@ -1,6 +1,6 @@
 //! The in-game overlay: MangoHud, configured by Redline through its user config file (D12).
 //!
-//! - **Detection** ([`mangohud_present`], the one place that answers "is MangoHud here?"): its
+//! - **Detection** ([`mangohud_installed`], the one place that answers "is MangoHud here?"): its
 //!   implicit Vulkan layer manifest or the `mangohud` launcher on PATH. Nothing is run: MangoHud
 //!   has no version flag, and missing it is a disabled feature with [`MISSING`], not an error.
 //! - **The file**: [`render`] turns the overlay settings (stored by `settings`) into

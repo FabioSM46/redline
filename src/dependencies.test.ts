@@ -67,6 +67,10 @@ describe("mirror of the backend contract", () => {
     assert.deepEqual([...DEPENDENCY_IDS], rustEnum(DEPENDENCIES_RS, "DependencyId"));
   });
 
+  it("lists MangoHud after ffmpeg", () => {
+    assert.deepEqual(DEPENDENCY_IDS.slice(-2), ["ffmpeg", "mangohud"]);
+  });
+
   it("has the same Dependency and DaemonStatus fields", () => {
     assert.deepEqual(Object.keys(dep()).sort(), rustFields(DEPENDENCIES_RS, "Dependency").sort());
     assert.deepEqual(["running", "socket_accessible"], rustFields(DEPENDENCIES_RS, "DaemonStatus").sort());
@@ -121,6 +125,13 @@ describe("parseDependencies", () => {
 
   it("never reads a missing installed flag as installed", () => {
     assert.equal(parseDependencies([{ id: "ffmpeg" }])[0].installed, false);
+  });
+
+  it("keeps MangoHud with no version, shown as unknown rather than as a failure", () => {
+    const [mangohud] = parseDependencies([{ id: "mangohud", name: "MangoHud", installed: true, version: null }]);
+    assert.equal(mangohud.id, "mangohud");
+    assert.equal(dependencyState(mangohud).kind, "installed");
+    assert.equal(versionLine(mangohud), "Version unknown");
   });
 
   it("answers an empty list for anything that is not a list", () => {
