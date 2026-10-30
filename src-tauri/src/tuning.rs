@@ -36,6 +36,7 @@
 //! Overdrive is not a pending change: it is a kernel parameter, set by lactd for the next boot
 //! after a confirmation handshake of its own ([`overdrive`]).
 
+pub mod clocks;
 pub mod overdrive;
 pub mod profiles;
 
@@ -80,7 +81,7 @@ pub const PENDING_EVENT: &str = "tuning-pending";
 /// Emitted once per pending change when it settles, with a [`Settled`].
 pub const SETTLED_EVENT: &str = "tuning-settled";
 
-/// What `tuning_status` returns. `power` and `fan` are `null` when `available` is false.
+/// What `tuning_status` returns. `power`, `fan` and `clocks` are `null` when `available` is false.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TuningStatus {
     pub available: bool,
@@ -98,6 +99,9 @@ pub struct TuningStatus {
     pub reboot_pending: bool,
     pub power: Option<PowerLimit>,
     pub fan: Option<FanStatus>,
+    /// The clock and voltage controls of this GPU; `null` when the feature does not apply or
+    /// lactd did not answer that request ([`clocks`]).
+    pub clocks: Option<clocks::ClocksStatus>,
     /// The active LACT profile; `null` is LACT's default profile (or an unreadable list).
     pub profile: Option<String>,
     /// The change to this GPU waiting for confirmation, if there is one.
@@ -231,6 +235,7 @@ impl TuningStatus {
             reboot_pending: false,
             power: None,
             fan: None,
+            clocks: None,
             profile: None,
             pending: None,
         }
@@ -341,7 +346,7 @@ impl Lact {
     }
 
     /// The tuning state of the GPU with Redline id `gpu_id` (its PCI slot). Blocking: up to
-    /// five requests to `lactd`, each bounded by the client's timeout.
+    /// six requests to `lactd`, each bounded by the client's timeout.
     pub fn status(&self, gpu_id: &str) -> TuningStatus {
         let system = match self.client.system_info() {
             Ok(system) => system,
@@ -386,6 +391,10 @@ impl Lact {
         if let Some(fan) = status.fan.as_mut() {
             self.add_fan_capabilities(fan, gpu_id, &info, &stats);
         }
+        status.clocks = clocks::clocks_status(
+            self.client.device_clocks_info(&device.id),
+            status.overdrive_enabled,
+        );
         status.profile = self
             .client
             .list_profiles()
@@ -1147,6 +1156,7 @@ mod tests {
         for (key, value) in fan["pmfw"].as_object().unwrap() {
             assert_eq!(*value, Value::Null, "{key}");
         }
+        assert_eq!(json["clocks"], Value::Null);
     }
 
     #[test]
