@@ -247,7 +247,9 @@ B, #56): **Redline may ask `lactd` to enable or disable it, after an explicit co
 - **From the disable until the reboot, nothing that needs overdrive can be set.** The running
   kernel keeps it, so `set_fan` (other than back to automatic), `set_clocks` and `activate_profile`
   would be accepted and left stored for a boot without it. The stop lives in the session, like
-  `reboot_pending`, and a disable that timed out counts, since lactd may still finish it.
+  `reboot_pending`. Only an answer that proves nothing changed lifts it: lactd unreachable, or its
+  refusals that come before it touches anything. A timeout, "already toggled", an initramfs failure
+  or an unreadable answer all keep it.
 - Known limits: lactd holds its one pending change in memory with no request to read it, so one
   left by the LACT app is invisible here; and LACT's automatic profile switching can activate a
   saved profile later, which the plan says.
