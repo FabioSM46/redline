@@ -164,6 +164,8 @@ impl Tuning {
     ) -> Result<PendingChange, String> {
         let _control = lock(&self.inner.control);
         self.refuse_if_pending(gpu_id)?;
+        // Any profile may carry a fan curve or clock values for the next boot.
+        self.inner.overdrive.refuse_while_disabling()?;
         let lact = &self.inner.lact;
         lact.device_id(gpu_id)?;
         let info = self.profiles()?;

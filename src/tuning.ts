@@ -137,12 +137,28 @@ export type TuningStatus = {
   pending: PendingChange | null;
 };
 
-/** Mirrors `tuning::overdrive::OverdrivePlan` (`prepare_enable_overdrive`). */
+/** Mirrors `tuning::overdrive::OverdriveAction`. */
+export type OverdriveAction = "enable" | "disable";
+
+/** Mirrors `tuning::overdrive::OverdriveDependency`: one setting that stops a disable. */
+export type OverdriveDependency = {
+  gpu_id: string;
+  /** Mirrors `tuning::overdrive::OverdriveDependencyKind`: `reset_clocks` or `reset_fan`. */
+  kind: "clocks" | "fan";
+  /** The active LACT profile that holds it; null is LACT's default configuration. */
+  profile: string | null;
+  sentence: string;
+};
+
+/** Mirrors `tuning::overdrive::OverdrivePlan` (`prepare_enable_overdrive` and its disable twin). */
 export type OverdrivePlan = {
-  action: "enable" | "disable";
+  action: OverdriveAction;
   steps: string[];
   reboot_required: boolean;
-  token: string;
+  dependencies: OverdriveDependency[];
+  saved_profiles: string | null;
+  /** Null while `dependencies` is not empty: the plan cannot be confirmed. */
+  token: string | null;
   expires_ms: number;
 };
 

@@ -451,8 +451,37 @@ pub struct FanControlSettings {
     pub change_threshold: Option<u64>,
 }
 
-/// `get_gpu_config`: the configuration LACT stores for one GPU, **without** clocks, voltages,
-/// power states and power profile modes.
+/// The clock and voltage values of a stored configuration: `ClocksConfiguration` in lact-schema
+/// 0.10.1, which `get_gpu_config` flattens into [`GpuConfig`]. The offsets and curves are maps
+/// keyed by a number; their values matter here only by being there.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StoredClocks {
+    pub min_core_clock: Option<i32>,
+    pub min_memory_clock: Option<i32>,
+    pub min_voltage: Option<i32>,
+    pub max_core_clock: Option<i32>,
+    pub max_memory_clock: Option<i32>,
+    pub max_voltage: Option<i32>,
+    pub voltage_offset: Option<i32>,
+    pub voltage_boost: Option<i32>,
+    pub gpu_clock_offsets: BTreeMap<String, Value>,
+    pub mem_clock_offsets: BTreeMap<String, Value>,
+    pub gpu_vf_curve: BTreeMap<String, Value>,
+    pub mem_vf_curve: BTreeMap<String, Value>,
+    pub nvidia_gpu_vf_curve: BTreeMap<String, Value>,
+}
+
+impl StoredClocks {
+    /// LACT stores no value: `is_core_clocks_used` in lact-schema 0.10.1 is its opposite.
+    pub fn is_empty(&self) -> bool {
+        *self == StoredClocks::default()
+    }
+}
+
+/// `get_gpu_config`: the configuration LACT stores for one GPU, **without** power states and
+/// power profile modes. lactd 0.10.1 reads it from the active profile (`Config::gpus`), or from
+/// its default configuration when no profile is active.
 ///
 /// Read-only: never send it back with `set_gpu_config`, which replaces the whole configuration
 /// and would erase every field this subset does not carry.
@@ -465,6 +494,8 @@ pub struct GpuConfig {
     /// Watts; `None` = the GPU's default.
     pub power_cap: Option<f64>,
     pub performance_level: Option<String>,
+    #[serde(flatten)]
+    pub clocks: StoredClocks,
 }
 
 /// `list_profiles` with `include_state: false`, without the profile rules and hooks.
@@ -931,6 +962,11 @@ mod tests {
         assert_eq!(fan.mode, FanControlMode::Curve);
         assert_eq!(fan.curve.len(), 5);
         assert_eq!(fan.change_threshold, Some(2));
+        assert!(!config.clocks.is_empty());
+        assert!(config.clocks.gpu_clock_offsets.contains_key("0"));
+        assert!(GpuConfig::default().clocks.is_empty());
+        let voltage: GpuConfig = serde_json::from_str(r#"{"voltage_offset":-50}"#).unwrap();
+        assert_eq!(voltage.clocks.voltage_offset, Some(-50));
         let never: Option<GpuConfig> = serde_json::from_value(Value::Null).unwrap();
         assert_eq!(never, None);
     }

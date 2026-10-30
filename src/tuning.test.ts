@@ -17,6 +17,7 @@ import {
   lactUnreachable,
   NO_PENDING,
   outcomeSentence,
+  type OverdriveDependency,
   overdriveView,
   PENDING_EVENT,
   type PendingChange,
@@ -30,6 +31,22 @@ import {
   TUNING_CHANGES,
   type TuningStatus,
 } from "./tuning.ts";
+
+const plan = {
+  action: "disable" as const,
+  steps: [],
+  reboot_required: true,
+  dependencies: [],
+  saved_profiles: null,
+  token: "t",
+  expires_ms: 1_000,
+};
+const fanItem: OverdriveDependency = {
+  gpu_id: "0000:0d:00.0",
+  kind: "fan",
+  profile: null,
+  sentence: "The GPU has a fan curve stored in LACT.",
+};
 
 const power: PowerLimit = { current_w: 250, min_w: 150, max_w: 300, default_w: 250 };
 
@@ -246,7 +263,6 @@ describe("status views", () => {
   });
 
   it("an overdrive plan expires at its deadline", () => {
-    const plan = { action: "enable" as const, steps: [], reboot_required: true, token: "t", expires_ms: 1_000 };
     assert.equal(planExpired(plan, 999), false);
     assert.equal(planExpired(plan, 1_000), true);
   });
@@ -274,7 +290,8 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
     assert.deepEqual(fields(rust, "Settled"), ["gpu_id", "outcome"]);
     assert.deepEqual(fields(clocksSource, "ClocksStatus"), Object.keys(clocks).sort());
     assert.deepEqual(fields(clocksSource, "ClockControl"), Object.keys(clockControl).sort());
-    assert.deepEqual(fields(overdrive, "OverdrivePlan"), ["action", "expires_ms", "reboot_required", "steps", "token"]);
+    assert.deepEqual(fields(overdrive, "OverdrivePlan"), Object.keys(plan).sort());
+    assert.deepEqual(fields(overdrive, "OverdriveDependency"), Object.keys(fanItem).sort());
   });
 
   it("has every field of the fan structs", () => {
@@ -292,6 +309,12 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
     assert.deepEqual(fields(fanSource, "SpeedRange"), keys(rules.speed));
     assert.deepEqual(fields(fanSource, "FanSettings"), keys(fanSettings));
     assert.deepEqual(fields(fanSource, "PmfwSettings"), keys(pmfwSettings));
+  });
+
+  it("has the same overdrive kinds", () => {
+    const body = overdrive.slice(overdrive.indexOf("pub enum OverdriveDependencyKind {"));
+    const kinds = [...body.slice(0, body.indexOf("\n}")).matchAll(/^\s+(\w+),/gm)].map((m) => m[1].toLowerCase());
+    assert.deepEqual(kinds, ["clocks", "fan"]);
   });
 
   it("has the same fan modes", () => {

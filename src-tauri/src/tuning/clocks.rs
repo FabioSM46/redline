@@ -325,7 +325,7 @@ impl Tuning {
         values: &Map<String, Value>,
     ) -> Result<PendingChange, String> {
         let requested = requested(values)?;
-        self.apply(gpu_id, TuningChange::Clocks, |lact, lact_id| {
+        self.apply_needing_overdrive(gpu_id, TuningChange::Clocks, |lact, lact_id| {
             let commands = commands(&requested, &lact.clock_controls(lact_id)?)?;
             lact.client
                 .batch_set_clocks(lact_id, &commands)
