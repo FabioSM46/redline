@@ -138,7 +138,9 @@ for arg in "" "LACT" "../lact" "https://example.com/x.deb" "/bin/sh" "lact;id" "
 done
 dry_run "$apt_path" lact ffmpeg
 assert_eq "refuses two components" 2 "$CODE"
-for arg in $(sed -n 's/.*DependencyId::[A-Za-z]* => "\([a-z-]*\)",$/\1/p' "$ROOT/src-tauri/src/installer.rs"); do
+helper_args=$(sed -n 's/.*DependencyId::[A-Za-z]* => "\([a-z_-]*\)",$/\1/p' "$ROOT/src-tauri/src/installer.rs")
+assert_eq "the app sends the four fixed names" "lact gpu-screen-recorder ffmpeg mangohud" "${helper_args//$'\n'/ }"
+for arg in $helper_args; do
   dry_run "$apt_path" "$arg"
   assert_eq "accepts the app's '$arg'" 0 "$CODE"
 done
