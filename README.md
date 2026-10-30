@@ -76,8 +76,8 @@ from Flathub, and first installs Flatpak and adds the Flathub remote if they are
 - For the in-game overlay: MangoHud
 
 From a source checkout, `scripts/install-deps.sh` runs the same helper as the guided install:
-LACT (the official `.deb`, on Ubuntu 24.04/26.04 and Debian 13), GPU Screen Recorder (from
-Flathub), and ffmpeg and MangoHud (apt, dnf or pacman):
+LACT (the official `.deb` of the pinned 0.10.1, on Ubuntu 24.04/26.04 and Debian 13), GPU
+Screen Recorder (from Flathub), and ffmpeg and MangoHud (apt, dnf or pacman):
 
 ```bash
 sudo bash scripts/install-deps.sh
