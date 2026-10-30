@@ -3,7 +3,7 @@
 What each published version of Redline contains. The plan is in the
 [roadmap](docs/roadmap.md), the release steps in [docs/release.md](docs/release.md).
 
-## 0.2.0 — Unreleased
+## 0.2.0 — 2026-10-30
 
 ### Overdrive
 
