@@ -9,11 +9,10 @@ actually use and leaves the rest out.
 
 ## Status
 
-**M0 — Foundations**, **M1 — Performance**, **M2 — Recording** and **M3 — Tuning** are done, and
-**M4 — Overlay and release** closes with the first published package, 0.1.0 (see the
-[roadmap](docs/roadmap.md) and the [changelog](CHANGELOG.md)). Until it appears on
-[GitHub Releases](https://github.com/FabioSM46/redline/releases), build from source (see
-[Development](#development)).
+**M0 — Foundations**, **M1 — Performance**, **M2 — Recording**, **M3 — Tuning** and
+**M4 — Overlay and release** are done. The first published package, 0.1.0, is on
+[GitHub Releases](https://github.com/FabioSM46/redline/releases) (see the
+[roadmap](docs/roadmap.md) and the [changelog](CHANGELOG.md)).
 
 ## Features
 
