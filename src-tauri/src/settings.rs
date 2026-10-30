@@ -328,9 +328,9 @@ fn check_toggle_key(value: &String) -> Result<(), String> {
                 && key.len() <= MAX_KEY_NAME
                 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
-    valid
-        .then_some(())
-        .ok_or_else(|| "toggle_key must be key names joined by +, such as Shift_R+F12".to_owned())
+    valid.then_some(()).ok_or_else(|| {
+        "The toggle key must be key names joined by +, such as Shift_R+F12".to_owned()
+    })
 }
 
 /// The default replay and recording folders, as `recording_defaults` returns them. `None` when
@@ -1277,7 +1277,9 @@ mod tests {
             ..OverlaySettings::default()
         };
         let error = apply_overlay(&file, videos(), &defaults(), overlay).unwrap_err();
-        assert!(error.contains("toggle_key"), "{error}");
+        assert!(error.contains("The toggle key"), "{error}");
+        assert!(error.contains("Shift_R+F12"), "{error}");
+        assert!(!error.contains("toggle_key"), "{error}");
         assert!(!file.exists());
     }
 
