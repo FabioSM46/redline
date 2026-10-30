@@ -342,7 +342,7 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
 
       <CommandRow
         title="Turn it on in a game"
-        description="In Steam, open the game's Properties and paste this into Launch options. The overlay appears only in games started this way."
+        description="In Steam, open the game's Properties and paste this into Launch options. In Lutris, open the game's Configure → System options and turn on FPS counter (MangoHud), or enter mangohud as the Command prefix, under Advanced; under Wine the overlay needs Vulkan, which normally means DXVK. The overlay appears only in games started with MangoHud from one of these launchers."
         command={status.launch_hint}
       />
     </div>
