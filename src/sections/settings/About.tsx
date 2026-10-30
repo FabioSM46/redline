@@ -12,7 +12,7 @@ type CopyState = { status: "idle" } | { status: "copied" } | { status: "error"; 
 const COPIED_MS = 2000;
 
 /**
- * Settings → About: Redline's version and license, and the licenses of the tools it starts. The
+ * Settings → About: Redline's version and license, and the licenses of the tools it works with. The
  * license addresses are shown with a Copy button: the app has no way to open a browser, and the
  * webview must not navigate away from Redline.
  */
