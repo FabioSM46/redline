@@ -1200,3 +1200,31 @@ body {
   width: calc(var(--space) * 16);
   max-width: 100%;
 }
+
+/* Performance → Metrics: the in-game overlay, below the charts. */
+.overlay {
+  margin-top: calc(var(--space) * 1.5);
+}
+
+.overlay-key {
+  width: calc(var(--space) * 12);
+}
+
+.overlay-message {
+  margin: 0;
+}
+
+.overlay-metrics {
+  display: grid;
+  justify-self: stretch;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space) * 12), 1fr));
+  gap: var(--space-sm) var(--space);
+  font-size: var(--text-sm);
+}
+
+.overlay-metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}

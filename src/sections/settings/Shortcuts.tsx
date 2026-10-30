@@ -177,7 +177,8 @@ function Commands() {
   );
 }
 
-function CommandRow({ title, description, command }: { title: string; description: string; command: string }) {
+/** A command to copy: the text, its Copy button and what happened. Also used by the overlay. */
+export function CommandRow({ title, description, command }: { title: string; description: string; command: string }) {
   const [copy, setCopy] = useState<CopyState>({ status: "idle" });
 
   useEffect(() => {
