@@ -138,8 +138,10 @@ git push origin v0.1.0
 - [ ] Download `redline_0.1.0_amd64.deb` from the draft and repeat the `dpkg-deb -c` checks of
       "The package".
 - [ ] Install it on the clean virtual machine; it starts from the menu.
-- [ ] Replace the draft's notes with the `CHANGELOG.md` entry, with `Unreleased` replaced by the
-      release date.
+- [ ] Choose the release date: today, as `YYYY-MM-DD`. This is the only step that chooses it, and
+      it stands even if publishing happens on a later day.
+- [ ] Replace the draft's notes with the `CHANGELOG.md` entry, with `Unreleased` replaced by that
+      date.
 
 If the package is wrong, do not publish: fix it through `develop` and `main`, then move the tag to
 the new commit. The workflow replaces the package of a draft, and refuses to touch a published
@@ -153,7 +155,8 @@ release.
 
 Through a PR to `develop`:
 
-- [ ] `CHANGELOG.md`: replace `Unreleased` with the date.
+- [ ] `CHANGELOG.md`: replace `Unreleased` with the date chosen in step 4, the one in the published
+      notes.
 - [ ] `docs/roadmap.md`: check the release item and add `(done)` to the milestone. M4 is marked done
       only now, not when its issues close.
 - [ ] `README.md`: update the Status section, which still points to building from source.
