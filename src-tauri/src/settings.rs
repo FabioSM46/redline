@@ -315,6 +315,9 @@ fn check_any<T>(_: &T) -> Result<(), String> {
     Ok(())
 }
 
+/// What a toggle key has to be, for the two sentences that refuse one.
+const TOGGLE_KEY_RULE: &str = "must be key names joined by +, such as Shift_R+F12";
+
 /// Key names joined by `+`. The value lands in MangoHud's file, where `#` starts a comment, a new
 /// line starts another option and `,` and `:` separate keys as `+` does, so only the characters of
 /// an X key name pass. Whether a name is a real key only MangoHud can say.
@@ -330,7 +333,14 @@ fn check_toggle_key(value: &String) -> Result<(), String> {
         });
     valid
         .then_some(())
-        .ok_or_else(|| "toggle_key must be key names joined by +, such as Shift_R+F12".to_owned())
+        .ok_or_else(|| format!("The toggle key {TOGGLE_KEY_RULE}"))
+}
+
+/// [`check_toggle_key`] for the settings file: `read_field` writes the reason straight after the
+/// field's path, so here it opens with the field's name and not with the sentence for the screen.
+#[allow(clippy::ptr_arg)]
+fn check_stored_toggle_key(value: &String) -> Result<(), String> {
+    check_toggle_key(value).map_err(|_| format!("toggle_key {TOGGLE_KEY_RULE}"))
 }
 
 /// The default replay and recording folders, as `recording_defaults` returns them. `None` when
@@ -710,7 +720,7 @@ fn load_overlay(value: &Value, problems: &mut Vec<String>) -> OverlaySettings {
         fields,
         p,
         "toggle_key",
-        check_toggle_key,
+        check_stored_toggle_key,
         &mut o.toggle_key,
         problems,
     );
@@ -1209,6 +1219,11 @@ mod tests {
         // preset, metrics, toggle_key.
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems.iter().all(|p| p.contains("overlay.")));
+        assert!(
+            problems.iter().any(|p| p
+                .contains("overlay.toggle_key must be key names joined by +, such as Shift_R+F12")),
+            "{problems:?}"
+        );
 
         fs::write(&file, r#"{"overlay": 7}"#).unwrap();
         let (settings, problems) = load(&file, videos());
@@ -1277,7 +1292,9 @@ mod tests {
             ..OverlaySettings::default()
         };
         let error = apply_overlay(&file, videos(), &defaults(), overlay).unwrap_err();
-        assert!(error.contains("toggle_key"), "{error}");
+        assert!(error.contains("The toggle key"), "{error}");
+        assert!(error.contains("Shift_R+F12"), "{error}");
+        assert!(!error.contains("toggle_key"), "{error}");
         assert!(!file.exists());
     }
 
