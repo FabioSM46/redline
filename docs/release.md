@@ -79,6 +79,9 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 
 - [ ] The Copy button of Performance → Metrics → Overlay puts exactly `mangohud %command%` on the
       clipboard; paste it into the game's Launch options in Steam.
+- [ ] A game started from Lutris shows the overlay with Configure → System options →
+      **FPS counter (MangoHud)** on, and again with that off and `mangohud` as the Command prefix
+      (under Advanced). Under Wine, use a game running on Vulkan, normally through DXVK.
 - [ ] The rendered config works in the game: each preset (Off, Minimal, Standard, Full) shows what
       the page describes, and position and toggle key take effect.
 - [ ] Take-over: with a `MangoHud.conf` of your own, **Let Redline manage it** keeps the file as
