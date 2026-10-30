@@ -158,12 +158,18 @@ fn migrate(legacy: &Path, launcher: &impl Launcher) -> Result<(), String> {
 /// [`AUTOSTART_ARG`]. The name alone could be a file the user made by hand, which is not ours to
 /// remove; an entry the desktop's startup settings turned off stays off, so it is left too.
 fn written_by_redline(content: &str) -> bool {
-    let mut lines = content.lines().map(str::trim);
-    let launches_with_the_argument = lines.clone().any(|line| {
+    launches_with_the_argument(content)
+        && !content
+            .lines()
+            .map(str::trim)
+            .any(|line| line == "Hidden=true" || line == "X-GNOME-Autostart-enabled=false")
+}
+
+/// Whether the entry's `Exec=` launches with [`AUTOSTART_ARG`], as only Redline's entries do.
+fn launches_with_the_argument(content: &str) -> bool {
+    content.lines().map(str::trim).any(|line| {
         line.starts_with("Exec=") && line.split_whitespace().any(|word| word == AUTOSTART_ARG)
-    });
-    launches_with_the_argument
-        && !lines.any(|line| line == "Hidden=true" || line == "X-GNOME-Autostart-enabled=false")
+    })
 }
 
 /// Corrects the name of the entry in `folder`. A failure is only logged: the entry in place still
@@ -174,16 +180,17 @@ fn show_display_name(folder: &Path) {
     }
 }
 
-/// Gives `entry` the [`DISPLAY_NAME`] if the plugin left the identifier there. Only an active
-/// entry of Redline's is rewritten, and only that line of it: `Exec=` stays as it is. The rename
-/// is atomic, so at no moment is the entry missing or half written.
+/// Gives `entry` the [`DISPLAY_NAME`] if the plugin left the identifier there. Only an entry of
+/// Redline's is rewritten, and only that line of it: `Exec=` stays as it is, and so do the keys
+/// that turn an entry off, because the desktop's startup settings list a turned-off entry too and
+/// it stays off. The rename is atomic, so at no moment is the entry missing or half written.
 fn correct_name(entry: &Path) -> io::Result<()> {
     let content = match fs::read_to_string(entry) {
         Ok(content) => content,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
-    if !written_by_redline(&content) {
+    if !launches_with_the_argument(&content) {
         return Ok(());
     }
     let Some(corrected) = with_display_name(&content) else {
@@ -192,7 +199,13 @@ fn correct_name(entry: &Path) -> io::Result<()> {
     // The extension no longer ends in `.desktop`, so the desktop never takes it for an entry.
     let tmp = entry.with_extension(format!("desktop.tmp.{}", std::process::id()));
     let written = (|| {
-        let mut out = fs::File::create(&tmp)?;
+        // Whatever a crashed run left under this name goes first, and the new file is created,
+        // never opened: a link sitting there is not followed.
+        let _ = fs::remove_file(&tmp);
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         out.write_all(corrected.as_bytes())?;
         out.sync_all()?;
         fs::rename(&tmp, entry)
@@ -623,15 +636,31 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_turned_off_in_the_desktop_is_not_touched() {
+    fn an_entry_turned_off_in_the_desktop_gets_the_name_and_stays_off() {
         for key in ["Hidden=true", "X-GNOME-Autostart-enabled=false"] {
             let folder = Folder::new(&format!("off-{key}"));
-            let content = format!("{PLUGIN_ENTRY}\n{key}\n");
-            fs::write(folder.entry(), &content).unwrap();
+            fs::write(folder.entry(), format!("{PLUGIN_ENTRY}\n{key}\n")).unwrap();
 
             assert!(correct_name(&folder.entry()).is_ok(), "{key}");
-            assert_eq!(fs::read_to_string(folder.entry()).unwrap(), content);
+            assert_eq!(
+                fs::read_to_string(folder.entry()).unwrap(),
+                format!("{CORRECTED_ENTRY}\n{key}\n")
+            );
         }
+    }
+
+    #[test]
+    fn a_link_at_the_temporary_path_is_not_written_through() {
+        let folder = Folder::new("link");
+        fs::write(folder.entry(), PLUGIN_ENTRY).unwrap();
+        let target = folder.0.join("target");
+        fs::write(&target, "untouched").unwrap();
+        let tmp = format!("{ENTRY_NAME}.desktop.tmp.{}", std::process::id());
+        std::os::unix::fs::symlink(&target, folder.0.join(tmp)).unwrap();
+
+        assert!(correct_name(&folder.entry()).is_ok());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
+        assert_eq!(fs::read_to_string(folder.entry()).unwrap(), CORRECTED_ENTRY);
     }
 
     #[test]
