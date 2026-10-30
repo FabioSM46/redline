@@ -55,7 +55,7 @@ STEP = "Install Tauri system dependencies"
 REQUIRED = {"ci.yml"}
 INVOCATION = (
     "bash scripts/apt-install-with-fallback.sh "
-    "libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev pkg-config"
+    "libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev libssl-dev librsvg2-dev pkg-config"
 )
 
 

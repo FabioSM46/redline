@@ -149,7 +149,7 @@ System libraries for Tauri, on Ubuntu/Debian:
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev librsvg2-dev
+  libayatana-appindicator3-dev libxdo-dev libssl-dev librsvg2-dev
 ```
 
 ### Commands
