@@ -2,7 +2,10 @@
 //!
 //! `tauri-plugin-autostart` writes the operating system's entry: on Linux an XDG autostart
 //! `.desktop` file in the user's autostart folder. The entry launches the app with
-//! [`AUTOSTART_ARG`], so the app can tell an autostart launch from a manual one.
+//! [`AUTOSTART_ARG`], so the app can tell an autostart launch from a manual one. The entry is
+//! named after the bundle identifier ([`ENTRY_NAME`]), like the desktop file the `.deb` installs,
+//! so a login start gives the portal the same app id as a menu launch; an entry an older build
+//! wrote as `redline.desktop` is replaced at startup ([`replace_legacy_entry`]).
 //!
 //! The operating system is the only source of truth: the state is never copied into the
 //! settings file, and every write is followed by a read, so an entry removed by hand is not
@@ -13,6 +16,9 @@
 //! that an autostart launch, or a launch with a command-line action, stays in the tray.
 
 use std::ffi::OsStr;
+use std::fs;
+use std::io;
+use std::path::Path;
 
 use tauri::plugin::TauriPlugin;
 use tauri::{AppHandle, Manager, Runtime};
@@ -25,10 +31,19 @@ use crate::tray;
 /// The argument the autostart entry launches the app with.
 pub const AUTOSTART_ARG: &str = "--autostart";
 
+/// The entry's name, which the plugin gives the file (`<name>.desktop`) and which the entry shows
+/// as its `Name`. The plugin is built before the app's configuration is reachable, so it is
+/// written here; a test ties it to the bundle identifier.
+const ENTRY_NAME: &str = "com.fabiosm46.redline";
+
+/// The file older builds wrote, named after the Linux `productName`.
+const LEGACY_ENTRY: &str = "redline.desktop";
+
 /// The plugin, registered for the backend only: no `autostart:*` permission is granted to the
 /// frontend, which goes through [`get_autostart`] and [`set_autostart`].
 pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
     tauri_plugin_autostart::Builder::new()
+        .app_name(ENTRY_NAME)
         .arg(AUTOSTART_ARG)
         .build()
 }
@@ -90,6 +105,47 @@ pub fn show_main_window_unless_hidden_start<R: Runtime>(app: &AppHandle<R>) {
     if !hidden {
         tray::show_main_window(app);
     }
+}
+
+/// Replaces the entry an older build wrote under [`LEGACY_ENTRY`] with one under [`ENTRY_NAME`],
+/// so an update neither loses starting with the system nor starts the app twice. Called in
+/// `setup`, after the plugin. A failure is only logged: the old entry still starts the app, and
+/// the next launch tries again.
+pub fn replace_legacy_entry<R: Runtime>(app: &AppHandle<R>) {
+    let Ok(home) = app.path().home_dir() else {
+        return;
+    };
+    // The folder the plugin writes to: always under the home, whatever `XDG_CONFIG_HOME` says.
+    let legacy = home.join(".config").join("autostart").join(LEGACY_ENTRY);
+    if let Err(error) = migrate(&legacy, &*app.autolaunch()) {
+        eprintln!("redline: the old autostart entry was not replaced ({error})");
+    }
+}
+
+fn migrate(legacy: &Path, launcher: &impl Launcher) -> Result<(), String> {
+    let content = match fs::read_to_string(legacy) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !written_by_redline(&content) {
+        return Ok(());
+    }
+    // In this order: a failure leaves the old entry working instead of no entry at all.
+    launcher.enable()?;
+    fs::remove_file(legacy).map_err(|error| error.to_string())
+}
+
+/// Whether the file is an active entry written by Redline, which launches with
+/// [`AUTOSTART_ARG`]. The name alone could be a file the user made by hand, which is not ours to
+/// remove; an entry the desktop's startup settings turned off stays off, so it is left too.
+fn written_by_redline(content: &str) -> bool {
+    let mut lines = content.lines().map(str::trim);
+    let launches_with_the_argument = lines.clone().any(|line| {
+        line.starts_with("Exec=") && line.split_whitespace().any(|word| word == AUTOSTART_ARG)
+    });
+    launches_with_the_argument
+        && !lines.any(|line| line == "Hidden=true" || line == "X-GNOME-Autostart-enabled=false")
 }
 
 /// The plugin's three operations on the operating system entry, behind a trait so that
@@ -255,6 +311,105 @@ mod tests {
                 None => Ok(self.enabled.get()),
             }
         }
+    }
+
+    #[test]
+    fn the_entry_and_the_template_are_named_after_the_bundle_identifier() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], ENTRY_NAME);
+        assert_eq!(
+            config["bundle"]["linux"]["deb"]["desktopTemplate"],
+            format!("linux/{ENTRY_NAME}.desktop")
+        );
+    }
+
+    /// A temporary folder that disappears with the test.
+    struct Folder(std::path::PathBuf);
+
+    impl Folder {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("redline-autostart-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn legacy(&self) -> std::path::PathBuf {
+            self.0.join(LEGACY_ENTRY)
+        }
+    }
+
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    const OLD_ENTRY: &str = "[Desktop Entry]\nType=Application\nName=redline\n\
+        Exec=/usr/bin/redline --autostart\nTerminal=false";
+
+    #[test]
+    fn an_old_entry_is_replaced_not_duplicated() {
+        let folder = Folder::new("replaced");
+        fs::write(folder.legacy(), OLD_ENTRY).unwrap();
+        let launcher = FakeLauncher::default();
+
+        assert_eq!(migrate(&folder.legacy(), &launcher), Ok(()));
+        assert!(launcher.enabled.get());
+        assert!(!folder.legacy().exists());
+    }
+
+    #[test]
+    fn without_an_old_entry_nothing_turns_on() {
+        let folder = Folder::new("none");
+        let launcher = FakeLauncher::default();
+
+        assert_eq!(migrate(&folder.legacy(), &launcher), Ok(()));
+        assert!(!launcher.enabled.get());
+    }
+
+    #[test]
+    fn a_file_the_user_made_is_left_alone() {
+        let folder = Folder::new("user");
+        let content = "[Desktop Entry]\nName=mine\nExec=/usr/bin/redline --autostart-later";
+        fs::write(folder.legacy(), content).unwrap();
+        let launcher = FakeLauncher::default();
+
+        assert_eq!(migrate(&folder.legacy(), &launcher), Ok(()));
+        assert!(!launcher.enabled.get());
+        assert_eq!(fs::read_to_string(folder.legacy()).unwrap(), content);
+    }
+
+    #[test]
+    fn an_entry_turned_off_in_the_desktop_stays_off() {
+        for key in ["Hidden=true", "X-GNOME-Autostart-enabled=false"] {
+            let folder = Folder::new(key);
+            let content = format!("{OLD_ENTRY}\n{key}\n");
+            fs::write(folder.legacy(), &content).unwrap();
+            let launcher = FakeLauncher::default();
+
+            assert_eq!(migrate(&folder.legacy(), &launcher), Ok(()));
+            assert!(!launcher.enabled.get(), "{key}");
+            assert_eq!(fs::read_to_string(folder.legacy()).unwrap(), content);
+        }
+    }
+
+    #[test]
+    fn the_old_entry_survives_a_failed_replacement() {
+        let folder = Folder::new("failed");
+        fs::write(folder.legacy(), OLD_ENTRY).unwrap();
+        let launcher = FakeLauncher {
+            fail_write: Some("permission denied"),
+            ..FakeLauncher::default()
+        };
+
+        assert_eq!(
+            migrate(&folder.legacy(), &launcher),
+            Err("permission denied".to_owned())
+        );
+        assert!(folder.legacy().exists());
     }
 
     #[test]

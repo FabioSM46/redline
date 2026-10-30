@@ -113,7 +113,9 @@ pnpm tauri dev        # run the app in development with hot reload
 pnpm tauri build      # release build and .deb package
 ```
 
-The `.deb` ends up in `src-tauri/target/release/bundle/deb/`.
+The `.deb` ends up in `src-tauri/target/release/bundle/deb/`. Then run
+`bash scripts/deb-desktop-id.sh`, as the release does: it installs the desktop file under the
+bundle identifier, which Tauri's bundler cannot do by itself.
 
 Quick checks:
 

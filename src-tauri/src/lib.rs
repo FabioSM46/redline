@@ -64,6 +64,7 @@ pub fn run() {
             // In the background: the portal may be missing (GNOME before 48), and its first
             // binding may wait on a desktop dialog.
             global_shortcuts::start(app.handle());
+            autostart::replace_legacy_entry(app.handle());
             autostart::show_main_window_unless_hidden_start(app.handle());
             Ok(())
         })
