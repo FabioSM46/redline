@@ -57,7 +57,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         timeout-minutes: 5
         run: |
-          bash scripts/apt-install-with-fallback.sh libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev pkg-config
+          bash scripts/apt-install-with-fallback.sh libwebkit2gtk-4.1-dev libayatana-appindicator3-dev libxdo-dev libssl-dev librsvg2-dev pkg-config
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
