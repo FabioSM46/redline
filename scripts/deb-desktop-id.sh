@@ -41,14 +41,21 @@ for deb in "$@"; do
   rm -rf "$WORK/package" "$WORK/renamed.deb"
   dpkg-deb --raw-extract "$deb" "$WORK/package"
   mv "$WORK/package/$OLD" "$WORK/package/$NEW"
-  OLD="$OLD" NEW="$NEW" awk '
-    BEGIN { from = "  " ENVIRON["OLD"]; to = "  " ENVIRON["NEW"] }
-    substr($0, length($0) - length(from) + 1) == from {
-      $0 = substr($0, 1, length($0) - length(from)) to
-    }
-    { print }
-  ' "$WORK/package/DEBIAN/md5sums" >"$WORK/md5sums"
-  cat "$WORK/md5sums" >"$WORK/package/DEBIAN/md5sums"
+  # `md5sums` is optional in a package, and its paths may have a leading `./` or not.
+  if [ -f "$WORK/package/DEBIAN/md5sums" ]; then
+    OLD="$OLD" NEW="$NEW" awk '
+      BEGIN { from = ENVIRON["OLD"]; to = ENVIRON["NEW"] }
+      {
+        path = $0
+        sub(/^[0-9a-f]+  /, "", path)
+        bare = path
+        sub(/^\.\//, "", bare)
+        if (bare == from) $0 = substr($0, 1, length($0) - length(path)) to
+        print
+      }
+    ' "$WORK/package/DEBIAN/md5sums" >"$WORK/md5sums"
+    cat "$WORK/md5sums" >"$WORK/package/DEBIAN/md5sums"
+  fi
   dpkg-deb -Zgzip --root-owner-group --build "$WORK/package" "$WORK/renamed.deb" >/dev/null
   # `cat` and not `mv`: the package keeps its path and the caller's permissions.
   cat "$WORK/renamed.deb" >"$deb"

@@ -35,6 +35,8 @@ assert_eq "the template is named after the identifier" "linux/$identifier.deskto
 if [ -f "$ROOT/src-tauri/linux/$identifier.desktop" ]; then ok "the template exists"; else bad "the template is missing"; fi
 assert_eq "the release configuration does not override the template" "null" \
   "$(jq -c .bundle.linux.deb.desktopTemplate "$ROOT/src-tauri/tauri.release.linux.conf.json")"
+assert_eq "the release configuration does not override productName" "null" \
+  "$(jq -c .productName "$ROOT/src-tauri/tauri.release.linux.conf.json")"
 assert_eq "the Debian package stays redline" "redline" \
   "$(jq -r .productName "$ROOT/src-tauri/tauri.linux.conf.json")"
 
@@ -78,17 +80,24 @@ assert_contains "ownership stays root" "$(grep "./$NEW" <<<"$LISTING")" "root/ro
 assert_contains "the binary stays executable" "$(grep './usr/bin/redline' <<<"$LISTING")" "-rwxr-xr-x"
 assert_eq "the package name is unchanged" "redline" "$(dpkg-deb -f "$DEB" Package)"
 
+assert_md5sums_verify() { # <name> <package>
+  local check="$TMP/verify"
+  rm -rf "$check"
+  dpkg-deb --raw-extract "$2" "$check"
+  if (cd "$check" && md5sum --check --quiet DEBIAN/md5sums >/dev/null 2>&1); then
+    ok "$1"
+  else
+    bad "$1"
+  fi
+}
+
 CHECK="$TMP/check"
 rm -rf "$CHECK"
 dpkg-deb --raw-extract "$DEB" "$CHECK"
 SUMS=$(cat "$CHECK/DEBIAN/md5sums")
 assert_contains "md5sums names the new path" "$SUMS" "  $NEW"
 assert_not_contains "md5sums forgets the old one" "$SUMS" "$OLD"
-if (cd "$CHECK" && md5sum --check --quiet DEBIAN/md5sums >/dev/null 2>&1); then
-  ok "md5sums verifies against the package"
-else
-  bad "md5sums does not verify"
-fi
+assert_md5sums_verify "md5sums verifies against the package" "$DEB"
 
 # Tauri writes the archives itself, with bare paths where dpkg-deb writes `./usr/...`.
 TAURI="$TMP/tauri.deb"
@@ -111,6 +120,27 @@ assert_eq "a package with bare paths is renamed too" "0" "$?"
 LISTING=$(dpkg-deb -c "$TAURI")
 assert_contains "and installs the new name" "$LISTING" "$NEW"
 assert_not_contains "and not the old one" "$LISTING" "$OLD"
+assert_md5sums_verify "and its md5sums still verify" "$TAURI"
+
+# A `./` in md5sums, and no md5sums at all.
+rebuild() { # <output>
+  dpkg-deb -Zgzip --root-owner-group --build "$TMP/pkg" "$1" >/dev/null
+}
+DOTTED="$TMP/dotted.deb"
+make_deb "$DOTTED" "$OLD"
+sed -i 's#  usr/#  ./usr/#' "$TMP/pkg/DEBIAN/md5sums"
+rebuild "$DOTTED"
+bash "$SCRIPT" "$DOTTED" >/dev/null 2>&1
+assert_eq "md5sums with a leading ./ is handled" "0" "$?"
+assert_md5sums_verify "and still verifies" "$DOTTED"
+
+BARE="$TMP/no-md5sums.deb"
+make_deb "$BARE" "$OLD"
+rm "$TMP/pkg/DEBIAN/md5sums"
+rebuild "$BARE"
+bash "$SCRIPT" "$BARE" >/dev/null 2>&1
+assert_eq "a package without md5sums is renamed" "0" "$?"
+assert_contains "and installs the new name" "$(dpkg-deb -c "$BARE")" "$NEW"
 
 BEFORE=$(sha256sum <"$DEB")
 OUT=$(bash "$SCRIPT" "$DEB" 2>&1)

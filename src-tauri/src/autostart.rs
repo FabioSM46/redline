@@ -136,12 +136,16 @@ fn migrate(legacy: &Path, launcher: &impl Launcher) -> Result<(), String> {
     fs::remove_file(legacy).map_err(|error| error.to_string())
 }
 
-/// Whether the file is the entry Redline wrote, which launches with [`AUTOSTART_ARG`]: the name
-/// alone could be a file the user made by hand, and that one is not ours to remove.
+/// Whether the file is an active entry written by Redline, which launches with
+/// [`AUTOSTART_ARG`]. The name alone could be a file the user made by hand, which is not ours to
+/// remove; an entry the desktop's startup settings turned off stays off, so it is left too.
 fn written_by_redline(content: &str) -> bool {
-    content.lines().any(|line| {
+    let mut lines = content.lines().map(str::trim);
+    let launches_with_the_argument = lines.clone().any(|line| {
         line.starts_with("Exec=") && line.split_whitespace().any(|word| word == AUTOSTART_ARG)
-    })
+    });
+    launches_with_the_argument
+        && !lines.any(|line| line == "Hidden=true" || line == "X-GNOME-Autostart-enabled=false")
 }
 
 /// The plugin's three operations on the operating system entry, behind a trait so that
@@ -327,6 +331,7 @@ mod tests {
         fn new(name: &str) -> Self {
             let path = std::env::temp_dir()
                 .join(format!("redline-autostart-{}-{name}", std::process::id()));
+            let _ = fs::remove_dir_all(&path);
             fs::create_dir_all(&path).unwrap();
             Self(path)
         }
@@ -375,6 +380,20 @@ mod tests {
         assert_eq!(migrate(&folder.legacy(), &launcher), Ok(()));
         assert!(!launcher.enabled.get());
         assert_eq!(fs::read_to_string(folder.legacy()).unwrap(), content);
+    }
+
+    #[test]
+    fn an_entry_turned_off_in_the_desktop_stays_off() {
+        for key in ["Hidden=true", "X-GNOME-Autostart-enabled=false"] {
+            let folder = Folder::new(key);
+            let content = format!("{OLD_ENTRY}\n{key}\n");
+            fs::write(folder.legacy(), &content).unwrap();
+            let launcher = FakeLauncher::default();
+
+            assert_eq!(migrate(&folder.legacy(), &launcher), Ok(()));
+            assert!(!launcher.enabled.get(), "{key}");
+            assert_eq!(fs::read_to_string(folder.legacy()).unwrap(), content);
+        }
     }
 
     #[test]
