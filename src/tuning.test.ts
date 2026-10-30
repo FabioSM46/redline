@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
+  type ClockControl,
+  type ClocksStatus,
   type CurveRules,
   type FanSettings,
   type FanStatus,
@@ -31,6 +33,16 @@ import {
 
 const power: PowerLimit = { current_w: 250, min_w: 150, max_w: 300, default_w: 250 };
 
+const clockControl: ClockControl = { current: 0, min: -200, max: 0 };
+
+const clocks: ClocksStatus = {
+  unavailable_reason: null,
+  max_core_clock: null,
+  core_clock_offset: clockControl,
+  max_vram_clock: null,
+  voltage_offset: clockControl,
+};
+
 const status: TuningStatus = {
   available: true,
   unavailable_reason: null,
@@ -40,6 +52,7 @@ const status: TuningStatus = {
   reboot_pending: false,
   power,
   fan: null,
+  clocks: null,
   profile: null,
   pending: null,
 };
@@ -242,6 +255,7 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
   const rust = readFileSync(new URL("../src-tauri/src/tuning.rs", import.meta.url), "utf8");
   const overdrive = readFileSync(new URL("../src-tauri/src/tuning/overdrive.rs", import.meta.url), "utf8");
   const fanSource = readFileSync(new URL("../src-tauri/src/tuning/fan.rs", import.meta.url), "utf8");
+  const clocksSource = readFileSync(new URL("../src-tauri/src/tuning/clocks.rs", import.meta.url), "utf8");
 
   it("uses the same event names", () => {
     assert.equal(rust.includes(`PENDING_EVENT: &str = "${PENDING_EVENT}"`), true);
@@ -257,6 +271,8 @@ describe("mirrors of src-tauri/src/tuning.rs", () => {
     assert.deepEqual(fields(rust, "PowerLimit"), Object.keys(power).sort());
     assert.deepEqual(fields(rust, "PendingChange"), Object.keys(change).sort());
     assert.deepEqual(fields(rust, "Settled"), ["gpu_id", "outcome"]);
+    assert.deepEqual(fields(clocksSource, "ClocksStatus"), Object.keys(clocks).sort());
+    assert.deepEqual(fields(clocksSource, "ClockControl"), Object.keys(clockControl).sort());
     assert.deepEqual(fields(overdrive, "OverdrivePlan"), ["action", "expires_ms", "reboot_required", "steps", "token"]);
   });
 
