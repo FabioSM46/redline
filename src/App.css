@@ -1183,6 +1183,17 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Performance → Tuning → Advanced → Clocks and voltage: warning, one row per control, reset. */
+.tuning-clocks {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-clocks > .record-title,
+.tuning-clocks > p {
+  margin: 0;
+}
+
 /* Performance → Tuning → Profile: the switch row, then the inline "Save as new" and "Delete"
  * confirmations below it, never a browser dialog. */
 .tuning-profiles {
