@@ -72,6 +72,8 @@ jobs:
         run: python3 scripts/third-party-licenses.py --target x86_64-unknown-linux-gnu --output src-tauri/target/THIRD-PARTY-LICENSES
       - name: Build the .deb
         run: pnpm tauri build --bundles deb --config src-tauri/tauri.release.linux.conf.json
+      - name: Install the desktop file under the bundle identifier
+        run: bash scripts/deb-desktop-id.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-deb

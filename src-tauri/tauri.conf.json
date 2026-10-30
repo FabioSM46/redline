@@ -31,7 +31,7 @@
     "linux": {
       "deb": {
         "section": "utils",
-        "desktopTemplate": "linux/redline.desktop",
+        "desktopTemplate": "linux/com.fabiosm46.redline.desktop",
         "files": {
           "/usr/share/doc/redline/copyright": "../LICENSE",
           "/usr/share/redline/install-dependency": "linux/install-dependency",

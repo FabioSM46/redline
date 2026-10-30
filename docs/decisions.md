@@ -123,7 +123,8 @@ process, not a separate service. Starting with the system is an option in Settin
   launches the app with the `--autostart` argument, which is how the app tells a login start
   from a manual one: "start minimised to the tray" applies only to a launch with `--autostart`.
   Whether the entry exists is read from the operating system every time, never stored in the
-  settings file.
+  settings file. The entry is `com.fabiosm46.redline.desktop`, the bundle identifier like the
+  installed desktop file (D10); an update replaces one an older build wrote as `redline.desktop`.
 - Single-instance handling needs `tauri-plugin-single-instance`.
 - **Shortcuts under Wayland** depend on the GlobalShortcuts portal (D5). Where it exists,
   Redline registers the bindings through it; where it does not (GNOME before 48), the Shortcuts
@@ -183,7 +184,10 @@ How the portal is used (`src-tauri/src/global_shortcuts.rs`):
 - A task on Tauri's async runtime, started in `setup`, so startup never waits on the portal. A
   host app first tells the portal its id (`org.freedesktop.host.portal.Registry`, the bundle
   identifier), best effort: the registry is missing on older portals, and an app the portal
-  already identified from its `.desktop` file is refused harmlessly.
+  already identified from its `.desktop` file is refused harmlessly. The id is the same either
+  way: the `.deb` installs `/usr/share/applications/com.fabiosm46.redline.desktop`. Tauri's
+  bundler names that file after `productName`, which also gives the Debian package name, so
+  `scripts/deb-desktop-id.sh` renames it in the built package and the package stays `redline`.
 - Availability is read at runtime: the interface's `version` property. No interface, no portal
   service or no session bus means "unavailable", and Settings → Shortcuts keeps the commands of
   D5. That is not an error and nothing is shown as one.

@@ -238,8 +238,8 @@ enum Setup {
 /// until the app exits.
 async fn session<R: Runtime>(app: &AppHandle<R>) -> Result<(), Setup> {
     // A host (non-sandboxed) app tells the portal its id, so the desktop can keep the keys under
-    // it. The bundle identifier is the only valid one Redline has: the `.deb`'s desktop-file name,
-    // `redline`, is not a reverse-DNS app id, so the registry would refuse it. Best effort: the
+    // it. That is the bundle identifier, which the `.deb`'s desktop file and the autostart entry
+    // are also named after, so every way of starting Redline gives the same id. Best effort: the
     // registry is newer than the portal on some desktops, and an app the portal already
     // identified (launched from its `.desktop` file) is refused, harmlessly.
     if let Ok(app_id) = ashpd::AppID::try_from(app.config().identifier.as_str())
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn only_the_bundle_identifier_is_a_valid_portal_app_id() {
-        // The portal registry takes a reverse-DNS id; the `.deb`'s desktop-file name is not one.
+        // The portal registry takes a reverse-DNS id: the binary and package name is not one.
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let identifier = config["identifier"].as_str().unwrap();
