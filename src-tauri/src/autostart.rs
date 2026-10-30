@@ -5,7 +5,9 @@
 //! [`AUTOSTART_ARG`], so the app can tell an autostart launch from a manual one. The entry is
 //! named after the bundle identifier ([`ENTRY_NAME`]), like the desktop file the `.deb` installs,
 //! so a login start gives the portal the same app id as a menu launch; an entry an older build
-//! wrote as `redline.desktop` is replaced at startup ([`replace_legacy_entry`]).
+//! wrote as `redline.desktop` is replaced at startup ([`repair_entries`]). The plugin also uses
+//! that identifier as the entry's `Name`, which the desktop shows among the startup applications,
+//! so every entry it writes is corrected to [`DISPLAY_NAME`] afterwards ([`correct_name`]).
 //!
 //! The operating system is the only source of truth: the state is never copied into the
 //! settings file, and every write is followed by a read, so an entry removed by hand is not
@@ -17,8 +19,8 @@
 
 use std::ffi::OsStr;
 use std::fs;
-use std::io;
-use std::path::Path;
+use std::io::{self, Write as _};
+use std::path::{Path, PathBuf};
 
 use tauri::plugin::TauriPlugin;
 use tauri::{AppHandle, Manager, Runtime};
@@ -31,10 +33,13 @@ use crate::tray;
 /// The argument the autostart entry launches the app with.
 pub const AUTOSTART_ARG: &str = "--autostart";
 
-/// The entry's name, which the plugin gives the file (`<name>.desktop`) and which the entry shows
-/// as its `Name`. The plugin is built before the app's configuration is reachable, so it is
-/// written here; a test ties it to the bundle identifier.
+/// The entry's name, which the plugin gives the file (`<name>.desktop`) and also writes as its
+/// `Name`. The plugin is built before the app's configuration is reachable, so it is written
+/// here; a test ties it to the bundle identifier.
 const ENTRY_NAME: &str = "com.fabiosm46.redline";
+
+/// The `Name` the entry shows on the desktop.
+const DISPLAY_NAME: &str = "Redline";
 
 /// The file older builds wrote, named after the Linux `productName`.
 const LEGACY_ENTRY: &str = "redline.desktop";
@@ -58,7 +63,11 @@ pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
 /// system, not the requested one.
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
-    write(&*app.autolaunch(), enabled)
+    write_and_name(
+        &*app.autolaunch(),
+        autostart_folder(&app).as_deref(),
+        enabled,
+    )
 }
 
 /// Whether the app starts with the window hidden and only the tray icon, from `args` without the
@@ -107,19 +116,28 @@ pub fn show_main_window_unless_hidden_start<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// The folder the plugin writes to: always under the home, whatever `XDG_CONFIG_HOME` says.
+fn autostart_folder<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    let home = app.path().home_dir().ok()?;
+    Some(home.join(".config").join("autostart"))
+}
+
+/// Brings the entries in the autostart folder up to date. Called in `setup`, after the plugin.
+pub fn repair_entries<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(folder) = autostart_folder(app) {
+        repair(&folder, &*app.autolaunch());
+    }
+}
+
 /// Replaces the entry an older build wrote under [`LEGACY_ENTRY`] with one under [`ENTRY_NAME`],
-/// so an update neither loses starting with the system nor starts the app twice. Called in
-/// `setup`, after the plugin. A failure is only logged: the old entry still starts the app, and
+/// so an update neither loses starting with the system nor starts the app twice, then corrects
+/// the name of the entry. Failures are only logged: the entry in place still starts the app, and
 /// the next launch tries again.
-pub fn replace_legacy_entry<R: Runtime>(app: &AppHandle<R>) {
-    let Ok(home) = app.path().home_dir() else {
-        return;
-    };
-    // The folder the plugin writes to: always under the home, whatever `XDG_CONFIG_HOME` says.
-    let legacy = home.join(".config").join("autostart").join(LEGACY_ENTRY);
-    if let Err(error) = migrate(&legacy, &*app.autolaunch()) {
+fn repair(folder: &Path, launcher: &impl Launcher) {
+    if let Err(error) = migrate(&folder.join(LEGACY_ENTRY), launcher) {
         eprintln!("redline: the old autostart entry was not replaced ({error})");
     }
+    show_display_name(folder);
 }
 
 fn migrate(legacy: &Path, launcher: &impl Launcher) -> Result<(), String> {
@@ -140,12 +158,81 @@ fn migrate(legacy: &Path, launcher: &impl Launcher) -> Result<(), String> {
 /// [`AUTOSTART_ARG`]. The name alone could be a file the user made by hand, which is not ours to
 /// remove; an entry the desktop's startup settings turned off stays off, so it is left too.
 fn written_by_redline(content: &str) -> bool {
-    let mut lines = content.lines().map(str::trim);
-    let launches_with_the_argument = lines.clone().any(|line| {
+    launches_with_the_argument(content)
+        && !content
+            .lines()
+            .map(str::trim)
+            .any(|line| line == "Hidden=true" || line == "X-GNOME-Autostart-enabled=false")
+}
+
+/// Whether the entry's `Exec=` launches with [`AUTOSTART_ARG`], as only Redline's entries do.
+fn launches_with_the_argument(content: &str) -> bool {
+    content.lines().map(str::trim).any(|line| {
         line.starts_with("Exec=") && line.split_whitespace().any(|word| word == AUTOSTART_ARG)
-    });
-    launches_with_the_argument
-        && !lines.any(|line| line == "Hidden=true" || line == "X-GNOME-Autostart-enabled=false")
+    })
+}
+
+/// Corrects the name of the entry in `folder`. A failure is only logged: the entry in place still
+/// starts the app.
+fn show_display_name(folder: &Path) {
+    if let Err(error) = correct_name(&folder.join(format!("{ENTRY_NAME}.desktop"))) {
+        eprintln!("redline: the autostart entry keeps its old name ({error})");
+    }
+}
+
+/// Gives `entry` the [`DISPLAY_NAME`] if the plugin left the identifier there. Only an entry of
+/// Redline's is rewritten, and only that line of it: `Exec=` stays as it is, and so do the keys
+/// that turn an entry off, because the desktop's startup settings list a turned-off entry too and
+/// it stays off. The rename is atomic, so at no moment is the entry missing or half written.
+fn correct_name(entry: &Path) -> io::Result<()> {
+    let content = match fs::read_to_string(entry) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !launches_with_the_argument(&content) {
+        return Ok(());
+    }
+    let Some(corrected) = with_display_name(&content) else {
+        return Ok(());
+    };
+    // The extension no longer ends in `.desktop`, so the desktop never takes it for an entry.
+    let tmp = entry.with_extension(format!("desktop.tmp.{}", std::process::id()));
+    let written = (|| {
+        // Whatever a crashed run left under this name goes first, and the new file is created,
+        // never opened: a link sitting there is not followed.
+        let _ = fs::remove_file(&tmp);
+        let mut out = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        out.write_all(corrected.as_bytes())?;
+        out.sync_all()?;
+        fs::rename(&tmp, entry)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// `content` with the `Name` line changed, or `None` if no line holds the identifier: an entry
+/// already corrected, or with a name that is not the plugin's.
+fn with_display_name(content: &str) -> Option<String> {
+    let plugin_name = format!("Name={ENTRY_NAME}");
+    let mut found = false;
+    let corrected = content
+        .split_inclusive('\n')
+        .map(|line| {
+            if line.trim() == plugin_name {
+                found = true;
+                line.replacen(ENTRY_NAME, DISPLAY_NAME, 1)
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    found.then_some(corrected)
 }
 
 /// The plugin's three operations on the operating system entry, behind a trait so that
@@ -187,6 +274,20 @@ fn write(launcher: &impl Launcher, enabled: bool) -> Result<bool, String> {
         format!("Could not {action} starting with the system: {error}")
     })?;
     read(launcher)
+}
+
+/// [`write`], then the name of the entry the plugin has just written. The state is read back from
+/// the system as usual: a name that could not be corrected does not change it.
+fn write_and_name(
+    launcher: &impl Launcher,
+    folder: Option<&Path>,
+    enabled: bool,
+) -> Result<bool, String> {
+    let state = write(launcher, enabled)?;
+    if let (true, Some(folder)) = (enabled, folder) {
+        show_display_name(folder);
+    }
+    Ok(state)
 }
 
 #[cfg(test)]
@@ -410,6 +511,197 @@ mod tests {
             Err("permission denied".to_owned())
         );
         assert!(folder.legacy().exists());
+    }
+
+    /// The file as `auto-launch` 0.6.0 writes it, with no final newline.
+    const PLUGIN_ENTRY: &str = "[Desktop Entry]\nType=Application\nVersion=1.0\n\
+        Name=com.fabiosm46.redline\nComment=com.fabiosm46.redline startup script\n\
+        Exec=/usr/bin/redline --autostart\nStartupNotify=false\nTerminal=false";
+
+    /// The same file with only the `Name` line corrected.
+    const CORRECTED_ENTRY: &str = "[Desktop Entry]\nType=Application\nVersion=1.0\n\
+        Name=Redline\nComment=com.fabiosm46.redline startup script\n\
+        Exec=/usr/bin/redline --autostart\nStartupNotify=false\nTerminal=false";
+
+    /// A launcher that writes in a temporary folder what the plugin writes in the real one.
+    struct FileLauncher(std::path::PathBuf);
+
+    impl Launcher for FileLauncher {
+        fn enable(&self) -> Result<(), String> {
+            fs::write(&self.0, PLUGIN_ENTRY).map_err(|error| error.to_string())
+        }
+
+        fn disable(&self) -> Result<(), String> {
+            fs::remove_file(&self.0).map_err(|error| error.to_string())
+        }
+
+        fn is_enabled(&self) -> Result<bool, String> {
+            Ok(self.0.exists())
+        }
+    }
+
+    impl Folder {
+        fn entry(&self) -> std::path::PathBuf {
+            self.0.join(format!("{ENTRY_NAME}.desktop"))
+        }
+
+        fn launcher(&self) -> FileLauncher {
+            FileLauncher(self.entry())
+        }
+
+        /// Makes the rewrite fail, for any user: a folder sits where the temporary file goes.
+        fn block_rewrite(&self) {
+            let name = format!("{ENTRY_NAME}.desktop.tmp.{}", std::process::id());
+            fs::create_dir(self.0.join(name)).unwrap();
+        }
+
+        fn files(&self) -> Vec<String> {
+            let mut files: Vec<String> = fs::read_dir(&self.0)
+                .unwrap()
+                .map(|file| file.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            files.sort();
+            files
+        }
+    }
+
+    #[test]
+    fn turning_on_writes_the_entry_under_the_identifier_with_the_display_name() {
+        let folder = Folder::new("enabled");
+        let launcher = folder.launcher();
+
+        assert_eq!(write_and_name(&launcher, Some(&folder.0), true), Ok(true));
+        assert_eq!(fs::read_to_string(folder.entry()).unwrap(), CORRECTED_ENTRY);
+        assert_eq!(folder.files(), [format!("{ENTRY_NAME}.desktop")]);
+    }
+
+    #[test]
+    fn turning_off_removes_the_entry_and_corrects_nothing() {
+        let folder = Folder::new("disabled");
+        let launcher = folder.launcher();
+        launcher.enable().unwrap();
+
+        assert_eq!(write_and_name(&launcher, Some(&folder.0), false), Ok(false));
+        assert!(folder.files().is_empty());
+    }
+
+    #[test]
+    fn a_failed_correction_keeps_the_entry_and_the_state_read_from_the_system() {
+        let folder = Folder::new("enabled-blocked");
+        folder.block_rewrite();
+        let launcher = folder.launcher();
+
+        assert_eq!(write_and_name(&launcher, Some(&folder.0), true), Ok(true));
+        assert_eq!(fs::read_to_string(folder.entry()).unwrap(), PLUGIN_ENTRY);
+    }
+
+    #[test]
+    fn the_entry_that_replaces_an_old_one_shows_the_display_name() {
+        let folder = Folder::new("repair-legacy");
+        fs::write(folder.legacy(), OLD_ENTRY).unwrap();
+
+        repair(&folder.0, &folder.launcher());
+
+        assert_eq!(fs::read_to_string(folder.entry()).unwrap(), CORRECTED_ENTRY);
+        assert_eq!(folder.files(), [format!("{ENTRY_NAME}.desktop")]);
+    }
+
+    #[test]
+    fn an_existing_entry_is_corrected_at_startup() {
+        let folder = Folder::new("repair-existing");
+        fs::write(folder.entry(), PLUGIN_ENTRY).unwrap();
+
+        repair(&folder.0, &folder.launcher());
+
+        assert_eq!(fs::read_to_string(folder.entry()).unwrap(), CORRECTED_ENTRY);
+        assert_eq!(folder.files(), [format!("{ENTRY_NAME}.desktop")]);
+    }
+
+    #[test]
+    fn an_entry_already_corrected_is_not_rewritten() {
+        let folder = Folder::new("corrected");
+        fs::write(folder.entry(), CORRECTED_ENTRY).unwrap();
+        // A rewrite would fail here.
+        folder.block_rewrite();
+
+        assert!(correct_name(&folder.entry()).is_ok());
+    }
+
+    #[test]
+    fn no_entry_is_not_a_failure_and_creates_nothing() {
+        let folder = Folder::new("no-entry");
+
+        assert!(correct_name(&folder.entry()).is_ok());
+        assert!(folder.files().is_empty());
+    }
+
+    #[test]
+    fn an_entry_turned_off_in_the_desktop_gets_the_name_and_stays_off() {
+        for key in ["Hidden=true", "X-GNOME-Autostart-enabled=false"] {
+            let folder = Folder::new(&format!("off-{key}"));
+            fs::write(folder.entry(), format!("{PLUGIN_ENTRY}\n{key}\n")).unwrap();
+
+            assert!(correct_name(&folder.entry()).is_ok(), "{key}");
+            assert_eq!(
+                fs::read_to_string(folder.entry()).unwrap(),
+                format!("{CORRECTED_ENTRY}\n{key}\n")
+            );
+        }
+    }
+
+    #[test]
+    fn a_link_at_the_temporary_path_is_not_written_through() {
+        let folder = Folder::new("link");
+        fs::write(folder.entry(), PLUGIN_ENTRY).unwrap();
+        let target = folder.0.join("target");
+        fs::write(&target, "untouched").unwrap();
+        let tmp = format!("{ENTRY_NAME}.desktop.tmp.{}", std::process::id());
+        std::os::unix::fs::symlink(&target, folder.0.join(tmp)).unwrap();
+
+        assert!(correct_name(&folder.entry()).is_ok());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "untouched");
+        assert_eq!(fs::read_to_string(folder.entry()).unwrap(), CORRECTED_ENTRY);
+    }
+
+    #[test]
+    fn an_entry_that_is_not_redlines_is_not_touched() {
+        for content in [
+            // No `--autostart`: not what the plugin writes.
+            "[Desktop Entry]\nName=com.fabiosm46.redline\nExec=/usr/bin/redline\n",
+            // Redline's launch under a name the user chose.
+            "[Desktop Entry]\nName=My GPU panel\nExec=/usr/bin/redline --autostart\n",
+            // Not the whole line.
+            "[Desktop Entry]\nName=com.fabiosm46.redline2\nExec=/usr/bin/redline --autostart\n",
+        ] {
+            let folder = Folder::new("foreign");
+            fs::write(folder.entry(), content).unwrap();
+
+            assert!(correct_name(&folder.entry()).is_ok());
+            assert_eq!(fs::read_to_string(folder.entry()).unwrap(), content);
+        }
+    }
+
+    #[test]
+    fn a_failed_rewrite_is_reported_and_leaves_the_working_entry() {
+        let folder = Folder::new("blocked");
+        fs::write(folder.entry(), PLUGIN_ENTRY).unwrap();
+        folder.block_rewrite();
+
+        assert!(correct_name(&folder.entry()).is_err());
+        assert_eq!(fs::read_to_string(folder.entry()).unwrap(), PLUGIN_ENTRY);
+    }
+
+    #[test]
+    fn only_the_name_line_changes_and_the_line_endings_stay() {
+        assert_eq!(
+            with_display_name("Name=com.fabiosm46.redline\nExec=a\n").as_deref(),
+            Some("Name=Redline\nExec=a\n")
+        );
+        assert_eq!(
+            with_display_name("Exec=a\nName=com.fabiosm46.redline").as_deref(),
+            Some("Exec=a\nName=Redline")
+        );
+        assert_eq!(with_display_name("Name=Redline\n"), None);
     }
 
     #[test]

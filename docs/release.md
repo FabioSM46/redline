@@ -58,8 +58,9 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 - [ ] Tray icon: closing the window keeps the app running, the icon brings it back, and Quit ends
       it.
 - [ ] Autostart: the switch in Settings → General creates
-      `~/.config/autostart/com.fabiosm46.redline.desktop`, and after a new login the app starts,
-      minimised to the tray when that option is on.
+      `~/.config/autostart/com.fabiosm46.redline.desktop` with `Name=Redline`, the desktop's
+      startup applications list it as Redline, and after a new login the app starts, minimised to
+      the tray when that option is on.
 - [ ] Old autostart entry: with a Redline-written `~/.config/autostart/redline.desktop` in place
       and no new entry, start the app. Only `com.fabiosm46.redline.desktop` remains, and the next
       login starts the app once. Only unit tests have exercised this, not a real autostart folder.
