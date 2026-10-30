@@ -46,6 +46,6 @@ Milestones are `Iteration N` on GitHub; this is the direction, not a calendar.
 M4 is marked done only when the release is published: see [release.md](release.md).
 
 - [x] In-game overlay through MangoHud (D12)
-- [ ] Clocks and voltages through LACT, RDNA only and undervolt only, always confirmed (D13; moved
+- [x] Clocks and voltages through LACT, RDNA only and undervolt only, always confirmed (D13; moved
   out of M3 when M3 was specified)
 - [x] First published `.deb`
