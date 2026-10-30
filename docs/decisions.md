@@ -90,7 +90,7 @@ way at once.
   - **Capture**: which screen to record (monitor or portal), codec, quality, frame rate;
   - **Shortcuts**: every action (save replay, start/stop recording, toggle replay, ...) has a
     customisable key binding;
-  - **Dependencies**: state of LACT and GPU Screen Recorder, with "Install" (D4);
+  - **Dependencies**: state of LACT, GPU Screen Recorder, ffmpeg and MangoHud, with "Install" (D4);
   - **About**.
 - **Status bar**: GPU temperature and power, plus the replay indicator, which is also a
   switch. It is the single place that shows the replay state (Home's replay switch controls the

@@ -242,12 +242,14 @@ describe("install state", () => {
 });
 
 describe("third-party licenses", () => {
-  it("name LACT (MIT) and GPU Screen Recorder (GPL-3.0) with https addresses", () => {
+  it("name all four tools with https addresses, and ffmpeg's license as build-dependent", () => {
     assert.deepEqual(
       THIRD_PARTY_LICENSES.map((t) => [t.name, t.license]),
       [
         ["LACT", "MIT"],
         ["GPU Screen Recorder", "GPL-3.0"],
+        ["ffmpeg", "LGPL or GPL, depending on the build"],
+        ["MangoHud", "MIT"],
       ],
     );
     for (const t of THIRD_PARTY_LICENSES) assert.equal(t.url.startsWith("https://"), true);
