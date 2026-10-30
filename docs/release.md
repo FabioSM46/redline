@@ -50,8 +50,8 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       `pkexec` yet.
 - [ ] After each one, the row turns to installed without restarting the app.
 - [ ] Cancelling the password prompt changes nothing and the page says so.
-- [ ] On the other systems the README names (Ubuntu 26.04 or 24.04, Debian 13): the package
-      installs, starts, and the guided install of all four tools succeeds.
+- [ ] On a clean install of each of Ubuntu 24.04, Ubuntu 26.04 and Debian 13: the package installs,
+      starts, and the guided install of all four tools succeeds.
 
 ### Tray, autostart and themes
 
