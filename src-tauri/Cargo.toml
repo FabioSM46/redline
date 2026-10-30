@@ -1,13 +1,16 @@
 [package]
 name = "redline"
 version = "0.1.0"
-description = "Pannello di controllo per GPU AMD su Linux"
+description = "Control panel for AMD GPUs on Linux"
 authors = ["FabioSM46 <124870035+FabioSM46@users.noreply.github.com>"]
 edition = "2024"
 license = "MIT"
+# The workspace also builds the `redline-probe` binary: without this key `cargo run`
+# (and so `pnpm tauri dev`) cannot choose which binary to start.
+default-run = "redline"
 
 [lib]
-# Il suffisso `_lib` evita il conflitto di nomi tra lib e bin.
+# The `_lib` suffix keeps the lib name from clashing with the bin name.
 name = "redline_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
@@ -15,16 +18,20 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+# D10: the GlobalShortcuts portal. Pinned; async-io, the zbus stack the lockfile already uses.
+ashpd = { version = "=0.13.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 redline-core = { workspace = true }
 
 [workspace]
 resolver = "3"
 members = [".", "crates/redline-core", "crates/redline-probe"]
-# Senza default-members `cargo test` in src-tauri/ proverebbe solo il pacchetto radice:
-# così i gate della CI coprono tutto il workspace.
+# Without default-members, `cargo test` in src-tauri/ would test only the root package:
+# this way the CI gates cover the whole workspace.
 default-members = [".", "crates/redline-core", "crates/redline-probe"]
 
 [workspace.package]

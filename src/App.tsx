@@ -1,76 +1,72 @@
-import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { type ComponentType, useState } from "react";
 import "./App.css";
-import { formatValue, percentOf } from "./format.ts";
+import { GpuProvider, type GpuListState, useGpuList } from "./GpuContext.tsx";
+import { RecorderProvider } from "./RecorderContext.tsx";
+import { Home } from "./sections/Home.tsx";
+import { Performance } from "./sections/Performance.tsx";
+import { Record } from "./sections/Record.tsx";
+import { Settings } from "./sections/Settings.tsx";
+import { Mark, TopBar } from "./shell/TopBar.tsx";
+import { StatusBar } from "./shell/StatusBar.tsx";
+import type { Navigate, SectionProps, SettingsTabId, TabId } from "./tabs.ts";
 
-type GpuSnapshot = {
-  temp_edge_c: number | null;
-  temp_junction_c: number | null;
-  temp_mem_c: number | null;
-  power_w: number | null;
-  power_cap_w: number | null;
-  fan_rpm: number | null;
-  sclk_mhz: number | null;
-  mclk_mhz: number | null;
-  vddgfx_mv: number | null;
-  gpu_busy_pct: number | null;
-  mem_busy_pct: number | null;
-  vram_used_mib: number | null;
-  vram_total_mib: number | null;
+/** One component per tab: each section fills its own file without touching the shell. */
+const SECTIONS: { [Tab in TabId]: ComponentType<SectionProps> } = {
+  home: Home,
+  performance: Performance,
+  record: Record,
+  settings: Settings,
 };
 
+/** The shell (D8): top bar with the tabs, scrolling section content, fixed status bar. */
 function App() {
-  const [snapshot, setSnapshot] = useState<GpuSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const gpus = useGpuList();
+  const [tab, setTab] = useState<TabId>("home");
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId | undefined>(undefined);
+  // Every tab change goes through here, so a page asked for once is not reopened later.
+  const navigate: Navigate = (next, page) => {
+    setSettingsTab(page);
+    setTab(next);
+  };
 
-  useEffect(() => {
-    const read = () =>
-      invoke<GpuSnapshot>("gpu_snapshot")
-        .then((s) => {
-          setSnapshot(s);
-          setError(null);
-        })
-        .catch((e) => setError(String(e)));
-    read();
-    const timer = setInterval(read, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  if (error) {
-    return <main className="state">Impossibile leggere la GPU: {error}</main>;
+  if (gpus.status !== "ready") {
+    return (
+      <div className="shell">
+        <header className="topbar">
+          <Mark />
+        </header>
+        <main className="content">
+          <p className="state">{shellMessage(gpus)}</p>
+        </main>
+      </div>
+    );
   }
-  if (!snapshot) {
-    return <main className="state">Lettura dei sensori…</main>;
-  }
 
-  const s = snapshot;
-  const vram = percentOf(s.vram_used_mib, s.vram_total_mib);
-  const metrics: [string, string][] = [
-    ["Temperatura", formatValue(s.temp_edge_c, "°C")],
-    ["Hotspot", formatValue(s.temp_junction_c, "°C")],
-    ["Memoria", formatValue(s.temp_mem_c, "°C")],
-    ["Potenza", `${formatValue(s.power_w, "W")} / ${formatValue(s.power_cap_w, "W")}`],
-    ["Ventola", formatValue(s.fan_rpm, "rpm")],
-    ["Clock GPU", formatValue(s.sclk_mhz, "MHz")],
-    ["Clock VRAM", formatValue(s.mclk_mhz, "MHz")],
-    ["Tensione", formatValue(s.vddgfx_mv, "mV")],
-    ["Utilizzo GPU", formatValue(s.gpu_busy_pct, "%")],
-    ["VRAM", `${formatValue(s.vram_used_mib, "MiB")} (${formatValue(vram, "%")})`],
-  ];
-
+  const Section = SECTIONS[tab];
   return (
-    <main className="dashboard">
-      <h1>Redline</h1>
-      <dl className="metrics">
-        {metrics.map(([label, value]) => (
-          <div className="metric" key={label}>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </main>
+    <GpuProvider value={gpus.value}>
+      <RecorderProvider>
+        <div className="shell">
+          <TopBar active={tab} onSelect={(next) => navigate(next)} />
+          <main className="content">
+            <Section navigate={navigate} settingsTab={settingsTab} />
+          </main>
+          <StatusBar />
+        </div>
+      </RecorderProvider>
+    </GpuProvider>
   );
+}
+
+function shellMessage(gpus: Exclude<GpuListState, { status: "ready" }>): string {
+  switch (gpus.status) {
+    case "loading":
+      return "Looking for GPUs…";
+    case "empty":
+      return "No AMD GPU found. Redline needs the amdgpu driver.";
+    case "error":
+      return `Cannot list the GPUs: ${gpus.message}`;
+  }
 }
 
 export default App;

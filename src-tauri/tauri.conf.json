@@ -16,7 +16,8 @@
         "width": 1100,
         "height": 720,
         "minWidth": 800,
-        "minHeight": 500
+        "minHeight": 500,
+        "visible": false
       }
     ],
     "security": {
@@ -30,9 +31,11 @@
     "linux": {
       "deb": {
         "section": "utils",
-        "desktopTemplate": "linux/redline.desktop",
+        "desktopTemplate": "linux/com.fabiosm46.redline.desktop",
         "files": {
-          "/usr/share/doc/redline/copyright": "../LICENSE"
+          "/usr/share/doc/redline/copyright": "../LICENSE",
+          "/usr/share/redline/install-dependency": "linux/install-dependency",
+          "/usr/share/polkit-1/actions/com.fabiosm46.redline.install.policy": "linux/com.fabiosm46.redline.install.policy"
         }
       }
     },

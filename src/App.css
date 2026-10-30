@@ -1,22 +1,34 @@
-/* Token di base. I colori scuri sono --dark-* assegnati nei blocchi del tema scuro. */
+/* Base tokens. Dark colours are --dark-* values assigned in the dark-theme blocks below.
+ * Theme (src/theme.ts): data-theme="light" | "dark" on the root element picks the tokens; with no
+ * attribute (before the saved setting is read) the desktop's prefers-color-scheme decides. */
 :root {
   --text-sm: 13px;
   --text-md: 15px;
   --text-lg: 22px;
+  --text-xl: 34px;
   --space: 16px;
+  --space-sm: 8px;
   --radius: 10px;
+  --border-width: 1px;
+  --indicator: 2px;
+  --font-mono: ui-monospace, monospace;
 
   --bg: #f6f6f7;
   --surface: #ffffff;
   --fg: #1d1d1f;
   --muted: #6e6e73;
+  --border: #e2e2e6;
   --accent: #d7263d;
+  --high: #c2410c;
 
   --dark-bg: #141416;
   --dark-surface: #1f1f23;
   --dark-fg: #f2f2f4;
   --dark-muted: #a1a1a8;
+  --dark-border: #2e2e34;
+  --dark-high: #fb923c;
 
+  color-scheme: light dark;
   font-family: system-ui, sans-serif;
   font-size: var(--text-md);
   color: var(--fg);
@@ -24,55 +36,1206 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: var(--dark-bg);
     --surface: var(--dark-surface);
     --fg: var(--dark-fg);
     --muted: var(--dark-muted);
+    --border: var(--dark-border);
+    --high: var(--dark-high);
   }
+}
+
+/* Keep this block identical to the one above: an explicit Dark ignores the desktop. */
+:root[data-theme="dark"] {
+  --bg: var(--dark-bg);
+  --surface: var(--dark-surface);
+  --fg: var(--dark-fg);
+  --muted: var(--dark-muted);
+  --border: var(--dark-border);
+  --high: var(--dark-high);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 body {
   margin: 0;
 }
 
+/* Shell (D8): fixed top bar and status bar, only the section content scrolls. */
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 1.5);
+  padding: 0 var(--space);
+  min-height: calc(var(--space) * 3);
+  background: var(--surface);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-weight: 600;
+}
+
+.mark-dot {
+  width: var(--space-sm);
+  height: var(--space-sm);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tabs,
+.subtabs {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.tabs {
+  align-self: stretch;
+}
+
+.subtabs {
+  margin-bottom: var(--space);
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.tab {
+  padding: var(--space-sm) var(--space-sm);
+  border: 0;
+  border-bottom: var(--indicator) solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--fg);
+}
+
+.tab[aria-current="page"] {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.tab:focus-visible,
+.gpu-select select:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.gpu-select {
+  margin-left: auto;
+}
+
+.gpu-select select {
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.content {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.section {
+  padding: calc(var(--space) * 2);
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  padding: var(--space-sm) var(--space);
+  background: var(--surface);
+  border-top: var(--border-width) solid var(--border);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.statusbar-name {
+  color: var(--fg);
+}
+
+.statusbar-value {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.statusbar-error {
+  color: var(--accent);
+}
+
 .state {
+  margin: 0;
   padding: calc(var(--space) * 2);
   color: var(--muted);
 }
 
-.dashboard {
-  padding: calc(var(--space) * 2);
+.section .state {
+  padding: 0;
 }
 
-.dashboard h1 {
-  margin: 0 0 var(--space);
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--accent);
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.metrics {
+/* Settings pages: one row per setting, text on the left and its control on the right. */
+.settings {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--space);
-  margin: 0;
+  gap: var(--space-sm);
+  max-width: calc(var(--space) * 40);
 }
 
-.metric {
+.setting {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
   padding: var(--space);
   border-radius: var(--radius);
   background: var(--surface);
 }
 
-.metric dt {
+.setting-text {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  flex: 1;
+}
+
+.setting-description {
   font-size: var(--text-sm);
   color: var(--muted);
 }
 
-.metric dd {
-  margin: 4px 0 0;
+.setting-error {
+  font-size: var(--text-sm);
+  color: var(--accent);
+}
+
+.setting-control {
+  flex-shrink: 0;
+}
+
+.setting-note {
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.setting-select {
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-select:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.setting-select:disabled,
+.setting-select[aria-disabled="true"] {
+  color: var(--muted);
+}
+
+.settings-notice {
+  margin: 0;
+  padding: var(--space);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.segmented {
+  display: inline-flex;
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segment {
+  position: relative;
+}
+
+.segment input {
+  position: absolute;
+  opacity: 0;
+}
+
+.segment span {
+  display: block;
+  padding: calc(var(--space-sm) / 2) var(--space);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segment + .segment span {
+  border-left: var(--border-width) solid var(--border);
+}
+
+.segment input:checked + span {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 0 calc(var(--indicator) * -1) 0 var(--accent);
+}
+
+.segment input:focus-visible + span,
+.switch:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.segment input[aria-disabled="true"] + span,
+.switch[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.switch {
+  appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  width: calc(var(--space) * 2.5);
+  height: calc(var(--space) * 1.5);
+  margin: 0;
+  border: var(--border-width) solid var(--border);
+  border-radius: calc(var(--space) * 1.5);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--indicator) - var(--border-width));
+  left: calc(var(--indicator) - var(--border-width));
+  width: calc(var(--space) * 1.5 - var(--indicator) * 2);
+  height: calc(var(--space) * 1.5 - var(--indicator) * 2);
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.switch:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.switch:checked::before {
+  left: calc(var(--space) * 2.5 - var(--space) * 1.5 + var(--indicator) - var(--border-width));
+  background: var(--surface);
+}
+
+.figures {
+  display: grid;
+  gap: var(--space);
+  margin: 0;
+}
+
+.figures-primary {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+
+.figures-secondary {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  margin-top: var(--space);
+}
+
+.figure {
+  padding: var(--space);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.figure dt {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.figure dd {
+  margin: calc(var(--space-sm) / 2) 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.figure-value {
+  font-weight: 600;
+}
+
+.figures-primary .figure-value {
+  font-size: var(--text-xl);
+}
+
+.figures-secondary .figure-value {
+  font-size: var(--text-lg);
+}
+
+.figure-detail {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* State colour: a temperature past its threshold (HIGH_TEMPERATURE_C in src/home.ts). */
+.figure-high {
+  color: var(--high);
+}
+
+/* Performance → Metrics charts (D9). The canvas cannot use CSS variables: the chart tokens are
+   read with getComputedStyle (src/charts/useChartPalette.ts) and follow the theme because they
+   point at the base tokens. Series colours do not signal state, so they are not --high. */
+:root {
+  --chart-primary: var(--accent);
+  --chart-secondary: var(--muted);
+  --chart-grid: var(--border);
+  --chart-height: 180px;
+  --chart-min-width: 360px;
+}
+
+.window-select {
+  display: inline-flex;
+  margin-bottom: var(--space);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.window-option {
+  padding: calc(var(--space-sm) / 2) var(--space);
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.window-option + .window-option {
+  border-left: var(--border-width) solid var(--border);
+}
+
+.window-option:hover {
+  color: var(--fg);
+}
+
+.window-option[aria-pressed="true"] {
+  color: var(--fg);
+  box-shadow: inset 0 calc(var(--indicator) * -1) 0 var(--accent);
+}
+
+.window-option:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--chart-min-width)), 1fr));
+  gap: var(--space);
+}
+
+.chart {
+  min-width: 0;
+  margin: 0;
+  padding: var(--space);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.chart-title {
+  margin-bottom: var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* The plot follows its card's width; uPlot's own width would otherwise hold the grid open. */
+.chart-plot {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.chart-plot .u-legend {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+
+.chart-plot .u-hz .u-cursor-x {
+  border-right-color: var(--muted);
+}
+
+/* Recorder (src/RecorderContext.tsx): the replay switch in the status bar and on Home, and Home's
+   latest clips. Red only while something records: an active replay or recording, or an error. */
+:root {
+  --thumb-width: 180px;
+}
+
+.statusbar-recorder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space);
+  margin-left: auto;
+}
+
+.statusbar-replay {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.statusbar-replay:hover,
+.statusbar-replay[data-state="starting"] {
+  color: var(--fg);
+}
+
+.statusbar-replay[data-state="on"],
+.statusbar-rec,
+.replay-rec {
+  color: var(--accent);
+}
+
+.statusbar-rec {
+  font-weight: 600;
+}
+
+.statusbar-replay[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.statusbar-replay:focus-visible,
+.link-button:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.home-panel {
+  margin-top: calc(var(--space) * 1.5);
+}
+
+.clips-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-sm);
+}
+
+.clips-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.clips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--thumb-width), 1fr));
+  gap: var(--space);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clip {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  min-width: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.clip-thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: calc(var(--radius) / 2);
+}
+
+/* No preview (or not yet): a neutral block, never a colour. */
+.clip-thumb-empty {
+  background: var(--border);
+}
+
+.clip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-meta {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Record tab (D8): the replay and recording blocks reuse the settings rows; the gallery reuses
+ * the clip cards of Home. */
+.record-block + .record-block,
+.record > .settings-notice + .record-block,
+.record > .setting-error + .record-block {
+  margin-top: calc(var(--space) * 2);
+}
+
+.record > .settings-notice,
+.record > .setting-error {
+  margin: 0 0 var(--space);
+}
+
+.record-title {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.record-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-intro {
+  margin: 0 0 var(--space-sm);
+}
+
+.record-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}
+
+.record-elapsed {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A row whose control needs the full width (track lists, folder fields). */
+.setting-wide {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.setting-wide > .setting-control {
+  display: grid;
+  gap: var(--space-sm);
+  justify-items: start;
+}
+
+.button {
+  padding: calc(var(--space-sm) / 2) var(--space);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.button:hover {
+  border-color: var(--muted);
+}
+
+/* Stopping a running recording: the accent marks the active state, not decoration. */
+.button-stop {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.button:focus-visible,
+.chip-remove:focus-visible,
+.setting-input:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: calc(var(--indicator) * -1);
+}
+
+.button:disabled,
+.chip-remove:disabled,
+.link-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.button[aria-disabled="true"],
+.chip-remove[aria-disabled="true"],
+.link-button[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.setting-input {
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.setting-input[aria-invalid="true"] {
+  border-color: var(--accent);
+}
+
+.setting-input:disabled {
+  color: var(--muted);
+}
+
+.folder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.folder-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.tracks {
+  display: grid;
+  gap: var(--space-sm);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.track {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+}
+
+.track-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.chips {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-sm) / 2);
+  padding: calc(var(--space-sm) / 4) var(--space-sm);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--text-sm);
+}
+
+.chip-remove {
+  padding: 0 calc(var(--space-sm) / 2);
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.chip-remove:hover {
+  color: var(--fg);
+}
+
+.gallery-hint {
+  margin: 0 0 var(--space-sm);
+}
+
+.clip-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space);
+}
+
+/* Settings → Shortcuts: a command to bind, its Copy button and the desktop steps. */
+.command {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.command-text {
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  user-select: all;
+}
+
+.shortcut-steps {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  margin: 0;
+  padding-left: var(--space);
+}
+
+.shortcut-later {
+  margin: var(--space-sm) 0 0;
+}
+
+/* The keys the GlobalShortcuts portal reports (D10). */
+.shortcut-trigger {
+  padding: calc(var(--space-sm) / 2) var(--space-sm);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Settings → Shortcuts: the commands, behind a disclosure once the portal has the keys. */
+.settings-advanced > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.settings-advanced > summary:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
+.settings-advanced[open] > summary {
+  margin-bottom: var(--space);
+}
+
+/* Performance → Tuning: blocks reuse the settings rows; the confirmation panel is in the page,
+ * never a browser dialog. The accent border marks the one state that needs an answer. */
+.tuning {
+  display: grid;
+  gap: calc(var(--space) * 2);
+  max-width: calc(var(--space) * 40);
+}
+
+.tuning > .settings-notice,
+.tuning > .setting-error,
+.tuning > .state {
+  margin: 0;
+}
+
+.tuning-number {
+  font-variant-numeric: tabular-nums;
+}
+
+.tuning-figure {
   font-size: var(--text-lg);
   font-weight: 600;
+}
+
+.tuning-power {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space);
+}
+
+.tuning-slider {
+  flex: 1;
+  min-width: calc(var(--space) * 10);
+  accent-color: var(--accent);
+}
+
+.tuning-watts {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--space-sm) / 2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.tuning-watts .setting-input {
+  flex: none;
+  width: calc(var(--space) * 5);
+}
+
+.tuning-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.tuning-slider:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
+/* The accent is the same in light and dark, so the text on it is too. */
+:root {
+  --on-accent: #ffffff;
+}
+
+/* The answer a pending state waits for (Keep, Enable overdrive). */
+.button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.button-primary:hover {
+  border-color: var(--accent);
+}
+
+.tuning-confirm {
+  display: grid;
+  gap: var(--space-sm);
+  padding: var(--space);
+  border: var(--indicator) solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+/* Focused when it opens (the control that opened it is disabled): the border already marks it. */
+.tuning-confirm:focus {
+  outline: none;
+}
+
+.tuning-confirm:focus-visible {
+  outline: var(--indicator) solid var(--accent);
+  outline-offset: var(--indicator);
+}
+
+.tuning-confirm > p {
+  margin: 0;
+}
+
+.tuning-confirm-title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.tuning-confirm-detail {
   font-variant-numeric: tabular-nums;
+}
+
+.tuning-confirm-gpu,
+.tuning-confirm-result,
+.tuning-confirm-countdown {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.tuning-unavailable {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-unavailable > p {
+  margin: 0;
+}
+
+.tuning-plan {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-plan > p {
+  margin: 0;
+}
+
+/* Performance → Tuning → Fan: the curve editor is SVG, so its colours are these tokens and follow
+ * light and dark through the base ones. The accent is the curve the user edits; the current
+ * temperature is muted, and speeds the GPU refuses are shaded. */
+:root {
+  --fan-curve-max-width: 600px;
+  --fan-curve-point: 7px;
+}
+
+.fan-controls {
+  min-width: 0;
+}
+
+.fan-curve-editor {
+  display: grid;
+  gap: var(--space-sm);
+  width: 100%;
+  max-width: var(--fan-curve-max-width);
+}
+
+.fan-curve-editor > p {
+  margin: 0;
+}
+
+.fan-curve {
+  display: grid;
+  gap: calc(var(--space-sm) / 2);
+  margin: 0;
+}
+
+.fan-curve-plot {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+}
+
+.fan-curve-out {
+  fill: var(--bg);
+}
+
+.fan-curve-grid {
+  stroke: var(--border);
+  stroke-width: var(--border-width);
+}
+
+.fan-curve-axis {
+  fill: var(--muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.fan-curve-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: var(--indicator);
+  stroke-linejoin: round;
+}
+
+.fan-curve-now line {
+  stroke: var(--muted);
+  stroke-width: var(--border-width);
+  stroke-dasharray: 4 4;
+}
+
+.fan-curve-now circle {
+  fill: var(--muted);
+}
+
+.fan-curve-point {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: var(--indicator);
+  cursor: grab;
+}
+
+.fan-curve-point[data-dragging] {
+  cursor: grabbing;
+  fill: var(--accent);
+}
+
+.fan-curve-point:focus {
+  outline: none;
+}
+
+.fan-curve-point:focus-visible {
+  fill: var(--accent);
+  stroke: var(--fg);
+}
+
+.fan-curve-point[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.fan-curve-caption {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.fan-points {
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.fan-points th {
+  padding: 0 var(--space-sm) calc(var(--space-sm) / 2) 0;
+  font-weight: 400;
+  color: var(--muted);
+  text-align: left;
+}
+
+.fan-points td {
+  padding: calc(var(--space-sm) / 4) var(--space-sm) calc(var(--space-sm) / 4) 0;
+}
+
+.fan-advanced {
+  width: 100%;
+}
+
+.fan-options {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.fan-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space);
+}
+
+.fan-option-text {
+  display: grid;
+  gap: calc(var(--space-sm) / 4);
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+#tuning-overdrive:focus {
+  outline: none;
+}
+
+/* Settings → Dependencies: a tool's state and its Install button, then what to do about it. */
+.dependency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.dependency-state {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.dependency-installed {
+  color: var(--fg);
+}
+
+/* Colour signals state: a missing or unreachable tool is the "high" warning colour. */
+.dependency-missing,
+.dependency-attention {
+  color: var(--high);
+}
+
+.dependency-text {
+  max-width: 100%;
+}
+
+/* Settings → About: version and license figures. */
+.about-value {
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Performance → Tuning → Advanced → Clocks and voltage: warning, one row per control, reset. */
+.tuning-clocks {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-clocks > .record-title,
+.tuning-clocks > p {
+  margin: 0;
+}
+
+/* Performance → Tuning → Profile: the switch row, then the inline "Save as new" and "Delete"
+ * confirmations below it, never a browser dialog. */
+.tuning-profiles {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.tuning-profiles > .record-title,
+.tuning-profiles > p {
+  margin: 0;
+}
+
+.profile-name {
+  flex: none;
+  width: calc(var(--space) * 16);
+  max-width: 100%;
+}
+
+/* Performance → Metrics: the in-game overlay, below the charts. */
+.overlay {
+  margin-top: calc(var(--space) * 1.5);
+}
+
+.overlay-key {
+  width: calc(var(--space) * 12);
+}
+
+.overlay-message {
+  margin: 0;
+}
+
+.overlay-metrics {
+  display: grid;
+  justify-self: stretch;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space) * 12), 1fr));
+  gap: var(--space-sm) var(--space);
+  font-size: var(--text-sm);
+}
+
+.overlay-metric {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
 }
