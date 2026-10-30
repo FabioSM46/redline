@@ -3,7 +3,7 @@
 What each published version of Redline contains. The plan is in the
 [roadmap](docs/roadmap.md), the release steps in [docs/release.md](docs/release.md).
 
-## 0.1.0 — Unreleased
+## 0.1.0 — 2026-10-30
 
 The first release: a control panel for AMD GPUs on Linux, packaged as a `.deb`.
 
