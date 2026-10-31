@@ -1,6 +1,7 @@
 name: Release
 
-# Builds the .deb for a version tag and attaches it to a DRAFT GitHub Release.
+# Builds the .deb, Arch and Fedora packages for a version tag and attaches them to a DRAFT
+# GitHub Release.
 # Nothing is published automatically — a human reviews the draft and publishes it.
 # Redline is Linux-only: there is no Windows or macOS package.
 #
@@ -116,9 +117,53 @@ jobs:
             -v "$PWD/scripts:/check:ro" \
             "$IMAGE" bash /check/deb-clean-install.sh "/$1"
 
-  # The only job that can write: it creates the draft release from the .deb artifact.
+  # The Arch and Fedora packages, each built on its own system so it links that system's libraries.
+  distro:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: arch
+            image: archlinux:latest
+          - system: fedora
+            image: fedora:44
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build on ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          set -euo pipefail
+          mkdir packages
+          docker run --rm -v "$PWD:/repo:ro" -v "$PWD/packages:/out" \
+            "$IMAGE" bash /repo/scripts/build-distro-package.sh "$SYSTEM" /repo /out
+      - name: Install on a clean ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+          SYSTEM: ${{ matrix.system }}
+        run: |
+          set -euo pipefail
+          set -- packages/*
+          [ "$#" -eq 1 ] || { echo "::error::Expected one package, found $#."; exit 1; }
+          docker run --rm \
+            -v "$PWD/packages:/packages:ro" \
+            -v "$PWD/scripts:/check:ro" \
+            "$IMAGE" bash /check/distro-clean-install.sh "$SYSTEM" "/$1"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-${{ matrix.system }}
+          path: packages/*
+          if-no-files-found: error
+
+  # The only job that can write: it creates the draft release from the package artifacts.
   draft:
-    needs: [linux, install-check]
+    needs: [linux, install-check, distro]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -151,5 +196,5 @@ jobs:
               --draft \
               --verify-tag \
               --title "Redline $TAG" \
-              --notes ".deb package for Linux. Draft to review before publishing."
+              --notes "Packages for Ubuntu, Debian, Arch and Fedora. Draft to review before publishing."
           fi

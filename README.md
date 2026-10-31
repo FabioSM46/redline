@@ -7,6 +7,10 @@ actually use and leaves the rest out.
 
 > Independent project, not affiliated with or endorsed by AMD.
 
+![Redline's home page with live GPU figures and instant replay](docs/screenshots/home.png)
+
+![Redline's performance charts](docs/screenshots/performance.png)
+
 ## Status
 
 Everything listed below works in the current release. Download it from
@@ -28,26 +32,29 @@ Redline does not rewrite these tools: it coordinates them behind a single interf
 
 ## Install
 
-Download the `.deb` from [GitHub Releases](https://github.com/FabioSM46/redline/releases), then
-install it from the folder it is in:
+Download the package for your system from
+[GitHub Releases](https://github.com/FabioSM46/redline/releases), then install it from the folder
+it is in:
 
 ```bash
-sudo apt install ./<file>.deb
+sudo apt install ./redline_<version>_amd64.deb            # Ubuntu, Debian, Linux Mint
+sudo pacman -U ./redline-<version>-1-x86_64.pkg.tar.zst   # Arch, CachyOS
+sudo dnf install ./redline-<version>-1.fc44.x86_64.rpm    # Fedora
 ```
 
-The file is named `redline_<version>_amd64.deb`. Open Redline and go to **Settings →
+Open Redline and go to **Settings →
 Dependencies**: it shows whether LACT, GPU Screen Recorder, ffmpeg and MangoHud are installed and
 offers to install what is missing, with one password prompt (`pkexec`). A missing tool only
 disables its feature, and the app says what to do.
 
-**What the package sets up**: the `redline` program, the menu entry
+**What a package sets up**: the `redline` program, the menu entry
 `/usr/share/applications/com.fabiosm46.redline.desktop`, and the helper and polkit action behind
 the guided install.
 
 **What it does not**: it installs none of the four tools by itself, enables nothing at login
 (starting with the system is off until you turn it on in Settings → General; the entry is then
 `~/.config/autostart/com.fabiosm46.redline.desktop`), changes no kernel parameter, and adds no
-apt repository, so a new version is a new `.deb` installed the same way. The package is not
+package repository, so a new version is a new `.deb` installed the same way. The package is not
 signed.
 
 ### Supported systems
@@ -56,8 +63,8 @@ signed.
 |---|---|
 | Ubuntu 24.04 and 26.04, Debian 13 | Supported: package and guided install of all four tools |
 | Other releases based on Ubuntu 24.04 (Linux Mint, Pop!_OS, ...) | The guided install takes the Ubuntu 24.04 LACT package. The package and LACT were installed in a Linux Mint 22.3 container; not tried on a desktop |
-| Arch and derivatives (CachyOS, ...) | `packaging/aur/PKGBUILD` builds the package; the guided install takes LACT from the distribution |
-| Fedora | No package. Build from source; `scripts/install-deps.sh` covers everything but LACT |
+| Arch and derivatives (CachyOS, ...) | Package and guided install of all four tools; LACT comes from the distribution |
+| Fedora 44 | Package and guided install of all four tools |
 | Windows, macOS | Not supported: Redline is Linux only |
 
 **Redline itself is not available as a Flatpak**: the sandbox gets in the way of sysfs and of the
@@ -76,9 +83,9 @@ from Flathub, and first installs Flatpak and adds the Flathub remote if they are
 - For the in-game overlay: MangoHud
 
 From a source checkout, `scripts/install-deps.sh` runs the same helper as the guided install:
-LACT (the official `.deb` of the pinned version above, on Ubuntu 24.04/26.04 and Debian 13), GPU
-Screen Recorder (from Flathub), and ffmpeg and MangoHud (apt, dnf or pacman). On Arch and its
-derivatives LACT comes from the distribution:
+LACT (the official package of the pinned version above), GPU
+Screen Recorder (from Flathub), and ffmpeg and MangoHud (apt, dnf or pacman). LACT is the official
+package on Ubuntu, Debian and Fedora, and the distribution's on Arch and its derivatives:
 
 ```bash
 sudo bash scripts/install-deps.sh
@@ -127,6 +134,7 @@ redline/
 │   ├── architecture.md     # modules and flows
 │   ├── roadmap.md          # milestones
 │   └── release.md          # release checklist
+├── packaging/              # Arch and Fedora package definitions
 ├── scripts/                # install-deps.sh, pipeline helpers and automation tests
 ├── .github/                # CI, DeepSeek review, labeler, issue templates
 ├── .claude/skills/         # agent skills (/dev-issue, /process-pr, /develop-iteration, /scrum-master)
@@ -213,7 +221,7 @@ and the pipeline details are in [AGENTS.md](AGENTS.md).
 ## Release
 
 A `v<version>` tag on a commit of `main` starts `.github/workflows/release.yml`, which builds
-the `.deb` and attaches it to a draft GitHub release. The release is published by hand after
+the `.deb`, Arch and Fedora packages and attaches them to a draft GitHub release. The release is published by hand after
 checking it, following [docs/release.md](docs/release.md). The package carries `THIRD-PARTY-LICENSES` with the licenses of the crates and npm
 packages compiled into the app, in `/usr/share/doc/redline/` next to `copyright`.
 

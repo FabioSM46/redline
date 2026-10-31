@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs Redline's system dependencies from a source checkout:
-#   - LACT (the lactd daemon) from the official .deb of the pinned version, checksum verified,
+#   - LACT (the lactd daemon) from the official package of the pinned version, checksum verified,
 #     or from the distribution with pacman
 #   - GPU Screen Recorder via Flatpak, system-wide (needed to capture a monitor on AMD)
 #   - ffmpeg from the distribution's package manager (previews of clips)
@@ -20,8 +20,8 @@ if [ "${1:-}" = --dry-run ]; then
 fi
 [ $# -gt 0 ] || set -- lact gpu-screen-recorder ffmpeg mangohud
 
-# A component this system does not support (the helper's exit code 3, for example LACT without
-# apt or pacman) is skipped; any other failure stops the run with the helper's code.
+# A component this system does not support (the helper's exit code 3, for example LACT on a
+# system without a package for it) is skipped; any other failure stops the run with the helper's code.
 for component in "$@"; do
   echo "==> $component" >&2
   status=0
