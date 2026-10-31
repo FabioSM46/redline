@@ -15,6 +15,11 @@ name: Release
 # scripts/third-party-licenses.py writes src-tauri/target/THIRD-PARTY-LICENSES, and the
 # `--config` overlay ships it beside `copyright` in /usr/share/doc/redline. The overlay
 # is not read by `cargo build`, so the PR CI does not need the file.
+#
+# Before the draft, `install-check` installs the package on a clean container of each
+# supported system (scripts/deb-clean-install.sh). A failure on any of them stops the draft.
+# The images are pinned by tag, not by digest: a clean install has to meet the libraries the
+# system ships today, and a digest would freeze them until someone remembers to move it.
 
 on:
   push:
@@ -80,9 +85,40 @@ jobs:
           path: src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
 
+  # Proves the package installs and its libraries resolve, not that the app works: a container
+  # has no desktop session, no pkexec agent and no GPU. docs/release.md lists what stays manual.
+  install-check:
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # Every system reports, so one failure does not hide another.
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "ubuntu:26.04", "debian:13"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: linux-deb
+          path: packages
+      - name: Install on a clean ${{ matrix.image }}
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          set -- packages/*.deb
+          [ "$#" -eq 1 ] || { echo "::error::Expected one .deb, found $#."; exit 1; }
+          docker run --rm \
+            -v "$PWD/packages:/packages:ro" \
+            -v "$PWD/scripts:/check:ro" \
+            "$IMAGE" bash /check/deb-clean-install.sh "/$1"
+
   # The only job that can write: it creates the draft release from the .deb artifact.
   draft:
-    needs: [linux]
+    needs: [linux, install-check]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
