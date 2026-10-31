@@ -55,8 +55,9 @@ signed.
 | System | State |
 |---|---|
 | Ubuntu 24.04 and 26.04, Debian 13 | Supported: package and guided install of all four tools |
-| Other releases based on Ubuntu 24.04 (Linux Mint, Pop!_OS, ...) | The guided install takes the Ubuntu 24.04 LACT package; not tested |
-| Fedora, Arch | No package. Build from source; `scripts/install-deps.sh` covers everything but LACT |
+| Other releases based on Ubuntu 24.04 (Linux Mint, Pop!_OS, ...) | The guided install takes the Ubuntu 24.04 LACT package. The package and LACT were installed in a Linux Mint 22.3 container; not tried on a desktop |
+| Arch and derivatives (CachyOS, ...) | `packaging/aur/PKGBUILD` builds the package; the guided install takes LACT from the distribution |
+| Fedora | No package. Build from source; `scripts/install-deps.sh` covers everything but LACT |
 | Windows, macOS | Not supported: Redline is Linux only |
 
 **Redline itself is not available as a Flatpak**: the sandbox gets in the way of sysfs and of the
@@ -76,7 +77,8 @@ from Flathub, and first installs Flatpak and adds the Flathub remote if they are
 
 From a source checkout, `scripts/install-deps.sh` runs the same helper as the guided install:
 LACT (the official `.deb` of the pinned version above, on Ubuntu 24.04/26.04 and Debian 13), GPU
-Screen Recorder (from Flathub), and ffmpeg and MangoHud (apt, dnf or pacman):
+Screen Recorder (from Flathub), and ffmpeg and MangoHud (apt, dnf or pacman). On Arch and its
+derivatives LACT comes from the distribution:
 
 ```bash
 sudo bash scripts/install-deps.sh
