@@ -9,8 +9,10 @@
 # else (versions, checksums, URLs) is pinned below. This file is the single place the pinned
 # versions live; scripts/install-deps.sh runs it.
 #
-#   lact                 the official LACT .deb of the pinned version from GitHub, checked
-#                        against its pinned SHA256 before apt installs it, then `lactd` enabled
+#   lact                 with pacman, the distribution's package, then `lactd` enabled; with apt
+#                        or dnf, the official LACT package of the pinned version from GitHub,
+#                        checked against its pinned SHA256 before it is installed, then `lactd`
+#                        enabled
 #   gpu-screen-recorder  the Flatpak from Flathub, system-wide (flatpak itself from the
 #                        distribution's package manager when missing)
 #   ffmpeg               from the distribution's package manager (apt, dnf or pacman)
@@ -38,6 +40,7 @@ LACT_DEBS="
 ubuntu-24.04 lact-${LACT_VERSION}-0.amd64.ubuntu-2404.deb 7c743c4ea49807a66f3a0b02f7b803fa7f98fda1e1c2f7270b2460b84021d97d
 ubuntu-26.04 lact-${LACT_VERSION}-0.amd64.ubuntu-2604.deb b8006a0d7e414de08f193760a82d346c7308675747ae928501941ac714b59fd3
 debian-13 lact-${LACT_VERSION}-0.amd64.debian-13.deb 44f25c6e95ad6d0fb869b36ae10c593bb22b7d021cd3f1f282cc677ed883248d
+fedora-44 lact-${LACT_VERSION}-0.x86_64.fedora-44.rpm a5d91090ec1dc4333bf70d889f0af8484b77b104038db860b9d424c4bdd15b30
 "
 GSR_ID="com.dec05eba.gpu_screen_recorder"
 FLATHUB_REPO="https://dl.flathub.org/repo/flathub.flatpakrepo"
@@ -103,14 +106,14 @@ os_value() {
   printf '%s' "$line"
 }
 
-# The key of the LACT .deb built for this system, empty when there is none.
+# The key of the LACT package built for this system, empty when there is none.
 lact_target() {
   local id version codename
   id=$(os_value ID)
   version=$(os_value VERSION_ID)
   codename=$(os_value UBUNTU_CODENAME)
   case "$id" in
-    ubuntu | debian) printf '%s-%s' "$id" "$version" ;;
+    ubuntu | debian | fedora) printf '%s-%s' "$id" "$version" ;;
     *)
       # Derivatives of Ubuntu (Linux Mint, Pop!_OS, ...) name the release they are built on.
       case "$codename" in
@@ -122,8 +125,19 @@ lact_target() {
 
 install_lact() {
   local target deb sha
-  [ "$(package_manager)" = apt-get ] ||
-    fail "The guided install of LACT needs apt; install LACT ${LACT_VERSION} from its releases on GitHub or your distribution's packages." 3
+  # Arch and its derivatives carry LACT in their own repositories: the version is theirs, and
+  # another version than the pinned one works with a warning.
+  if [ "$(package_manager)" = pacman ]; then
+    say progress "Installing LACT"
+    install_packages lact || fail "pacman could not install LACT."
+    say progress "Starting the LACT daemon"
+    run systemctl enable --now lactd || fail "LACT is installed, but its daemon did not start."
+    return
+  fi
+  case "$(package_manager)" in
+    apt-get | dnf) ;;
+    *) fail "The guided install of LACT needs apt, dnf or pacman; install LACT ${LACT_VERSION} from its releases on GitHub or your distribution's packages." 3 ;;
+  esac
   target=$(lact_target)
   read -r deb sha < <(awk -v t="$target" '$1 == t { print $2, $3 }' <<<"$LACT_DEBS") || true
   [ -n "${deb:-}" ] ||
@@ -143,11 +157,15 @@ install_lact() {
       fail "The downloaded LACT package does not match its pinned checksum: nothing was installed."
   fi
   say progress "Installing LACT ${LACT_VERSION}"
-  # The .deb's own dependencies come from the distribution: refresh the index first (a
-  # failing third-party source must not stop the install), and never wait for a question.
-  run "${APT[@]}" update || true
-  run env DEBIAN_FRONTEND=noninteractive "${APT[@]}" install -y "$DOWNLOADS/$deb" ||
-    fail "apt could not install LACT."
+  if [ "$(package_manager)" = dnf ]; then
+    run dnf install -y "$DOWNLOADS/$deb" || fail "dnf could not install LACT."
+  else
+    # The .deb's own dependencies come from the distribution: refresh the index first (a
+    # failing third-party source must not stop the install), and never wait for a question.
+    run "${APT[@]}" update || true
+    run env DEBIAN_FRONTEND=noninteractive "${APT[@]}" install -y "$DOWNLOADS/$deb" ||
+      fail "apt could not install LACT."
+  fi
   say progress "Starting the LACT daemon"
   run systemctl enable --now lactd || fail "LACT is installed, but its daemon did not start."
 }

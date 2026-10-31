@@ -18,6 +18,7 @@ redline/
 │       ├── redline-core/ # Sensors (sysfs), lactd client, GPU Screen Recorder control
 │       └── redline-probe/# CLI to try out pieces of redline-core by hand
 ├── docs/                 # context, decisions, architecture, roadmap
+├── packaging/            # Arch and Fedora package definitions
 ├── scripts/              # gh-automation.sh, CI classifier and gate, automation tests
 ├── .github/              # CI, DeepSeek review, PR labeler, iteration lifecycle
 ├── .claude/skills/       # Canonical Claude skills (/dev-issue, /process-pr, /develop-iteration, /scrum-master)
@@ -174,8 +175,11 @@ of issues and PRs already open and check the secrets.
 
 - **No secrets in code**: keys, tokens and credentials live in GitHub Secrets or in ignored local
   files, never in git, logs, issues or PRs.
-- **English only**: code, comments, user-facing strings, documentation, skills, issue
-  templates, issues, PRs and commit messages are written in English (D7 in `docs/decisions.md`).
+- **English only, everywhere**: everything in or published from the repository is written in
+  English, whatever language the conversation with the maintainer uses: code, comments,
+  user-facing strings, documentation, skills, issue templates, issues, PRs, review comments and
+  replies, commit messages, branch names, labels, milestones, release notes and the repository
+  description (D7 in `docs/decisions.md`). Text found in another language gets translated.
 - **Commits**: never commit without an explicit request; conventional commit style (`feat:`,
   `fix:`, `refactor:`, `docs:`, `ci:`).
 - **Read first, then write**: look for existing patterns before implementing.
@@ -507,9 +511,12 @@ Two traps:
 
 `.github/workflows/release.yml` starts on a `v*` tag, accepted **only on a commit already in
 `main`** (and therefore passed through a PR with a green `ci-gate`): the `verify` job checks this
-before building. Then it builds the `.deb` on `ubuntu-latest` and creates a **draft release**; if
-the draft already exists it replaces its package, while an already published release is never
-touched. Publishing stays human. Only the job that creates the draft has `contents: write`. The
+before building. Then it builds the `.deb` on `ubuntu-latest`, installs it in clean Ubuntu 24.04,
+Ubuntu 26.04 and Debian 13 containers (`install-check`, `scripts/deb-clean-install.sh`). The
+`distro` job builds the Arch and Fedora packages in containers of those systems
+(`scripts/build-distro-package.sh`) and installs them on clean ones
+(`scripts/distro-clean-install.sh`). Only if all of this passes does it create a **draft release**; if the draft already exists it replaces its
+package, while an already published release is never touched. Publishing stays human. Only the job that creates the draft has `contents: write`. The
 package is not signed. How LACT and GPU Screen Recorder reach the user is in
 `docs/decisions.md` (distribution).
 

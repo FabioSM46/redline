@@ -2,7 +2,7 @@
 
 Every step here is **human-only**: merging into `main`, tagging and publishing are not done by an
 AI or by a workflow. `.github/workflows/release.yml` only builds the `.deb` for a tag already on
-`main` and attaches it to a draft release. The example is `0.1.0`; replace it with the version
+`main`, installs it on clean containers and attaches it to a draft release. The example is `0.1.0`; replace it with the version
 being released.
 
 ## 1. Prepare `develop`
@@ -11,13 +11,15 @@ being released.
 - [ ] The version is the same in `package.json`, `src-tauri/tauri.conf.json` and
       `src-tauri/Cargo.toml`.
 - [ ] `CHANGELOG.md` has an entry for this version.
+- [ ] `packaging/arch/PKGBUILD` and `packaging/fedora/redline.spec` have this version.
 - [ ] The privacy checks of `AGENTS.md` pass over the whole history, and a secret scanner has
       read it too.
 
 ## 2. Manual checks before tagging
 
-CI has no AMD GPU, no desktop and no real package install, so these are checked by hand. Build the
-candidate from `develop` with the same commands as `release.yml`:
+CI has no AMD GPU and no desktop, and it installs the package only on the release path, after the
+tag (see "What CI checks on a tag"). So these are checked by hand. Build the candidate from
+`develop` with the same commands as `release.yml`:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -153,6 +155,34 @@ published `0.1.0` package unless a line says otherwise. All passed:
 
 Not run: a clean virtual machine, Ubuntu 26.04, Debian 13, the shortcuts on GNOME 48 or KDE, and
 the recovery routes of D13.
+
+## What CI checks on a tag
+
+The `install-check` job of `release.yml` runs `scripts/deb-clean-install.sh` on every tag, in clean
+`ubuntu:24.04`, `ubuntu:26.04` and `debian:13` containers. A failure on any of them stops the
+draft. On each system it checks that:
+
+- `apt install ./<file>.deb` succeeds and pulls in the dependencies from that system's archive;
+- `dpkg -V redline` prints nothing;
+- the desktop file, the polkit action, the install helper and the licenses are in place;
+- `ldd` resolves every library of `/usr/bin/redline`. The binary has no `--version`: every launch
+  starts the GUI. The tray library is loaded at run time, out of `ldd`'s sight, so the script looks
+  for it in the linker cache.
+
+The script first removes the `path-exclude` rules of the Ubuntu images, which drop `/usr/share/doc`
+at unpack time. An installed system has no such rules, and with them `dpkg -V` reports the licenses
+as missing.
+
+To run it on a local `.deb`, with the package alone in `<folder>`:
+
+```bash
+docker run --rm -v "<folder>:/packages:ro" -v "$PWD/scripts:/check:ro" ubuntu:24.04 \
+  bash /check/deb-clean-install.sh /packages/<file>.deb
+```
+
+It proves that the package installs and its libraries resolve, not that the app works. A container
+has no desktop session, no `pkexec` agent and no GPU, so what stays manual is everything above: the
+guided install through `pkexec`, starting from a desktop session, and every check on real hardware.
 
 ## 3. Merge and tag
 

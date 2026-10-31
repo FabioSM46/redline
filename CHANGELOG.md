@@ -3,7 +3,21 @@
 What each published version of Redline contains. The plan is in the
 [roadmap](docs/roadmap.md), the release steps in [docs/release.md](docs/release.md).
 
-## 0.2.0 — Unreleased
+## 0.2.1 — 2026-10-31
+
+### Packages
+
+- Every release now has Arch and Fedora packages next to the `.deb`.
+- The guided install covers LACT on Arch and its derivatives, from the distribution, and on
+  Fedora 44, from LACT's official package.
+- Every release package is installed on clean systems before a draft is created: Ubuntu 24.04,
+  Ubuntu 26.04, Debian 13, Arch and Fedora 44.
+
+### Documentation
+
+- The README shows the app and describes its state for users.
+
+## 0.2.0 — 2026-10-30
 
 ### Overdrive
 
