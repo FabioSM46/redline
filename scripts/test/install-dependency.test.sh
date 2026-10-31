@@ -94,7 +94,16 @@ assert_not_contains "without downloading anything" "$OUT" "run curl"
 os_release 'ID=fedora' 'VERSION_ID=43'
 dry_run "$(make_path dnf dnf)" lact
 assert_eq "LACT without apt is not supported" 3 "$CODE"
-assert_contains "and says what to do" "$OUT" "error The guided install of LACT needs apt"
+assert_contains "and says what to do" "$OUT" "error The guided install of LACT needs apt or pacman"
+
+for id in arch cachyos; do
+  os_release "ID=$id" 'ID_LIKE=arch'
+  dry_run "$(make_path "pacman-$id" pacman)" lact
+  assert_eq "LACT on $id" 0 "$CODE"
+  assert_contains "comes from the distribution" "$OUT" "run pacman -S --needed --noconfirm lact"
+  assert_contains "and its daemon starts" "$OUT" "run systemctl enable --now lactd"
+  assert_not_contains "without downloading anything" "$OUT" "run curl"
+done
 
 echo "== GPU Screen Recorder"
 os_release 'ID=ubuntu' 'VERSION_ID="24.04"'
@@ -161,13 +170,13 @@ assert_eq "install-deps.sh pins nothing of its own" "" "$(grep -nE 'VERSION=|htt
 assert_contains "install-deps.sh runs the helper" "$(cat "$ROOT/scripts/install-deps.sh")" "src-tauri/linux/install-dependency"
 out=$(PATH="$(make_path wrapper pacman)" bash "$ROOT/scripts/install-deps.sh" --dry-run ffmpeg 2>/dev/null)
 assert_contains "install-deps.sh passes --dry-run through" "$out" "run pacman -S --needed --noconfirm ffmpeg"
-os_release 'ID=arch'
-out=$(PATH="$(make_path wrapper-all pacman)" REDLINE_OS_RELEASE="$TMP/os-release" bash "$ROOT/scripts/install-deps.sh" --dry-run 2>/dev/null)
+os_release 'ID=fedora' 'VERSION_ID=43'
+out=$(PATH="$(make_path wrapper-all dnf)" REDLINE_OS_RELEASE="$TMP/os-release" bash "$ROOT/scripts/install-deps.sh" --dry-run 2>/dev/null)
 assert_eq "install-deps.sh skips an unsupported component and goes on" 0 $?
-assert_contains "the unsupported LACT is reported" "$out" "error The guided install of LACT needs apt"
+assert_contains "the unsupported LACT is reported" "$out" "error The guided install of LACT needs apt or pacman"
 assert_contains "the components after it still run" "$out" "run flatpak install -y --noninteractive --system flathub"
-assert_contains "all of them" "$out" "run pacman -S --needed --noconfirm ffmpeg"
-assert_contains "MangoHud too" "$out" "run pacman -S --needed --noconfirm mangohud"
+assert_contains "all of them" "$out" "run dnf install -y ffmpeg-free"
+assert_contains "MangoHud too" "$out" "run dnf install -y mangohud"
 out=$(PATH="$(make_path wrapper-bad pacman)" bash "$ROOT/scripts/install-deps.sh" --dry-run nonsense ffmpeg 2>/dev/null)
 assert_eq "install-deps.sh stops on any other failure" 2 $?
 assert_not_contains "without running the rest" "$out" "run pacman"

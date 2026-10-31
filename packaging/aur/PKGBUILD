@@ -1,0 +1,43 @@
+# Maintainer: FabioSM46
+
+pkgname=redline
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='Control panel for AMD GPUs: live stats, tuning, instant replay and recording'
+arch=('x86_64')
+url='https://github.com/FabioSM46/redline'
+license=('MIT')
+depends=('bash' 'gtk3' 'hicolor-icon-theme' 'libayatana-appindicator' 'polkit' 'webkit2gtk-4.1')
+makedepends=('cargo' 'jq' 'nodejs' 'pnpm')
+optdepends=('lact: fan, power and clock tuning'
+            'ffmpeg: previews of saved clips'
+            'mangohud: in-game overlay')
+options=('!lto')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# Replaced with the tag archive's checksum before every AUR push (docs/release.md).
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  pnpm install --frozen-lockfile
+  pnpm tauri build --no-bundle
+}
+
+package() {
+  cd "$pkgname-$pkgver/src-tauri"
+  local identifier size
+  identifier=$(jq -er .identifier tauri.conf.json)
+
+  install -Dm755 target/release/redline "$pkgdir/usr/bin/redline"
+  install -Dm755 linux/install-dependency "$pkgdir/usr/share/redline/install-dependency"
+  install -Dm644 "linux/$identifier.install.policy" \
+    "$pkgdir/usr/share/polkit-1/actions/$identifier.install.policy"
+  sed -e 's/{{comment}}/Control panel for AMD GPUs on Linux/' -e 's/{{exec}}/redline/' -e 's/{{icon}}/redline/' \
+    "linux/$identifier.desktop" |
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/$identifier.desktop"
+  for size in 32x32 128x128; do
+    install -Dm644 "icons/$size.png" "$pkgdir/usr/share/icons/hicolor/$size/apps/redline.png"
+  done
+  install -Dm644 icons/icon.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/redline.png"
+  install -Dm644 ../LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

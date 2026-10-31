@@ -11,6 +11,9 @@ being released.
 - [ ] The version is the same in `package.json`, `src-tauri/tauri.conf.json` and
       `src-tauri/Cargo.toml`.
 - [ ] `CHANGELOG.md` has an entry for this version.
+- [ ] After publishing and before any AUR push, `packaging/aur/PKGBUILD` has this `pkgver`,
+      `pkgrel=1` and the real `sha256sums` of the tag's source archive. `SKIP` is never pushed to
+      the AUR. The AUR package is then updated by hand from this file.
 - [ ] The privacy checks of `AGENTS.md` pass over the whole history, and a secret scanner has
       read it too.
 

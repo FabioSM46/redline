@@ -9,7 +9,8 @@
 # else (versions, checksums, URLs) is pinned below. This file is the single place the pinned
 # versions live; scripts/install-deps.sh runs it.
 #
-#   lact                 the official LACT .deb of the pinned version from GitHub, checked
+#   lact                 with pacman, the distribution's package, then `lactd` enabled; with apt,
+#                        the official LACT .deb of the pinned version from GitHub, checked
 #                        against its pinned SHA256 before apt installs it, then `lactd` enabled
 #   gpu-screen-recorder  the Flatpak from Flathub, system-wide (flatpak itself from the
 #                        distribution's package manager when missing)
@@ -122,8 +123,17 @@ lact_target() {
 
 install_lact() {
   local target deb sha
+  # Arch and its derivatives carry LACT in their own repositories: the version is theirs, and
+  # another version than the pinned one works with a warning.
+  if [ "$(package_manager)" = pacman ]; then
+    say progress "Installing LACT"
+    install_packages lact || fail "pacman could not install LACT."
+    say progress "Starting the LACT daemon"
+    run systemctl enable --now lactd || fail "LACT is installed, but its daemon did not start."
+    return
+  fi
   [ "$(package_manager)" = apt-get ] ||
-    fail "The guided install of LACT needs apt; install LACT ${LACT_VERSION} from its releases on GitHub or your distribution's packages." 3
+    fail "The guided install of LACT needs apt or pacman; install LACT ${LACT_VERSION} from its releases on GitHub or your distribution's packages." 3
   target=$(lact_target)
   read -r deb sha < <(awk -v t="$target" '$1 == t { print $2, $3 }' <<<"$LACT_DEBS") || true
   [ -n "${deb:-}" ] ||
