@@ -39,7 +39,7 @@ check = job("install-check")
 draft = job("draft")
 
 assert needs(check) == {"linux"}, "install-check must run after the build"
-assert {"linux", "install-check"} <= needs(draft), "a failed install must stop the draft"
+assert {"linux", "install-check", "distro"} <= needs(draft), "a failed install must stop the draft"
 
 images = re.search(r"^        image: \[(.*)\]$", check, re.MULTILINE)
 assert images, "install-check needs a matrix of images"

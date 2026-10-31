@@ -26,6 +26,6 @@ dist-ssr
 # Local secrets (Redline uses none today)
 .env
 
-# Bytecode Python dei test del reviewer
+# Python bytecode of the reviewer tests
 __pycache__/
 *.py[cod]

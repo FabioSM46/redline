@@ -1,0 +1,31 @@
+# Maintainer: FabioSM46
+# Built by scripts/build-distro-package.sh from the checkout, not from a download.
+
+pkgname=redline
+pkgver=0.2.1
+pkgrel=1
+pkgdesc='Control panel for AMD GPUs: live stats, tuning, instant replay and recording'
+arch=('x86_64')
+url='https://github.com/FabioSM46/redline'
+license=('MIT')
+depends=('bash' 'gtk3' 'hicolor-icon-theme' 'libayatana-appindicator' 'polkit' 'webkit2gtk-4.1')
+makedepends=('cargo' 'jq' 'nodejs' 'pnpm' 'python')
+optdepends=('lact: fan, power and clock tuning'
+            'ffmpeg: previews of saved clips'
+            'mangohud: in-game overlay')
+options=('!lto' '!debug')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  pnpm install --frozen-lockfile
+  python3 scripts/third-party-licenses.py --target x86_64-unknown-linux-gnu \
+    --output src-tauri/target/THIRD-PARTY-LICENSES
+  pnpm tauri build --no-bundle
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  bash packaging/install-files.sh "$PWD" "$pkgdir"
+}

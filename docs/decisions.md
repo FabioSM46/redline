@@ -42,6 +42,12 @@ Rejected:
   and LACT risks clashing with an existing installation;
 - Redline as a Flatpak: the sandbox gets in the way of sysfs and of the `lactd` socket.
 
+Update (2026-10-31): packages are published on GitHub Releases only. Next to the `.deb`, each
+release has an Arch package and a Fedora package, built in containers of those systems because a
+package has to link the libraries its system ships. The apt repository and the AUR are dropped:
+nothing is published anywhere else. The guided install takes LACT from the distribution on Arch
+and from LACT's official package, with a pinned checksum, on Fedora.
+
 ## D5 — Global shortcuts (2026-10-29)
 
 Under Wayland global shortcuts go through the GlobalShortcuts portal. GNOME implements it from
