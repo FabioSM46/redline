@@ -507,9 +507,10 @@ Two traps:
 
 `.github/workflows/release.yml` starts on a `v*` tag, accepted **only on a commit already in
 `main`** (and therefore passed through a PR with a green `ci-gate`): the `verify` job checks this
-before building. Then it builds the `.deb` on `ubuntu-latest` and creates a **draft release**; if
-the draft already exists it replaces its package, while an already published release is never
-touched. Publishing stays human. Only the job that creates the draft has `contents: write`. The
+before building. Then it builds the `.deb` on `ubuntu-latest`, installs it in clean Ubuntu 24.04,
+Ubuntu 26.04 and Debian 13 containers (`install-check`, `scripts/deb-clean-install.sh`), and only
+if all three pass creates a **draft release**; if the draft already exists it replaces its
+package, while an already published release is never touched. Publishing stays human. Only the job that creates the draft has `contents: write`. The
 package is not signed. How LACT and GPU Screen Recorder reach the user is in
 `docs/decisions.md` (distribution).
 
