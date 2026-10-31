@@ -18,6 +18,12 @@ if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
 fi
 
 version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$repo/package.json")
+pkgver=$(sed -n 's/^pkgver=\(.*\)$/\1/p' "$repo/packaging/arch/PKGBUILD")
+specver=$(sed -n 's/^Version:[[:space:]]*\(.*\)$/\1/p' "$repo/packaging/fedora/redline.spec")
+if [ -z "$version" ] || [ "$pkgver" != "$version" ] || [ "$specver" != "$version" ]; then
+  echo "error: version mismatch: package.json=$version PKGBUILD=$pkgver spec=$specver" >&2
+  exit 1
+fi
 archive() {
   tar -C "$repo" --exclude=node_modules --exclude=target --exclude=.git --exclude=dist \
     --exclude=packages --transform "s,^\.,redline-$version," -czf "$1" .

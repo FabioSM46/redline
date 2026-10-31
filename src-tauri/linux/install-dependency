@@ -40,7 +40,6 @@ LACT_DEBS="
 ubuntu-24.04 lact-${LACT_VERSION}-0.amd64.ubuntu-2404.deb 7c743c4ea49807a66f3a0b02f7b803fa7f98fda1e1c2f7270b2460b84021d97d
 ubuntu-26.04 lact-${LACT_VERSION}-0.amd64.ubuntu-2604.deb b8006a0d7e414de08f193760a82d346c7308675747ae928501941ac714b59fd3
 debian-13 lact-${LACT_VERSION}-0.amd64.debian-13.deb 44f25c6e95ad6d0fb869b36ae10c593bb22b7d021cd3f1f282cc677ed883248d
-fedora-43 lact-${LACT_VERSION}-0.x86_64.fedora-43.rpm c48fabf8260bc7b87ecf832e4ef72faecab66d093149c891989183f4d77bbb3f
 fedora-44 lact-${LACT_VERSION}-0.x86_64.fedora-44.rpm a5d91090ec1dc4333bf70d889f0af8484b77b104038db860b9d424c4bdd15b30
 "
 GSR_ID="com.dec05eba.gpu_screen_recorder"
