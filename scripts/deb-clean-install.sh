@@ -39,7 +39,9 @@ fi
 # which no installed system has: with them `dpkg -V` reports THIRD-PARTY-LICENSES as missing and
 # the license check fails for a reason unrelated to the package. Debian's image has no such
 # rules. Every rule goes, under whatever file name, so a new image cannot bring them back.
-find /etc/dpkg/dpkg.cfg.d -type f -exec sed -i '/^path-\(exclude\|include\)=/d' {} +
+if [ -d /etc/dpkg/dpkg.cfg.d ]; then
+  find /etc/dpkg/dpkg.cfg.d -type f -exec sed -i '/^path-\(exclude\|include\)=/d' {} +
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o Acquire::Retries=3 update
@@ -74,7 +76,8 @@ fi
 
 # The tray library is not linked: libappindicator-sys loads it at run time, so `ldd` never sees
 # it. Only the package's Depends brings it in.
-ldconfig -p | grep -Fq "$TRAY_LIB" || fail "$TRAY_LIB is not installed"
+# Not a pipe: grep -q closing it early would fail the pipeline under pipefail.
+grep -Fq "$TRAY_LIB" <<<"$(ldconfig -p)" || fail "$TRAY_LIB is not installed"
 
 . /etc/os-release
 if [ "$failed" -ne 0 ]; then
