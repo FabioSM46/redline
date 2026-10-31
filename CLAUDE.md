@@ -14,8 +14,9 @@ Agents never read `.env` files. No tool signatures in commits and PRs: no agent
 `Co-Authored-By` trailer, no "Generated with", no `claude.ai/code/session_…` link and no
 `Claude-Session:` trailer.
 
-Everything in the repository is written in English: code, comments, user-facing strings,
-documentation, skills, issues, PRs and commit messages.
+Everything in or published from the repository is written in English, even when the conversation
+is in another language: code, comments, user-facing strings, documentation, skills, issues, PRs,
+review comments, commit messages, branch names, labels, milestones and release notes.
 
 Quick reference — the pipeline skills:
 
