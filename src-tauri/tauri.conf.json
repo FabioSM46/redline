@@ -31,6 +31,7 @@
     "linux": {
       "deb": {
         "section": "utils",
+        "depends": ["curl"],
         "desktopTemplate": "linux/com.fabiosm46.redline.desktop",
         "files": {
           "/usr/share/doc/redline/copyright": "../LICENSE",

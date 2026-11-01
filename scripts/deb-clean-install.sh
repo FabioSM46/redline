@@ -66,6 +66,8 @@ for file in "${RETIRED_FILES[@]}"; do
 done
 [ -x /usr/share/redline/install-dependency ] || fail "the install helper is not executable"
 [ -x "$BIN" ] || fail "$BIN is not executable"
+# The update check runs it (D14), and only the package's Depends brings it in.
+command -v curl >/dev/null || fail "curl is not installed"
 
 ldd_status=0
 libs=$(ldd "$BIN" 2>&1) || ldd_status=$?

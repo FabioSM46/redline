@@ -15,6 +15,7 @@ mod test_support;
 mod thumbnails;
 mod tray;
 mod tuning;
+mod updates;
 
 use redline_core::sensors::{self, GpuInfo, GpuSnapshot};
 use sampler::Sampler;
@@ -48,6 +49,7 @@ pub fn run() {
         .plugin(autostart::plugin())
         .setup(|app| {
             settings::init(app.handle());
+            updates::start(app.handle());
             overlay::init(app.handle());
             sampler::start(app)?;
             tuning::init(app);
@@ -114,6 +116,9 @@ pub fn run() {
             overlay::overlay_status,
             overlay::set_overlay,
             overlay::take_over_overlay_config,
+            updates::update_status,
+            updates::dismiss_update,
+            updates::open_latest_release,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

@@ -39,6 +39,7 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       `redline.desktop`.
 - [ ] It also lists `usr/share/doc/redline/THIRD-PARTY-LICENSES`,
       `usr/share/redline/install-dependency` and the polkit action.
+- [ ] `dpkg-deb -I <file>.deb` has `curl` among the dependencies.
 
 ### Clean virtual machine (Ubuntu LTS)
 
@@ -53,6 +54,17 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 - [ ] Cancelling the password prompt changes nothing and the page says so.
 - [ ] On a clean install of each of Ubuntu 24.04, Ubuntu 26.04 and Debian 13: the package installs,
       starts, and the guided install of all four tools succeeds.
+
+### Update check
+
+The check reads the latest release published on GitHub, not the candidate: test it with an
+installed package older than that release.
+
+- [ ] With an older version installed, the available version appears about 30 seconds after the
+      start, and the release page opens from the app.
+- [ ] Dismissing it hides it, also after a restart; the next release reports again.
+- [ ] With the check off, a restart makes no request; turning it on checks at once.
+- [ ] Offline, the app starts normally and says the check did not get an answer.
 
 ### Tray, autostart and themes
 
@@ -165,6 +177,7 @@ draft. On each system it checks that:
 - `apt install ./<file>.deb` succeeds and pulls in the dependencies from that system's archive;
 - `dpkg -V redline` prints nothing;
 - the desktop file, the polkit action, the install helper and the licenses are in place;
+- `curl`, which the update check runs, is on the path;
 - `ldd` resolves every library of `/usr/bin/redline`. The binary has no `--version`: every launch
   starts the GUI. The tray library is loaded at run time, out of `ldd`'s sight, so the script looks
   for it in the linker cache.

@@ -23,6 +23,10 @@
 //! `overlay` holds what the in-game overlay shows. It is stored here and rendered into MangoHud's
 //! own file by `overlay`, which saves it through [`save_overlay`]: `set_settings` never changes it.
 //!
+//! `check_for_updates` turns the check for a newer release on and off (`updates`, D14).
+//! `dismissed_update` is the version the user set aside: like `overlay`, `set_settings` never
+//! changes it, only [`save_dismissed_update`] does.
+//!
 //! Starting with the system is not a setting stored here: the operating system owns it (see
 //! `autostart`).
 
@@ -32,6 +36,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use redline_core::recorder::{self, AudioTrack, ReplayConfig};
+use redline_core::update::Version;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -371,6 +376,10 @@ pub struct Settings {
     pub start_minimised: bool,
     pub recording: RecordingSettings,
     pub overlay: OverlaySettings,
+    /// Look for a newer release once a day (D14).
+    pub check_for_updates: bool,
+    /// The version whose update the user dismissed.
+    pub dismissed_update: Option<String>,
 }
 
 impl Settings {
@@ -380,18 +389,22 @@ impl Settings {
             start_minimised: false,
             recording: RecordingSettings::defaults(video_dir),
             overlay: OverlaySettings::default(),
+            check_for_updates: true,
+            dismissed_update: None,
         }
     }
 }
 
-/// What `set_settings` receives. Without `recording` the recording settings stay as they are,
-/// so a screen that edits only General never resets them.
+/// What `set_settings` receives. Without `recording` or `check_for_updates` those settings stay
+/// as they are, so a screen that edits only part of them never resets the others.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SettingsUpdate {
     pub theme: Theme,
     pub start_minimised: bool,
     #[serde(default)]
     pub recording: Option<RecordingSettings>,
+    #[serde(default)]
+    pub check_for_updates: Option<bool>,
 }
 
 /// The managed state: where the files live and the settings last loaded or saved.
@@ -443,6 +456,17 @@ pub fn save_overlay(
     let overlay = saved.overlay.clone();
     *current = saved;
     Ok(overlay)
+}
+
+/// Saves the dismissed version, leaving every other setting as it is.
+pub fn save_dismissed_update(state: &SettingsState, version: String) -> Result<(), String> {
+    let mut current = state.current.lock().map_err(|_| UNAVAILABLE.to_owned())?;
+    let file = state
+        .file
+        .as_deref()
+        .ok_or_else(|| "Could not save the settings: no settings folder.".to_owned())?;
+    *current = apply_dismissed_update(file, &state.video_dir, &current, version)?;
+    Ok(())
 }
 
 /// Loads the settings and registers them as managed state. Never fails: every problem is
@@ -521,10 +545,14 @@ pub fn set_settings<R: Runtime>(
         settings,
     )?;
     let recording_changed = needs_restart(&current.recording, &saved.recording);
+    let check_turned_on = saved.check_for_updates && !current.check_for_updates;
     *current = saved.clone();
     drop(current);
     if recording_changed {
         crate::recorder::settings_changed(&app);
+    }
+    if check_turned_on {
+        crate::updates::check_now(&app);
     }
     Ok(saved)
 }
@@ -552,6 +580,10 @@ fn apply(
             .recording
             .unwrap_or_else(|| current.recording.clone()),
         overlay: current.overlay.clone(),
+        check_for_updates: update
+            .check_for_updates
+            .unwrap_or(current.check_for_updates),
+        dismissed_update: current.dismissed_update.clone(),
     };
     let problems = wanted.recording.problems();
     if !problems.is_empty() {
@@ -590,6 +622,20 @@ fn apply_overlay(
     save(file, &wanted, video_dir)
 }
 
+/// Saves `version` as dismissed with the rest of `current`.
+fn apply_dismissed_update(
+    file: &Path,
+    video_dir: &Path,
+    current: &Settings,
+    version: String,
+) -> Result<Settings, String> {
+    let wanted = Settings {
+        dismissed_update: Some(version),
+        ..current.clone()
+    };
+    save(file, &wanted, video_dir)
+}
+
 /// Deletes the saved portal session, so the desktop asks for the screen again.
 fn forget_portal_session(token: &Path) {
     match fs::remove_file(token) {
@@ -623,6 +669,16 @@ fn read_field<T: DeserializeOwned>(
         Err(reason) => problems.push(format!(
             "{SETTINGS_FILE}: {prefix}{reason}, using the default for {name}"
         )),
+    }
+}
+
+/// A stored dismissed version is one Redline wrote: anything else dismisses nothing.
+fn check_dismissed_update(value: &Option<String>) -> Result<(), String> {
+    match value {
+        Some(version) if Version::parse(version).is_none() => {
+            Err("dismissed_update is not a version".to_owned())
+        }
+        _ => Ok(()),
     }
 }
 
@@ -778,6 +834,22 @@ fn load(file: &Path, video_dir: &Path) -> (Settings, Vec<String>) {
     if let Some(value) = fields.get("overlay") {
         settings.overlay = load_overlay(value, &mut problems);
     }
+    read_field(
+        &fields,
+        "",
+        "check_for_updates",
+        check_bool,
+        &mut settings.check_for_updates,
+        &mut problems,
+    );
+    read_field(
+        &fields,
+        "",
+        "dismissed_update",
+        check_dismissed_update,
+        &mut settings.dismissed_update,
+        &mut problems,
+    );
     (settings, problems)
 }
 
@@ -840,6 +912,7 @@ mod tests {
             theme: settings.theme,
             start_minimised: settings.start_minimised,
             recording: Some(settings.recording.clone()),
+            check_for_updates: Some(settings.check_for_updates),
         }
     }
 
@@ -1107,6 +1180,8 @@ mod tests {
                     "metrics": [],
                     "toggle_key": "Shift_R+F12",
                 },
+                "check_for_updates": true,
+                "dismissed_update": null,
             })
         );
     }
@@ -1306,6 +1381,79 @@ mod tests {
         current.overlay.preset = OverlayPreset::Off;
         let saved = apply(&file, videos(), None, &current, update(&defaults())).unwrap();
         assert_eq!(saved.overlay.preset, OverlayPreset::Off);
+    }
+
+    #[test]
+    fn a_file_without_the_update_fields_checks_and_has_nothing_dismissed() {
+        let dir = temp_dir("update-absent");
+        let file = dir.join(SETTINGS_FILE);
+        fs::write(&file, r#"{"theme": "dark"}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(problems, Vec::<String>::new());
+        assert!(settings.check_for_updates);
+        assert_eq!(settings.dismissed_update, None);
+    }
+
+    #[test]
+    fn the_update_fields_round_trip_and_bad_ones_fall_back() {
+        let dir = temp_dir("update-fields");
+        let file = dir.join(SETTINGS_FILE);
+        let mut custom = defaults();
+        custom.check_for_updates = false;
+        custom.dismissed_update = Some("0.3.0".into());
+        assert_eq!(save(&file, &custom, videos()).unwrap(), custom);
+
+        fs::write(
+            &file,
+            r#"{"check_for_updates": "no", "dismissed_update": "soon"}"#,
+        )
+        .unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(settings.check_for_updates);
+        assert_eq!(settings.dismissed_update, None);
+    }
+
+    #[test]
+    fn set_settings_leaves_the_update_fields_to_those_who_send_them() {
+        let dir = temp_dir("update-set");
+        let file = dir.join(SETTINGS_FILE);
+        let mut current = defaults();
+        current.check_for_updates = false;
+        current.dismissed_update = Some("0.3.0".into());
+
+        let silent: SettingsUpdate =
+            serde_json::from_str(r#"{"theme": "light", "start_minimised": false}"#).unwrap();
+        let saved = apply(&file, videos(), None, &current, silent).unwrap();
+        assert!(!saved.check_for_updates);
+        assert_eq!(saved.dismissed_update.as_deref(), Some("0.3.0"));
+
+        let toggled: SettingsUpdate = serde_json::from_str(
+            r#"{"theme": "light", "start_minimised": false, "check_for_updates": true,
+                "dismissed_update": "9.9.9"}"#,
+        )
+        .unwrap();
+        let saved = apply(&file, videos(), None, &saved, toggled).unwrap();
+        assert!(saved.check_for_updates);
+        assert_eq!(saved.dismissed_update.as_deref(), Some("0.3.0"));
+    }
+
+    #[test]
+    fn dismissing_keeps_every_other_setting() {
+        let dir = temp_dir("update-dismiss");
+        let file = dir.join(SETTINGS_FILE);
+        let mut current = defaults();
+        current.theme = Theme::Dark;
+        let saved = apply_dismissed_update(&file, videos(), &current, "0.3.0".into()).unwrap();
+        assert_eq!(saved.dismissed_update.as_deref(), Some("0.3.0"));
+        assert_eq!(saved.theme, Theme::Dark);
+        assert_eq!(
+            apply_dismissed_update(&file, videos(), &saved, "0.3.1".into())
+                .unwrap()
+                .dismissed_update
+                .as_deref(),
+            Some("0.3.1")
+        );
     }
 
     #[test]

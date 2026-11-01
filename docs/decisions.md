@@ -336,3 +336,33 @@ D8); a positive voltage offset behind a second warning (a confirmation does not 
 per-GPU list of supported models (the table already says it, and a list goes stale); applying
 values on Redline's start instead of confirming them in lactd (Redline would have to run for the
 tuning to hold, and it would be a second store of the same values).
+
+## D14 — Updates: Redline notifies and links, it does not install (2026-11-01)
+
+Redline finds out that a newer release is published and shows the release page. Installing stays
+the user's act, through their package manager.
+
+The packages install as root, Redline never runs as root, `install-dependency` accepts only fixed
+tool names (never a URL, a path or a command), and the packages are unsigned: an in-app install
+would run an unverified download as root.
+
+- **The check is `curl` as an external process**, following D2 and the rule that a missing tool is
+  a disabled feature. It is the app's first outbound HTTP call, and no HTTP or TLS library is
+  compiled in: `curl` costs a package dependency, a crate would cost a TLS stack. `curl` is a
+  declared dependency of the `.deb`, Arch and Fedora packages.
+- **One fixed request**: `https://api.github.com/repos/FabioSM46/redline/releases/latest`, which
+  excludes drafts and prereleases, shortly after startup and every 24 hours while the app runs.
+- **GitHub sees the user's IP address once a day**, and nothing else is sent. `check_for_updates`
+  (on by default) turns it off, and then no request is made. The README says so.
+- **Only a strictly newer stable `major.minor.patch` is an update.** An equal or older version, a
+  build newer than the release or an unreadable tag or answer reports nothing.
+- **Nothing read from the network is opened or run.** `open_latest_release` opens a constant, not
+  the answer's `html_url`; only `tag_name` is read, and only as three numbers.
+- **A failed check is an outcome, never a dialog or a retry loop**: offline, rate limited (60
+  unauthenticated requests per hour per IP) or a bad answer shows in `update_status`, and the
+  next try is the next round.
+- **A dismissal holds one version**: a later version reports again.
+
+Rejected: the Tauri updater plugin and any in-app install (see above); a crate for HTTP or for the
+comparison (`reqwest` and its TLS stack, `semver` for three numbers); following prereleases or a
+channel selector; notifying from the tray or the desktop.

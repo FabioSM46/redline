@@ -8,7 +8,7 @@ pkgdesc='Control panel for AMD GPUs: live stats, tuning, instant replay and reco
 arch=('x86_64')
 url='https://github.com/FabioSM46/redline'
 license=('MIT')
-depends=('bash' 'gtk3' 'hicolor-icon-theme' 'libayatana-appindicator' 'polkit' 'webkit2gtk-4.1')
+depends=('bash' 'curl' 'gtk3' 'hicolor-icon-theme' 'libayatana-appindicator' 'polkit' 'webkit2gtk-4.1')
 makedepends=('cargo' 'jq' 'nodejs' 'pnpm' 'python')
 optdepends=('lact: fan, power and clock tuning'
             'ffmpeg: previews of saved clips'
