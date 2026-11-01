@@ -547,6 +547,7 @@ pub fn set_settings<R: Runtime>(
     let recording_changed = needs_restart(&current.recording, &saved.recording);
     let check_changed = saved.check_for_updates != current.check_for_updates;
     *current = saved.clone();
+    // Before `forget`, which takes the updates lock: see the lock order in `Updates::finish`.
     drop(current);
     if recording_changed {
         crate::recorder::settings_changed(&app);

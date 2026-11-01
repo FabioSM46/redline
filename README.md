@@ -96,8 +96,10 @@ sudo bash scripts/install-deps.sh
 ### Updates
 
 Redline looks for a newer release shortly after it starts and every 24 hours while it runs, with
-one request to `api.github.com`, so GitHub sees your IP address once a day. Nothing else is sent:
-no identifier, no statistics. A new version is announced with a link to its release page; download
+one request to `api.github.com`, so GitHub sees your IP address about once a day. If a check gets
+no answer, Redline tries once more about five minutes later; a check can reach GitHub and still
+get no answer, for example when the connection breaks halfway, so on such a day GitHub can see
+your IP address twice. Nothing else is sent: no identifier, no statistics. A new version is announced with a link to its release page; download
 and install it as before, Redline does not install it for you. The check can be turned off in
 settings (`check_for_updates`), and then no request is made.
 

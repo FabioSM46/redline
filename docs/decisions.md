@@ -359,18 +359,27 @@ would run an unverified download as root.
   declared dependency of the `.deb`, Arch and Fedora packages.
 - **One fixed request**: `https://api.github.com/repos/FabioSM46/redline/releases/latest`, which
   excludes drafts and prereleases, shortly after startup and every 24 hours while the app runs.
-- **GitHub sees the user's IP address once a day**, and nothing else is sent. `check_for_updates`
-  (on by default) turns it off: no request is made and what the checks found is forgotten, so no
-  notice outlives the opt-out. The README says so.
+- **GitHub sees the user's IP address about once a day**, and nothing else is sent. It can be
+  twice on a day with a retry: `unreachable` means no usable answer reached Redline, not that
+  nothing reached GitHub, and a timeout or a broken connection can come after the request left.
+  `check_for_updates` (on by default) turns it off: no request is made, no retry waits, and what
+  the checks found is forgotten, so no notice outlives the opt-out. A check still running at that
+  moment is dropped. The README says so.
 - **Only a strictly newer stable `major.minor.patch` is an update.** An equal or older version, a
   build newer than the release or an unreadable tag or answer reports nothing.
 - **Nothing read from the network is opened or run.** `open_latest_release` opens a constant, not
   the answer's `html_url`; only `tag_name` is read, and only as three numbers.
 - **A failed check is an outcome, never a dialog or a retry loop**: offline, rate limited (60
   unauthenticated requests per hour per IP) or a bad answer shows in `update_status`, and the
-  next try is the next round.
+  next try is the next round. **One exception, changed on purpose after the first version of this
+  decision:** a check that ends as `unreachable` gets one more check about five minutes later, so
+  an autostarted app that checks before the network is up does not stay silent for 24 hours of
+  running time. It is a single retry, not a loop: a failed retry gets no other, and the 24-hour
+  rounds do not move. `refused`, `bad_response` and `curl_missing` are never retried early: a rate
+  limit must be left alone, and the others will not change in five minutes.
 - **A dismissal holds one version**: a later version reports again.
 
 Rejected: the Tauri updater plugin and any in-app install (see above); a crate for HTTP or for the
 comparison (`reqwest` and its TLS stack, `semver` for three numbers); following prereleases or a
-channel selector; notifying from the tray or the desktop.
+channel selector; notifying from the tray or the desktop; backoff, several retries or waiting on
+a network-online signal.
