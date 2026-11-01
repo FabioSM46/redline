@@ -50,6 +50,9 @@ for file in "${EXPECTED_FILES[@]}"; do
   [ -e "$file" ] || fail "$file is missing"
 done
 
+# The update check runs it (D14).
+command -v curl >/dev/null || fail "curl is not installed"
+
 libraries=$(ldd "$BIN" 2>&1) || fail "ldd could not read $BIN"
 if grep -F 'not found' <<<"$libraries"; then
   fail "a library of $BIN does not resolve"

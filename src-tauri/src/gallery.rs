@@ -17,6 +17,7 @@
 //! - [`notify_saved`]: "Replay saved" / "Recording saved" with the file name, hooked on the
 //!   recorder's `file-saved`. No notification server means no notification, silently.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -221,10 +222,10 @@ pub fn resolve(folders: &Folders, id: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| UNKNOWN_ID.to_owned())
 }
 
-/// Starts `xdg-open` on `target` and reaps it in the background.
-fn xdg_open(target: &Path) -> Result<(), String> {
+/// Starts `xdg-open` on `target`, a path or a URL, and reaps it in the background.
+pub fn xdg_open(target: impl AsRef<OsStr>) -> Result<(), String> {
     let mut child = Command::new("xdg-open")
-        .arg(target)
+        .arg(target.as_ref())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
