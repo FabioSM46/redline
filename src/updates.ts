@@ -49,7 +49,7 @@ function failedCheck(lastCheck: Exclude<LastCheck, "never" | "ok">): string {
     case "curl_missing":
       return "The check needs curl, which is not installed. Install curl and restart Redline.";
     case "unreachable":
-      return "GitHub could not be reached. Check the network; Redline tries again once a day while it runs.";
+      return "GitHub could not be reached. Check the network; Redline tries again later while it runs.";
     case "refused":
       return "GitHub refused the check, usually because of its request limit. Redline tries again once a day while it runs.";
     case "bad_response":

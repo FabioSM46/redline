@@ -3,6 +3,23 @@
 What each published version of Redline contains. The plan is in the
 [roadmap](docs/roadmap.md), the release steps in [docs/release.md](docs/release.md).
 
+## 0.3.0 — 2026-11-01
+
+### Updates
+
+- Redline tells you when a newer release is on GitHub: a notice in the status bar and a Version row
+  in Settings → General, with a button that opens the release page. Redline installs nothing.
+- The notice can be dismissed and returns only for a later version.
+- The check runs about once a day while the app runs, and once more after a few minutes if GitHub
+  could not be reached. It can be turned off in Settings → General. GitHub sees your IP address;
+  nothing else is sent.
+- `curl` is now a dependency of every package.
+
+### Overdrive
+
+- The stop on fan, clock and profile changes after turning overdrive off now lasts until the reboot,
+  even if Redline restarts in between.
+
 ## 0.2.1 — 2026-10-31
 
 ### Packages

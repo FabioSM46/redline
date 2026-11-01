@@ -2,7 +2,7 @@
 # Built by scripts/build-distro-package.sh from the checkout, not from a download.
 
 pkgname=redline
-pkgver=0.2.1
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='Control panel for AMD GPUs: live stats, tuning, instant replay and recording'
 arch=('x86_64')

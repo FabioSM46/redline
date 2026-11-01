@@ -168,6 +168,9 @@ published `0.1.0` package unless a line says otherwise. All passed:
 Not run: a clean virtual machine, Ubuntu 26.04, Debian 13, the shortcuts on GNOME 48 or KDE, and
 the recovery routes of D13.
 
+For `0.3.0` (2026-11-01) no manual check was run: the update notice and the overdrive stop across a
+restart are covered by automated tests only, and the notice has not been seen in a running app.
+
 ## What CI checks on a tag
 
 The `install-check` job of `release.yml` runs `scripts/deb-clean-install.sh` on every tag, in clean
