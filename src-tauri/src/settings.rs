@@ -545,14 +545,16 @@ pub fn set_settings<R: Runtime>(
         settings,
     )?;
     let recording_changed = needs_restart(&current.recording, &saved.recording);
-    let check_turned_on = saved.check_for_updates && !current.check_for_updates;
+    let check_changed = saved.check_for_updates != current.check_for_updates;
     *current = saved.clone();
     drop(current);
     if recording_changed {
         crate::recorder::settings_changed(&app);
     }
-    if check_turned_on {
-        crate::updates::check_now(&app);
+    match (check_changed, saved.check_for_updates) {
+        (true, true) => crate::updates::check_now(&app),
+        (true, false) => crate::updates::forget(&app),
+        (false, _) => {}
     }
     Ok(saved)
 }

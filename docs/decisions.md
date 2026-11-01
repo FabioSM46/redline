@@ -353,7 +353,8 @@ would run an unverified download as root.
 - **One fixed request**: `https://api.github.com/repos/FabioSM46/redline/releases/latest`, which
   excludes drafts and prereleases, shortly after startup and every 24 hours while the app runs.
 - **GitHub sees the user's IP address once a day**, and nothing else is sent. `check_for_updates`
-  (on by default) turns it off, and then no request is made. The README says so.
+  (on by default) turns it off: no request is made and what the checks found is forgotten, so no
+  notice outlives the opt-out. The README says so.
 - **Only a strictly newer stable `major.minor.patch` is an update.** An equal or older version, a
   build newer than the release or an unreadable tag or answer reports nothing.
 - **Nothing read from the network is opened or run.** `open_latest_release` opens a constant, not

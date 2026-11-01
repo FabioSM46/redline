@@ -3,7 +3,8 @@
 //!
 //! - **Never blocks startup.** The thread starts in `setup`, checks [`FIRST_CHECK`] later and
 //!   every [`CHECK_EVERY`] while the app runs. With `check_for_updates` off a round makes no
-//!   request; turning it on checks at once ([`check_now`]).
+//!   request; turning it on checks at once ([`check_now`]) and turning it off forgets what the
+//!   checks found ([`forget`]), so no notice outlives the opt-out.
 //! - **A failed check is an outcome.** `update_status` and [`STATUS_EVENT`] report it in
 //!   `last_check`, the latest known version survives it, and the next try is the next round.
 //! - **`update_status()`** → `UpdateStatus { current_version, latest_version, update_available,
@@ -37,7 +38,7 @@ const CHECK_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LastCheck {
-    /// None has finished: too soon after startup, or the setting is off.
+    /// None has finished since the start or since the setting was last on.
     Never,
     Ok,
     CurlMissing,
@@ -132,6 +133,15 @@ impl Updates {
         }
     }
 
+    /// Back to the state before any check. `true` when something was known.
+    fn forget(&self) -> bool {
+        let mut known = self.known();
+        let changed = known.latest.is_some() || known.last_check != LastCheck::Never;
+        known.latest = None;
+        known.last_check = LastCheck::Never;
+        changed
+    }
+
     fn request_check(&self) {
         self.known().check_now = true;
         self.wake.notify_all();
@@ -168,14 +178,19 @@ trait Host {
     fn publish(&self, status: &UpdateStatus);
 }
 
-/// One check, unless the setting is off. Publishes only a status that changed.
+/// One check, unless the setting is off. An answer that arrives after the setting was turned off
+/// is dropped: [`forget`] has already run. Publishes only a status that changed.
 fn round(updates: &Updates, host: &impl Host) {
     if !host.enabled() {
         return;
     }
     let dismissed = host.dismissed();
     let before = updates.status(dismissed.as_deref());
-    updates.record(host.fetch());
+    let result = host.fetch();
+    if !host.enabled() {
+        return;
+    }
+    updates.record(result);
     let after = updates.status(dismissed.as_deref());
     if after != before {
         host.publish(&after);
@@ -242,6 +257,17 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) {
 pub fn check_now<R: Runtime>(app: &AppHandle<R>) {
     if let Some(updates) = app.try_state::<Arc<Updates>>() {
         updates.request_check();
+    }
+}
+
+/// `check_for_updates` was turned off: forgets what the checks found and says so.
+pub fn forget<R: Runtime>(app: &AppHandle<R>) {
+    let Some(updates) = app.try_state::<Arc<Updates>>() else {
+        return;
+    };
+    if updates.forget() {
+        let dismissed = AppHost(app.clone()).dismissed();
+        emit(app, &updates.status(dismissed.as_deref()));
     }
 }
 
@@ -510,6 +536,51 @@ mod tests {
         let published = host.published.lock().unwrap();
         let outcomes: Vec<_> = published.iter().map(|status| status.last_check).collect();
         assert_eq!(outcomes, [LastCheck::Ok, LastCheck::Refused]);
+    }
+
+    #[test]
+    fn turning_the_check_off_forgets_what_it_found() {
+        let updates = Updates::new("0.2.1".into());
+        assert!(!updates.forget());
+
+        updates.record(Ok(version("0.3.0")));
+        assert!(updates.forget());
+        let status = updates.status(Some("0.3.0"));
+        assert_eq!(status.latest_version, None);
+        assert!(!status.update_available);
+        assert!(!status.dismissed);
+        assert_eq!(status.last_check, LastCheck::Never);
+
+        updates.record(Err(CheckFailure::Refused));
+        assert!(updates.forget());
+        assert!(!updates.forget());
+    }
+
+    struct TurnedOffDuringFetch(Arc<Fake>);
+
+    impl Host for TurnedOffDuringFetch {
+        fn enabled(&self) -> bool {
+            self.0.enabled()
+        }
+        fn dismissed(&self) -> Option<String> {
+            None
+        }
+        fn fetch(&self) -> Result<Version, CheckFailure> {
+            self.0.enabled.store(false, Ordering::SeqCst);
+            self.0.fetch()
+        }
+        fn publish(&self, status: &UpdateStatus) {
+            self.0.publish(status);
+        }
+    }
+
+    #[test]
+    fn an_answer_that_arrives_after_turning_off_is_dropped() {
+        let host = Arc::new(Fake::new(true));
+        let updates = Updates::new("0.2.1".into());
+        round(&updates, &TurnedOffDuringFetch(host.clone()));
+        assert_eq!(updates.status(None).latest_version, None);
+        assert!(host.published.lock().unwrap().is_empty());
     }
 
     /// A fake `curl` that records every run, as the real client finds and starts it.
