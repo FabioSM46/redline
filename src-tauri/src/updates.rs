@@ -161,9 +161,14 @@ impl Updates {
     ///
     /// All of it holds the lock. The setting goes off before `forget` runs, so a result that
     /// passes the test here is either forgotten by a `forget` that waits for this lock, with its
-    /// event after this one, or not touched at all. `set_settings` releases its own lock before
-    /// `forget`, and an emit only queues a script, so neither waits for this lock while this
-    /// holds it.
+    /// event after this one, or not touched at all.
+    ///
+    /// Two rules keep this free of deadlocks, and nothing but this note enforces them. The lock
+    /// order is `known`, then the settings lock: no code may reach `known` with a settings guard
+    /// alive, and `set_settings` drops its guard before `forget` for that reason. `publish` must
+    /// not wait for the main thread, where commands that take this lock run: Tauri's emit from
+    /// another thread only queues a script, unless its `tracing` feature is on, which makes it
+    /// wait for the answer. Recheck this on a Tauri update or a new feature flag.
     fn finish(
         &self,
         generation: u64,
