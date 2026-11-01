@@ -28,7 +28,11 @@ export type UpdateRow = {
   message: string | null;
 };
 
-/** The version the status bar names, or null to show nothing, whatever the last check did. */
+/**
+ * The version the status bar names, or null to show nothing, whatever the last check did. It does
+ * not read `check_for_updates`, unlike `updateRow`: turning the check off makes the backend forget
+ * the version and send `update-status`, which clears this.
+ */
 export function indicatorVersion(update: Loaded<UpdateStatus>): string | null {
   if (update.status !== "ready") return null;
   const { update_available, dismissed, latest_version } = update.value;

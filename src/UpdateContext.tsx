@@ -12,11 +12,14 @@ export type UpdateContextValue = {
   update: Loaded<UpdateStatus>;
   /** An action is running: buttons stay focusable but ignore input. */
   busy: boolean;
-  /** Why the last action failed, until the next action; never a failed check. */
+  /** Why the last action failed, for ACTION_ERROR_MS or until the next action; never a failed check. */
   actionError: string | null;
   openRelease: () => void;
   dismiss: () => void;
 };
+
+/** How long a failed action stays on screen: the status bar has no way to close it. */
+const ACTION_ERROR_MS = 15000;
 
 const UpdateContext = createContext<UpdateContextValue | null>(null);
 
@@ -76,6 +79,12 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (actionError === null) return;
+    const timer = window.setTimeout(() => setActionError(null), ACTION_ERROR_MS);
+    return () => window.clearTimeout(timer);
+  }, [actionError]);
 
   const run = useCallback((action: () => Promise<UpdateStatus | void>, failure: string) => {
     if (busyRef.current) return;
