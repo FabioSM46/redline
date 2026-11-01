@@ -1,20 +1,27 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { applyTheme, parseThemeSetting, THEME_OPTIONS, type ThemeSetting } from "../../theme.ts";
+import { useUpdates } from "../../UpdateContext.tsx";
+import { updateRow } from "../../updates.ts";
 import { IDLE, type Loaded, type SaveState, Setting, Value } from "./Setting.tsx";
 
 /** `Settings` in src-tauri/src/settings.rs, as `get_settings` / `set_settings` return it. */
-type Settings = { theme: ThemeSetting; start_minimised: boolean };
+type Settings = { theme: ThemeSetting; start_minimised: boolean; check_for_updates: boolean };
 
-function toSettings(raw: { theme: unknown; start_minimised: unknown }): Settings {
-  return { theme: parseThemeSetting(raw.theme), start_minimised: raw.start_minimised === true };
+function toSettings(raw: { theme: unknown; start_minimised: unknown; check_for_updates: unknown }): Settings {
+  return {
+    theme: parseThemeSetting(raw.theme),
+    start_minimised: raw.start_minimised === true,
+    check_for_updates: raw.check_for_updates === true,
+  };
 }
 
-/** Theme, start with the system, start minimised to the tray (D8). */
+/** Theme, start with the system, start minimised to the tray (D8), and the update check (D14). */
 export function General() {
   const [settings, setSettings] = useState<Loaded<Settings>>({ status: "loading" });
   const [themeSave, setThemeSave] = useState<SaveState>(IDLE);
   const [minimisedSave, setMinimisedSave] = useState<SaveState>(IDLE);
+  const [updateCheckSave, setUpdateCheckSave] = useState<SaveState>(IDLE);
   const [autostart, setAutostart] = useState<Loaded<boolean>>({ status: "loading" });
   const [autostartSave, setAutostartSave] = useState<SaveState>(IDLE);
   const trayAvailable = useTrayAvailable();
@@ -35,11 +42,13 @@ export function General() {
       .catch((e) => setAutostart({ status: "error", message: String(e) }));
   }, []);
 
-  // Theme and start minimised travel together in one `set_settings` call, so both controls are
-  // busy while either saves: a second change never overwrites the first with stale values.
+  // Theme, start minimised and the update check travel together in one `set_settings` call, so all
+  // the controls are busy while one saves: a second change never overwrites the first with stale
+  // values.
   // Busy is `aria-disabled` plus an early return, not `disabled`, so keyboard focus stays on the
   // control. On failure the shown value stays the previous one and the error sits next to it.
-  const settingsBusy = themeSave.status === "saving" || minimisedSave.status === "saving";
+  const settingsBusy =
+    themeSave.status === "saving" || minimisedSave.status === "saving" || updateCheckSave.status === "saving";
 
   // The error handler is the second argument of `then`, not a `.catch`: only a failed
   // `set_settings` means "Not saved", never a problem after the backend accepted the save.
@@ -131,7 +140,60 @@ export function General() {
           “AppIndicator and KStatusNotifierItem Support”); this notice goes away once the icon is shown.
         </p>
       )}
+
+      <Setting
+        title="Check for updates"
+        description="Once a day Redline asks GitHub for the latest release. GitHub sees your IP address, and nothing else is sent."
+        save={updateCheckSave}
+      >
+        <Value state={settings} what="this setting">
+          {(current) => (
+            <Toggle
+              label="Check for updates"
+              checked={current.check_for_updates}
+              busy={settingsBusy}
+              onChange={(check_for_updates) => saveSettings({ ...current, check_for_updates }, setUpdateCheckSave)}
+            />
+          )}
+        </Value>
+      </Setting>
+
+      <UpdateVersions checkEnabled={settings.status === "ready" ? settings.value.check_for_updates : null} />
     </div>
+  );
+}
+
+/** The installed version, the available one with its release page, and how the last check ended. */
+function UpdateVersions({ checkEnabled }: { checkEnabled: boolean | null }) {
+  const { update, busy, actionError, openRelease, dismiss } = useUpdates();
+  const row = updateRow(update, checkEnabled);
+  return (
+    <>
+      <Setting
+        title="Version"
+        description={row.installed === null ? "Installed version not known yet." : `Installed version ${row.installed}.`}
+        save={IDLE}
+        note={row.message}
+      >
+        {row.available !== null && (
+          <span className="update-actions">
+            {row.canDismiss && (
+              <button type="button" className="link-button" aria-disabled={busy} onClick={dismiss}>
+                Dismiss
+              </button>
+            )}
+            <button type="button" className="button" aria-disabled={busy} onClick={openRelease}>
+              Open release page
+            </button>
+          </span>
+        )}
+      </Setting>
+      {actionError !== null && (
+        <p className="setting-error" role="alert">
+          {actionError}
+        </p>
+      )}
+    </>
   );
 }
 

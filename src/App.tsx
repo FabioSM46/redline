@@ -8,6 +8,7 @@ import { Record } from "./sections/Record.tsx";
 import { Settings } from "./sections/Settings.tsx";
 import { Mark, TopBar } from "./shell/TopBar.tsx";
 import { StatusBar } from "./shell/StatusBar.tsx";
+import { UpdateProvider } from "./UpdateContext.tsx";
 import type { Navigate, SectionProps, SettingsTabId, TabId } from "./tabs.ts";
 
 /** One component per tab: each section fills its own file without touching the shell. */
@@ -46,13 +47,15 @@ function App() {
   return (
     <GpuProvider value={gpus.value}>
       <RecorderProvider>
-        <div className="shell">
-          <TopBar active={tab} onSelect={(next) => navigate(next)} />
-          <main className="content">
-            <Section navigate={navigate} settingsTab={settingsTab} />
-          </main>
-          <StatusBar />
-        </div>
+        <UpdateProvider>
+          <div className="shell">
+            <TopBar active={tab} onSelect={(next) => navigate(next)} />
+            <main className="content">
+              <Section navigate={navigate} settingsTab={settingsTab} />
+            </main>
+            <StatusBar />
+          </div>
+        </UpdateProvider>
       </RecorderProvider>
     </GpuProvider>
   );

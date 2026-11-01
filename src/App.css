@@ -244,6 +244,12 @@ body {
   color: var(--fg);
 }
 
+.update-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space);
+}
+
 .setting-select {
   padding: calc(var(--space-sm) / 2) var(--space-sm);
   border: var(--border-width) solid var(--border);
@@ -504,6 +510,38 @@ body {
   margin-left: auto;
 }
 
+/* Muted like the status bar's other controls: an update is information, not an alarm. It gives way
+ * first when the bar runs out of room, so the GPU readings keep their place. */
+.statusbar-update {
+  display: inline-flex;
+  flex: 0 1000 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  margin-left: auto;
+}
+
+.statusbar-update + .statusbar-recorder {
+  margin-left: 0;
+}
+
+.statusbar-update-open {
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.statusbar-update-dismiss {
+  flex-shrink: 0;
+}
+
+.statusbar-update .statusbar-error {
+  flex-shrink: 0;
+}
+
+.statusbar-update-open,
+.statusbar-update-dismiss,
 .statusbar-replay {
   padding: 0;
   border: 0;
@@ -514,6 +552,8 @@ body {
   cursor: pointer;
 }
 
+.statusbar-update-open:hover,
+.statusbar-update-dismiss:hover,
 .statusbar-replay:hover,
 .statusbar-replay[data-state="starting"] {
   color: var(--fg);
@@ -529,11 +569,15 @@ body {
   font-weight: 600;
 }
 
+.statusbar-update-open[aria-disabled="true"],
+.statusbar-update-dismiss[aria-disabled="true"],
 .statusbar-replay[aria-disabled="true"] {
   cursor: default;
   opacity: 0.6;
 }
 
+.statusbar-update-open:focus-visible,
+.statusbar-update-dismiss:focus-visible,
 .statusbar-replay:focus-visible,
 .link-button:focus-visible {
   outline: var(--indicator) solid var(--accent);
