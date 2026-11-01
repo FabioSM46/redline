@@ -439,13 +439,14 @@ impl Lact {
         if let Some(folder) = file.parent() {
             fs::create_dir_all(folder)?;
         }
-        let tmp = file.with_extension(format!("tmp.{}", std::process::id()));
-        fs::write(&tmp, boot)?;
-        let renamed = fs::rename(&tmp, file);
-        if renamed.is_err() {
+        // A fixed name: Redline is single-instance, and a crash leaves one file the next save
+        // replaces.
+        let tmp = file.with_extension("tmp");
+        let saved = fs::write(&tmp, boot).and_then(|()| fs::rename(&tmp, file));
+        if saved.is_err() {
             let _ = fs::remove_file(&tmp);
         }
-        renamed
+        saved
     }
 
     /// Forgets the saved stop. If the file cannot go the stop comes back at the next start of
@@ -1625,6 +1626,17 @@ mod tests {
             service.restarted().inner.overdrive.refuse_while_disabling(),
             Ok(())
         );
+    }
+
+    #[test]
+    fn a_save_replaces_what_a_crash_left_behind() {
+        let service = Service::on("leftover", vec![]);
+        fs::create_dir_all(service.stop_file().parent().unwrap()).unwrap();
+        let tmp = service.stop_file().with_extension("tmp");
+        fs::write(&tmp, "boot-0").unwrap();
+        service.disable();
+        assert!(!tmp.exists());
+        assert_eq!(fs::read_to_string(service.stop_file()).unwrap(), "boot-1");
     }
 
     #[test]
