@@ -143,7 +143,7 @@ export function General() {
 
       <Setting
         title="Check for updates"
-        description="Once a day Redline asks GitHub for the latest release. GitHub sees your IP address, and nothing else is sent."
+        description="About once a day Redline asks GitHub for the latest release. GitHub sees your IP address, and nothing else is sent."
         save={updateCheckSave}
       >
         <Value state={settings} what="this setting">

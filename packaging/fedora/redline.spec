@@ -2,7 +2,7 @@
 %global debug_package %{nil}
 
 Name:           redline
-Version:        0.2.1
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        Control panel for AMD GPUs: live stats, tuning, instant replay and recording
 License:        MIT
