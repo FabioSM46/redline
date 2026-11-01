@@ -252,10 +252,17 @@ B, #56): **Redline may ask `lactd` to enable or disable it, after an explicit co
   reset inside the disable request would confirm on the user's behalf.
 - **From the disable until the reboot, nothing that needs overdrive can be set.** The running
   kernel keeps it, so `set_fan` on a firmware fan (other than back to automatic), `set_clocks` and `activate_profile`
-  would be accepted and left stored for a boot without it. The stop lives in the session, like
-  `reboot_pending`. Only an answer that proves nothing changed lifts it: lactd unreachable, or its
-  refusals that come before it touches anything. A timeout, "already toggled", an initramfs failure
-  or an unreadable answer all keep it.
+  would be accepted and left stored for a boot without it. Only an answer that proves nothing
+  changed lifts the stop: lactd unreachable, or its refusals that come before it touches anything,
+  matched whole. A timeout, "already toggled", an initramfs failure or an unreadable answer all
+  keep it; an accepted enable and a new boot end it.
+- **The stop outlives a restart of Redline** (#127), because the risk lasts until the reboot. It
+  is stored, not derived: `overdrive-stop` in `app_data_dir()` holds the kernel's boot id
+  (`/proc/sys/kernel/random/boot_id`), written before the request leaves; if it cannot be written
+  the disable is refused. At start another boot's id removes the file, and a file or boot id that
+  cannot be read keeps the stop. The running bit against LACT's modprobe file cannot do this: a
+  missing file also describes overdrive set by hand, and `rpm-ostree` has no such file.
+  `reboot_pending` stays a session value: after a restart lactd's "already toggled" sets it again.
 - Known limits: lactd holds its one pending change in memory with no request to read it, so one
   left by the LACT app is invisible here; and LACT's automatic profile switching can activate a
   saved profile later, which the plan says.
@@ -336,3 +343,43 @@ D8); a positive voltage offset behind a second warning (a confirmation does not 
 per-GPU list of supported models (the table already says it, and a list goes stale); applying
 values on Redline's start instead of confirming them in lactd (Redline would have to run for the
 tuning to hold, and it would be a second store of the same values).
+
+## D14 — Updates: Redline notifies and links, it does not install (2026-11-01)
+
+Redline finds out that a newer release is published and shows the release page. Installing stays
+the user's act, through their package manager.
+
+The packages install as root, Redline never runs as root, `install-dependency` accepts only fixed
+tool names (never a URL, a path or a command), and the packages are unsigned: an in-app install
+would run an unverified download as root.
+
+- **The check is `curl` as an external process**, following D2 and the rule that a missing tool is
+  a disabled feature. It is the app's first outbound HTTP call, and no HTTP or TLS library is
+  compiled in: `curl` costs a package dependency, a crate would cost a TLS stack. `curl` is a
+  declared dependency of the `.deb`, Arch and Fedora packages.
+- **One fixed request**: `https://api.github.com/repos/FabioSM46/redline/releases/latest`, which
+  excludes drafts and prereleases, shortly after startup and every 24 hours while the app runs.
+- **GitHub sees the user's IP address about once a day**, and nothing else is sent. It can be
+  twice on a day with a retry: `unreachable` means no usable answer reached Redline, not that
+  nothing reached GitHub, and a timeout or a broken connection can come after the request left.
+  `check_for_updates` (on by default) turns it off: no request is made, no retry waits, and what
+  the checks found is forgotten, so no notice outlives the opt-out. A check still running at that
+  moment is dropped. The README says so.
+- **Only a strictly newer stable `major.minor.patch` is an update.** An equal or older version, a
+  build newer than the release or an unreadable tag or answer reports nothing.
+- **Nothing read from the network is opened or run.** `open_latest_release` opens a constant, not
+  the answer's `html_url`; only `tag_name` is read, and only as three numbers.
+- **A failed check is an outcome, never a dialog or a retry loop**: offline, rate limited (60
+  unauthenticated requests per hour per IP) or a bad answer shows in `update_status`, and the
+  next try is the next round. **One exception, changed on purpose after the first version of this
+  decision:** a check that ends as `unreachable` gets one more check about five minutes later, so
+  an autostarted app that checks before the network is up does not stay silent for 24 hours of
+  running time. It is a single retry, not a loop: a failed retry gets no other, and the 24-hour
+  rounds do not move. `refused`, `bad_response` and `curl_missing` are never retried early: a rate
+  limit must be left alone, and the others will not change in five minutes.
+- **A dismissal holds one version**: a later version reports again.
+
+Rejected: the Tauri updater plugin and any in-app install (see above); a crate for HTTP or for the
+comparison (`reqwest` and its TLS stack, `semver` for three numbers); following prereleases or a
+channel selector; notifying from the tray or the desktop; backoff, several retries or waiting on
+a network-online signal.

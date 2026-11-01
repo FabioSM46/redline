@@ -2,7 +2,7 @@
 %global debug_package %{nil}
 
 Name:           redline
-Version:        0.2.1
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        Control panel for AMD GPUs: live stats, tuning, instant replay and recording
 License:        MIT
@@ -13,7 +13,7 @@ ExclusiveArch:  x86_64
 BuildRequires:  cargo gcc jq libayatana-appindicator-gtk3-devel librsvg2-devel libxdo-devel
 BuildRequires:  nodejs openssl-devel perl-FindBin perl-File-Compare perl-IPC-Cmd pkgconf pnpm
 BuildRequires:  python3 rust webkit2gtk4.1-devel
-Requires:       hicolor-icon-theme libayatana-appindicator-gtk3 polkit
+Requires:       curl hicolor-icon-theme libayatana-appindicator-gtk3 polkit
 Recommends:     ffmpeg-free mangohud
 
 %description

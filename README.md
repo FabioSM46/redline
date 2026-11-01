@@ -26,6 +26,7 @@ comes next.
 | In-game overlay (FPS, frametime, temperatures) | [MangoHud](https://github.com/flightlessmango/MangoHud), configured by Redline |
 | Tuning: fans, power limit, profiles, clocks and undervolt | the [LACT](https://github.com/ilya-zlobintsev/LACT) daemon (`lactd`) through its socket |
 | Instant replay and recording, with audio on separate tracks | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/about/) as an external process, with hardware encoding |
+| Notice of a newer release | `curl` asks GitHub for the latest release about once a day; Redline links to it and installs nothing |
 
 Redline does not rewrite these tools: it coordinates them behind a single interface. The why is in
 [docs/context.md](docs/context.md), the choices in [docs/decisions.md](docs/decisions.md).
@@ -81,6 +82,7 @@ from Flathub, and first installs Flatpak and adds the Flathub remote if they are
   with a warning)
 - For previews of saved clips: ffmpeg
 - For the in-game overlay: MangoHud
+- For the update check: `curl`, which the packages depend on
 
 From a source checkout, `scripts/install-deps.sh` runs the same helper as the guided install:
 LACT (the official package of the pinned version above), GPU
@@ -90,6 +92,16 @@ package on Ubuntu, Debian and Fedora, and the distribution's on Arch and its der
 ```bash
 sudo bash scripts/install-deps.sh
 ```
+
+### Updates
+
+Redline looks for a newer release shortly after it starts and every 24 hours while it runs, with
+one request to `api.github.com`, so GitHub sees your IP address about once a day. If a check gets
+no answer, Redline tries once more about five minutes later; a check can reach GitHub and still
+get no answer, for example when the connection breaks halfway, so on such a day GitHub can see
+your IP address twice. Nothing else is sent: no identifier, no statistics. A new version is announced with a link to its release page; download
+and install it as before, Redline does not install it for you. The check can be turned off in
+settings (`check_for_updates`), and then no request is made.
 
 ### Overdrive
 
