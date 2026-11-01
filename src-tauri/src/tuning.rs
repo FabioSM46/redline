@@ -254,6 +254,9 @@ pub fn version_notice(version: &str) -> Option<String> {
     })
 }
 
+/// The kernel's random id of this boot: it changes at every boot and at no other time.
+const BOOT_ID_FILE: &str = "/proc/sys/kernel/random/boot_id";
+
 /// Where LACT is reached and where it is looked for. Tests pass a fake socket and PATH.
 pub struct Lact {
     client: LactClient,
@@ -262,6 +265,11 @@ pub struct Lact {
     drm: PathBuf,
     /// The file LACT writes to enable overdrive; tests pass a temporary one.
     modprobe_file: PathBuf,
+    /// Where the stop on overdrive setters survives a restart ([`overdrive::STOP_FILE`]); without
+    /// it the stop lasts the session.
+    overdrive_stop: Option<PathBuf>,
+    /// The kernel's id of this boot; tests pass a temporary one.
+    boot_id_file: PathBuf,
 }
 
 impl Lact {
@@ -271,6 +279,8 @@ impl Lact {
             search_path,
             drm: PathBuf::from(redline_core::sensors::DRM_ROOT),
             modprobe_file: PathBuf::from(lact::OVERDRIVE_MODPROBE_FILE),
+            overdrive_stop: None,
+            boot_id_file: PathBuf::from(BOOT_ID_FILE),
         }
     }
 
@@ -285,6 +295,19 @@ impl Lact {
     #[cfg(test)]
     pub fn with_modprobe_file(mut self, file: impl Into<PathBuf>) -> Self {
         self.modprobe_file = file.into();
+        self
+    }
+
+    /// The same, reading the boot id from `file`.
+    #[cfg(test)]
+    pub fn with_boot_id_file(mut self, file: impl Into<PathBuf>) -> Self {
+        self.boot_id_file = file.into();
+        self
+    }
+
+    /// The same, keeping the stop on overdrive setters in `file`.
+    pub fn with_overdrive_stop(mut self, file: impl Into<PathBuf>) -> Self {
+        self.overdrive_stop = Some(file.into());
         self
     }
 
@@ -607,6 +630,7 @@ pub struct Tuning {
 
 impl Tuning {
     pub fn new(lact: Lact, clock: Arc<dyn Clock>, events: Arc<dyn Events>) -> Self {
+        let overdrive = overdrive::Overdrive::restore(&lact);
         Tuning {
             inner: Arc::new(Inner {
                 lact,
@@ -614,7 +638,7 @@ impl Tuning {
                 events,
                 control: Mutex::new(()),
                 state: Mutex::new(PendingState::default()),
-                overdrive: overdrive::Overdrive::default(),
+                overdrive,
             }),
         }
     }
@@ -875,10 +899,19 @@ impl Tuning {
     }
 }
 
-/// Registers the service. Nothing is contacted until the first command.
+/// Registers the service. `lactd` is not contacted until the first command.
 pub fn init(app: &mut App) {
     let events = Arc::new(AppEvents(app.handle().clone()));
-    app.manage(Tuning::new(Lact::system(), Arc::new(SystemClock), events));
+    let lact = match app.path().app_data_dir() {
+        Ok(dir) => Lact::system().with_overdrive_stop(dir.join(overdrive::STOP_FILE)),
+        Err(error) => {
+            eprintln!(
+                "redline: data folder not available, the overdrive stop lasts the session: {error}"
+            );
+            Lact::system()
+        }
+    };
+    app.manage(Tuning::new(lact, Arc::new(SystemClock), events));
 }
 
 /// When the app quits: reverts a change still waiting for confirmation.
