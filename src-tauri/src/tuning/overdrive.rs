@@ -26,6 +26,14 @@
 //! keeps overdrive until the reboot and would accept them. Nothing is reset on the user's behalf:
 //! each item is one pending change the user keeps or reverts.
 //!
+//! # The stop outlives a restart of Redline
+//!
+//! The risk lasts until the reboot, so the stop does too: [`STOP_FILE`] holds the kernel's boot id
+//! from before the request leaves, and [`Overdrive::restore`] reads it at start. Another boot id
+//! means the machine rebooted, and the file goes. It is stored and not derived from the running
+//! bit against LACT's modprobe file: a missing file also describes overdrive set by hand, which
+//! nobody asked to turn off, and `rpm-ostree` has no such file at all.
+//!
 //! Verified at LACT `v0.10.1`:
 //!
 //! - `get_gpu_config` reads `Config::gpus`, which is the active profile's copy when a profile is
@@ -49,8 +57,9 @@ use redline_core::lact::{
 };
 use serde::Serialize;
 use std::collections::hash_map::RandomState;
+use std::fs;
 use std::hash::{BuildHasher, Hasher};
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind};
 use std::sync::Mutex;
 use tauri::State;
 
@@ -76,6 +85,8 @@ pub const PENDING_FIRST: &str = "Overdrive was not changed: a tuning change is s
     an answer. Keep or revert it first.";
 pub const DISABLE_UNDER_WAY: &str = "Overdrive is being turned off for the next boot, so nothing \
     that needs it can be set now. Reboot first.";
+pub const STOP_NOT_SAVED: &str = "Overdrive was not changed: Redline could not save that it is \
+    being turned off, so a restart would lift the stop on fan and clock changes.";
 pub const SAVED_PROFILES: &str = "Saved profiles that are not active keep their values and do \
     not block this; a fan curve or clock value in one comes back if you activate it.";
 pub const AUTO_SWITCH: &str = "LACT is switching profiles automatically, so one of them can \
@@ -92,6 +103,15 @@ pub const STILL_RUNNING: &str = "LACT may still be updating the boot files after
 /// request sent while the timed-out one still runs would start a second initramfs regeneration
 /// next to the first. As long as the request's own timeout: by then lactd has had twice that.
 pub const STALLED_COOLDOWN_MS: u64 = 10 * 60 * 1000;
+
+/// The file in the app's data folder that keeps the stop on setters across a restart of Redline:
+/// the boot id of the boot it applies to.
+pub const STOP_FILE: &str = "overdrive-stop";
+
+/// The start of lactd 0.10.1's refusal when its modprobe file is missing. The end names the file.
+const NOT_ENABLED_REFUSAL: &str = "Overclocking was not enabled through LACT (file at ";
+/// lactd 0.10.1's refusal on NixOS, whole: it has no source and nothing is chained to it.
+const NIXOS_REFUSAL: &str = "Overdrive should be toggled through system config on NixOS";
 
 /// What a plan does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -161,7 +181,7 @@ struct HandshakeState {
     busy: bool,
     /// A disable reached lactd or may have: from then until the reboot nothing that needs
     /// overdrive may be set. Only an answer that proves nothing changed lifts it
-    /// ([`proves_nothing_changed`]).
+    /// ([`proves_nothing_changed`]), an accepted enable, or a new boot. Saved in [`STOP_FILE`].
     disabling: bool,
     /// A request timed out: until then lactd may still be running it.
     stalled_until_ms: Option<u64>,
@@ -169,12 +189,21 @@ struct HandshakeState {
 }
 
 /// The overdrive handshake's state, inside the tuning service.
-#[derive(Default)]
 pub struct Overdrive {
     state: Mutex<HandshakeState>,
 }
 
 impl Overdrive {
+    /// The handshake at start, with the stop of an earlier run if it still applies.
+    pub(super) fn restore(lact: &Lact) -> Self {
+        Overdrive {
+            state: Mutex::new(HandshakeState {
+                disabling: lact.saved_stop_holds(),
+                ..HandshakeState::default()
+            }),
+        }
+    }
+
     /// Overdrive was changed through Redline in this session and waits for a reboot.
     pub fn reboot_pending(&self) -> bool {
         lock(&self.state).reboot_pending
@@ -333,10 +362,10 @@ fn refusal(lact: &Lact, error: &LactError) -> (String, bool) {
         LactError::Daemon(message) if message.contains("mask already enabled") => {
             (ALREADY_ENABLED.to_owned(), false)
         }
-        LactError::Daemon(message) if message.contains("not enabled through LACT") => {
+        LactError::Daemon(message) if is_not_enabled_refusal(message) => {
             (NOT_ENABLED_BY_LACT.to_owned(), false)
         }
-        LactError::Daemon(message) if message.contains("NixOS") => {
+        LactError::Daemon(message) if message == NIXOS_REFUSAL => {
             (NO_CONFIGURATOR.to_owned(), false)
         }
         LactError::Daemon(message) => {
@@ -349,22 +378,90 @@ fn refusal(lact: &Lact, error: &LactError) -> (String, bool) {
     }
 }
 
+/// `message` is lactd's refusal for a modprobe file that does not exist, and nothing else.
+fn is_not_enabled_refusal(message: &str) -> bool {
+    message.starts_with(NOT_ENABLED_REFUSAL) && message.ends_with(" does not exist)")
+}
+
 /// `error` proves a disable changed nothing, so the stop on setters can go. The request never
 /// reached lactd, or lactd refused before touching anything: its two refusals that come first in
-/// `disable_overdrive` at `v0.10.1`. Anything else keeps the stop. "Already toggled" means
-/// overdrive changed since lactd started. An error from the initramfs comes after the modprobe
-/// file is gone. A transport or decoding error may have followed a finished request.
+/// `disable_overdrive` at `v0.10.1`, matched whole, because a failed `rpm-ostree` or initramfs
+/// command chains its own output to the message and that output can hold any word. Anything else
+/// keeps the stop. "Already toggled" means overdrive changed since lactd started. An error from
+/// the initramfs comes after the modprobe file is gone. A transport or decoding error may have
+/// followed a finished request.
 fn proves_nothing_changed(error: &LactError) -> bool {
     match error {
         LactError::SocketMissing | LactError::NotRunning | LactError::PermissionDenied => true,
-        LactError::Daemon(message) => {
-            message.contains("not enabled through LACT") || message.contains("NixOS")
-        }
+        LactError::Daemon(message) => is_not_enabled_refusal(message) || message == NIXOS_REFUSAL,
         LactError::Io(_) | LactError::Protocol(_) => false,
     }
 }
 
 impl Lact {
+    /// The kernel's id of this boot. An empty one identifies nothing, so it is an error.
+    fn boot_id(&self) -> io::Result<String> {
+        let id = fs::read_to_string(&self.boot_id_file)?;
+        let id = id.trim();
+        if id.is_empty() {
+            return Err(ErrorKind::InvalidData.into());
+        }
+        Ok(id.to_owned())
+    }
+
+    /// A stop saved by an earlier run still applies. Only a readable file with another boot's id
+    /// proves a reboot, and only then does the file go (a torn or foreign file is another id).
+    /// A file or a boot id that cannot be read proves nothing, so the stop stays.
+    fn saved_stop_holds(&self) -> bool {
+        let Some(file) = &self.overdrive_stop else {
+            return false;
+        };
+        let saved = match fs::read(file) {
+            Ok(saved) => saved,
+            Err(error) if error.kind() == ErrorKind::NotFound => return false,
+            Err(_) => return true,
+        };
+        let rebooted = self
+            .boot_id()
+            .is_ok_and(|boot| boot.as_bytes() != saved.trim_ascii());
+        if rebooted {
+            self.clear_stop();
+        }
+        !rebooted
+    }
+
+    /// Saves the stop for this boot, atomically. Without a data folder it lasts the session.
+    fn save_stop(&self) -> io::Result<()> {
+        let Some(file) = &self.overdrive_stop else {
+            return Ok(());
+        };
+        let boot = self.boot_id()?;
+        if let Some(folder) = file.parent() {
+            fs::create_dir_all(folder)?;
+        }
+        let tmp = file.with_extension(format!("tmp.{}", std::process::id()));
+        fs::write(&tmp, boot)?;
+        let renamed = fs::rename(&tmp, file);
+        if renamed.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        renamed
+    }
+
+    /// Forgets the saved stop. If the file cannot go the stop comes back at the next start of
+    /// this boot, which errs on the safe side.
+    fn clear_stop(&self) {
+        let Some(file) = &self.overdrive_stop else {
+            return;
+        };
+        match fs::remove_file(file) {
+            Err(error) if error.kind() != ErrorKind::NotFound => {
+                eprintln!("redline: could not remove the saved overdrive stop: {error}");
+            }
+            _ => {}
+        }
+    }
+
     /// What depends on overdrive on every GPU, read from what lactd stores now, and the note on
     /// saved profiles. An answer that cannot be read is an error, never an empty list.
     fn overdrive_dependencies(&self) -> Result<(Vec<OverdriveDependency>, Option<String>), String> {
@@ -481,6 +578,11 @@ impl Tuning {
         if !dependencies.is_empty() {
             return Err(DEPENDS_ON_IT.to_owned());
         }
+        // Saved before the request leaves: a restart during it must find the stop.
+        self.inner
+            .lact
+            .save_stop()
+            .map_err(|_| STOP_NOT_SAVED.to_owned())?;
         lock(&self.inner.overdrive.state).disabling = true;
         Ok(())
     }
@@ -540,12 +642,16 @@ impl Tuning {
             && sent.as_ref().is_err_and(proves_nothing_changed)
         {
             state.disabling = false;
+            lact.clear_stop();
         }
         match sent {
             Ok(()) => {
                 state.reboot_pending = true;
                 // lactd accepted an enable for the next boot: no earlier disable stands.
-                state.disabling &= action != OverdriveAction::Enable;
+                if action == OverdriveAction::Enable {
+                    state.disabling = false;
+                    lact.clear_stop();
+                }
                 Ok(OverdriveResult {
                     reboot_required: true,
                 })
@@ -612,6 +718,7 @@ mod tests {
     use redline_core::lact::{DeviceType, LactClient, VERIFIED_VERSION};
     use serde_json::{Value, json};
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -619,6 +726,9 @@ mod tests {
     const GPU_B: &str = "1002:7550-1043:0643-0000:0d:00.0";
     const SLOT_A: &str = "0000:0c:00.0";
     const SLOT_B: &str = "0000:0d:00.0";
+    /// lactd 0.10.1's refusal, word for word.
+    const NOT_ENABLED_MESSAGE: &str = "Overclocking was not enabled through LACT (file at \
+        /etc/modprobe.d/99-amdgpu-overdrive.conf does not exist)";
 
     /// A plan's token, for a plan that must have one.
     fn token(plan: &OverdrivePlan) -> &str {
@@ -799,6 +909,19 @@ mod tests {
     }
 
     impl Service {
+        /// A `Lact` on this machine's fake files; the stop's folder does not exist yet.
+        fn lact(setup: &Setup, overdrive_timeout: Duration) -> Lact {
+            Lact::new(
+                LactClient::new(setup.socket())
+                    .with_timeout(TIMEOUT)
+                    .with_overdrive_timeout(overdrive_timeout),
+                std::ffi::OsString::new(),
+            )
+            .with_modprobe_file(setup.socket().with_file_name("overdrive.conf"))
+            .with_boot_id_file(setup.socket().with_file_name("boot_id"))
+            .with_overdrive_stop(setup.socket().with_file_name("data").join(STOP_FILE))
+        }
+
         fn start(name: &str, overdrive_timeout: Duration) -> Self {
             let setup = Setup::new(&format!("overdrive-{name}"));
             let daemon = Arc::new(Mutex::new(Daemon {
@@ -820,15 +943,9 @@ mod tests {
             }));
             let lactd = FakeLactd::start(&setup.socket(), lactd(daemon.clone()));
             let clock = Arc::new(ManualClock::default());
-            let modprobe_file = setup.socket().with_file_name("overdrive.conf");
-            std::fs::write(&modprobe_file, "").unwrap();
-            let lact = Lact::new(
-                LactClient::new(setup.socket())
-                    .with_timeout(TIMEOUT)
-                    .with_overdrive_timeout(overdrive_timeout),
-                std::ffi::OsString::new(),
-            )
-            .with_modprobe_file(modprobe_file);
+            fs::write(setup.socket().with_file_name("overdrive.conf"), "").unwrap();
+            fs::write(setup.socket().with_file_name("boot_id"), "boot-1\n").unwrap();
+            let lact = Service::lact(&setup, overdrive_timeout);
             let tuning = Tuning::new(lact, clock.clone(), Arc::new(Collected::default()));
             Service {
                 _setup: setup,
@@ -841,6 +958,30 @@ mod tests {
 
         fn new(name: &str) -> Self {
             Service::start(name, TIMEOUT)
+        }
+
+        /// Redline started again: a new service on the same files and the same lactd.
+        fn restarted(&self) -> Tuning {
+            let lact = Service::lact(&self._setup, TIMEOUT);
+            Tuning::new(lact, self.clock.clone(), Arc::new(Collected::default()))
+        }
+
+        fn stop_file(&self) -> PathBuf {
+            let data = self._setup.socket().with_file_name("data");
+            data.join(STOP_FILE)
+        }
+
+        /// The machine booted again: another boot id, and lactd's memory gone.
+        fn reboot(&self) {
+            let boot_id = self._setup.socket().with_file_name("boot_id");
+            fs::write(boot_id, "boot-2\n").unwrap();
+            self.daemon.lock().unwrap().toggled = false;
+        }
+
+        /// A confirmed disable, accepted by lactd.
+        fn disable(&self) {
+            let plan = self.tuning.prepare_overdrive(DISABLE).unwrap();
+            self.tuning.change_overdrive(DISABLE, token(&plan)).unwrap();
         }
 
         fn log(&self) -> Vec<String> {
@@ -1347,12 +1488,12 @@ mod tests {
             let mut daemon = service.daemon.lock().unwrap();
             daemon.profiles = vec!["Gaming"];
         }
-        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
-        service
-            .tuning
-            .change_overdrive(DISABLE, token(&plan))
-            .unwrap();
+        service.disable();
+        assert_refuses_what_needs_overdrive(&service.tuning);
+    }
 
+    /// The setters stopped on a firmware fan, and the ways back open.
+    fn assert_refuses_what_needs_overdrive(tuning: &Tuning) {
         // The running kernel still has overdrive: lactd would accept these for the next boot.
         let curve = FanSettings {
             mode: FanSetting::Curve,
@@ -1361,22 +1502,221 @@ mod tests {
             pmfw: PmfwSettings::default(),
         };
         assert_eq!(
-            service.tuning.set_fan(SLOT_B, &curve),
+            tuning.set_fan(SLOT_B, &curve),
             Err(DISABLE_UNDER_WAY.to_owned())
         );
         let values = serde_json::Map::from_iter([("voltage_offset".to_owned(), json!(-50))]);
         assert_eq!(
-            service.tuning.set_clocks(SLOT_B, &values),
+            tuning.set_clocks(SLOT_B, &values),
             Err(DISABLE_UNDER_WAY.to_owned())
         );
         assert_eq!(
-            service.tuning.activate_profile(SLOT_B, Some("Gaming")),
+            tuning.activate_profile(SLOT_B, Some("Gaming")),
             Err(DISABLE_UNDER_WAY.to_owned())
         );
         // The ways back stay open.
-        assert!(service.tuning.reset_fan(SLOT_B).is_ok());
-        assert_eq!(service.tuning.settle(SLOT_B, true), Ok(Outcome::Confirmed));
-        assert!(service.tuning.reset_clocks(SLOT_B).is_ok());
+        assert!(tuning.reset_fan(SLOT_B).is_ok());
+        assert_eq!(tuning.settle(SLOT_B, true), Ok(Outcome::Confirmed));
+        assert!(tuning.reset_clocks(SLOT_B).is_ok());
+    }
+
+    #[test]
+    fn a_restart_before_the_reboot_keeps_the_stop() {
+        let service = Service::on("restart", vec![FIRMWARE_FAN]);
+        service.daemon.lock().unwrap().profiles = vec!["Gaming"];
+        service.disable();
+        let restarted = service.restarted();
+        assert_refuses_what_needs_overdrive(&restarted);
+        // Still there for the restart after this one.
+        assert!(service.stop_file().exists());
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            Err(DISABLE_UNDER_WAY.to_owned())
+        );
+    }
+
+    #[test]
+    fn a_restart_keeps_the_stop_of_a_disable_with_no_answer() {
+        let service = Service::start("restart-open", Duration::from_millis(100));
+        {
+            let mut daemon = service.daemon.lock().unwrap();
+            daemon.enabled = true;
+            daemon.file = true;
+            daemon.delay = Duration::from_millis(400);
+        }
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert_eq!(
+            service.tuning.change_overdrive(DISABLE, token(&plan)),
+            Err(TIMED_OUT.to_owned())
+        );
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            Err(DISABLE_UNDER_WAY.to_owned())
+        );
+    }
+
+    #[test]
+    fn a_restart_does_not_let_a_refused_retry_lift_the_stop() {
+        let service = Service::on("restart-retry", vec![]);
+        service.daemon.lock().unwrap().fail = Some("Initramfs generation command failed");
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert!(
+            service
+                .tuning
+                .change_overdrive(DISABLE, token(&plan))
+                .is_err()
+        );
+        // The first attempt left its outcome open: lactd's refusal now says nothing about it.
+        let restarted = service.restarted();
+        service.daemon.lock().unwrap().fail = Some(NOT_ENABLED_MESSAGE);
+        let plan = restarted.prepare_overdrive(DISABLE).unwrap();
+        assert_eq!(
+            restarted.change_overdrive(DISABLE, token(&plan)),
+            Err(NOT_ENABLED_BY_LACT.to_owned())
+        );
+        assert_eq!(
+            restarted.inner.overdrive.refuse_while_disabling(),
+            Err(DISABLE_UNDER_WAY.to_owned())
+        );
+    }
+
+    #[test]
+    fn a_new_boot_lifts_the_stop_and_removes_the_file() {
+        let service = Service::on("new-boot", vec![FIRMWARE_FAN]);
+        service.disable();
+        service.reboot();
+        let restarted = service.restarted();
+        assert_eq!(restarted.inner.overdrive.refuse_while_disabling(), Ok(()));
+        assert!(!service.stop_file().exists());
+    }
+
+    #[test]
+    fn a_later_enable_lifts_the_stop_for_good() {
+        let service = Service::on("restart-enable", vec![]);
+        service.disable();
+        // lactd restarted, so it takes one more change, and the running bit is off.
+        {
+            let mut daemon = service.daemon.lock().unwrap();
+            daemon.toggled = false;
+            daemon.enabled = false;
+        }
+        let restarted = service.restarted();
+        let plan = restarted.prepare_overdrive(ENABLE).unwrap();
+        assert!(restarted.change_overdrive(ENABLE, token(&plan)).is_ok());
+        assert_eq!(restarted.inner.overdrive.refuse_while_disabling(), Ok(()));
+        assert!(!service.stop_file().exists());
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_disable_that_changed_nothing_leaves_no_stop_for_the_next_start() {
+        let service = Service::on("restart-refused", vec![]);
+        service.daemon.lock().unwrap().file = false;
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert_eq!(
+            service.tuning.change_overdrive(DISABLE, token(&plan)),
+            Err(NOT_ENABLED_BY_LACT.to_owned())
+        );
+        assert!(!service.stop_file().exists());
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_stop_that_cannot_be_saved_refuses_the_disable() {
+        let service = Service::on("not-saved", vec![]);
+        // The data folder cannot be created: a file has its name.
+        let data = service._setup.socket().with_file_name("data");
+        fs::write(data, "").unwrap();
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert_eq!(
+            service.tuning.change_overdrive(DISABLE, token(&plan)),
+            Err(STOP_NOT_SAVED.to_owned())
+        );
+        assert_eq!(service.log(), Vec::<String>::new());
+        assert_eq!(
+            service.tuning.inner.overdrive.refuse_while_disabling(),
+            Ok(())
+        );
+
+        // No boot id to save either: the same refusal, and nothing was left behind.
+        let service = Service::on("no-boot-id", vec![]);
+        fs::remove_file(service._setup.socket().with_file_name("boot_id")).unwrap();
+        let plan = service.tuning.prepare_overdrive(DISABLE).unwrap();
+        assert_eq!(
+            service.tuning.change_overdrive(DISABLE, token(&plan)),
+            Err(STOP_NOT_SAVED.to_owned())
+        );
+        assert_eq!(service.log(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn only_a_readable_file_from_another_boot_proves_a_reboot() {
+        let stopped = Err(DISABLE_UNDER_WAY.to_owned());
+
+        // This boot's id with its line ending, as another tool would leave it.
+        let service = Service::on("saved-newline", vec![]);
+        fs::create_dir_all(service.stop_file().parent().unwrap()).unwrap();
+        fs::write(service.stop_file(), "boot-1\n").unwrap();
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            stopped
+        );
+
+        // The file cannot be read.
+        let service = Service::on("saved-unreadable", vec![]);
+        fs::create_dir_all(service.stop_file()).unwrap();
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            stopped
+        );
+
+        // The boot id cannot be read: the file may be from this boot.
+        let service = Service::on("saved-no-boot-id", vec![]);
+        service.disable();
+        fs::remove_file(service._setup.socket().with_file_name("boot_id")).unwrap();
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            stopped
+        );
+        assert!(service.stop_file().exists());
+
+        // A torn file names no boot, so it names another one.
+        let service = Service::on("saved-torn", vec![]);
+        fs::create_dir_all(service.stop_file().parent().unwrap()).unwrap();
+        fs::write(service.stop_file(), [0xff, 0x00]).unwrap();
+        assert_eq!(
+            service.restarted().inner.overdrive.refuse_while_disabling(),
+            Ok(())
+        );
+        assert!(!service.stop_file().exists());
+    }
+
+    #[test]
+    fn with_no_file_for_it_the_stop_lasts_the_session() {
+        let service = Service::on("session-only", vec![]);
+        let lact = || {
+            let lact = Service::lact(&service._setup, TIMEOUT);
+            Lact {
+                overdrive_stop: None,
+                ..lact
+            }
+        };
+        let events = Arc::new(Collected::default());
+        let tuning = Tuning::new(lact(), service.clock.clone(), events.clone());
+        let plan = tuning.prepare_overdrive(DISABLE).unwrap();
+        tuning.change_overdrive(DISABLE, token(&plan)).unwrap();
+        assert_eq!(
+            tuning.inner.overdrive.refuse_while_disabling(),
+            Err(DISABLE_UNDER_WAY.to_owned())
+        );
+        let tuning = Tuning::new(lact(), service.clock.clone(), events);
+        assert_eq!(tuning.inner.overdrive.refuse_while_disabling(), Ok(()));
     }
 
     #[test]
@@ -1484,12 +1824,36 @@ mod tests {
             "Overdrive support was already toggled - please reboot to apply the changes"
         )));
         assert!(!proves_nothing_changed(&daemon("Initramfs failed")));
+        // Only the refusals themselves: a command's output is chained after lactd's own words,
+        // and it can hold any of them.
+        for chained in [
+            "Initramfs generation command failed: Command exited with error: built for NixOS\n",
+            "Command exited with error: Overdrive should be toggled through system config on NixOS",
+            "Command exited with error: Overclocking was not enabled through LACT\n",
+            "Could not remove module config file: not enabled through LACT",
+        ] {
+            assert!(!proves_nothing_changed(&daemon(chained)), "{chained}");
+        }
         assert!(!proves_nothing_changed(&LactError::Protocol(
             "?".to_owned()
         )));
         assert!(!proves_nothing_changed(&LactError::Io(
             std::io::ErrorKind::ConnectionReset.into()
         )));
+    }
+
+    #[test]
+    fn each_refusal_of_lactd_gets_its_own_sentence_and_no_other_does() {
+        let service = Service::new("refusal-texts");
+        let lact = &service.tuning.inner.lact;
+        let refused = |message: &str| refusal(lact, &LactError::Daemon(message.to_owned())).0;
+        assert_eq!(refused(NOT_ENABLED_MESSAGE), NOT_ENABLED_BY_LACT);
+        assert_eq!(refused(NIXOS_REFUSAL), NO_CONFIGURATOR);
+        let chained = "Command exited with error: built for NixOS";
+        assert_eq!(
+            refused(chained),
+            format!("LACT could not change overdrive: {chained}")
+        );
     }
 
     #[test]

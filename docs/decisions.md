@@ -252,10 +252,17 @@ B, #56): **Redline may ask `lactd` to enable or disable it, after an explicit co
   reset inside the disable request would confirm on the user's behalf.
 - **From the disable until the reboot, nothing that needs overdrive can be set.** The running
   kernel keeps it, so `set_fan` on a firmware fan (other than back to automatic), `set_clocks` and `activate_profile`
-  would be accepted and left stored for a boot without it. The stop lives in the session, like
-  `reboot_pending`. Only an answer that proves nothing changed lifts it: lactd unreachable, or its
-  refusals that come before it touches anything. A timeout, "already toggled", an initramfs failure
-  or an unreadable answer all keep it.
+  would be accepted and left stored for a boot without it. Only an answer that proves nothing
+  changed lifts the stop: lactd unreachable, or its refusals that come before it touches anything,
+  matched whole. A timeout, "already toggled", an initramfs failure or an unreadable answer all
+  keep it; an accepted enable and a new boot end it.
+- **The stop outlives a restart of Redline** (#127), because the risk lasts until the reboot. It
+  is stored, not derived: `overdrive-stop` in `app_data_dir()` holds the kernel's boot id
+  (`/proc/sys/kernel/random/boot_id`), written before the request leaves; if it cannot be written
+  the disable is refused. At start another boot's id removes the file, and a file or boot id that
+  cannot be read keeps the stop. The running bit against LACT's modprobe file cannot do this: a
+  missing file also describes overdrive set by hand, and `rpm-ostree` has no such file.
+  `reboot_pending` stays a session value: after a restart lactd's "already toggled" sets it again.
 - Known limits: lactd holds its one pending change in memory with no request to read it, so one
   left by the LACT app is invisible here; and LACT's automatic profile switching can activate a
   saved profile later, which the plan says.
