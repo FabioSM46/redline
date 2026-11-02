@@ -39,8 +39,8 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       `redline.desktop`.
 - [ ] It also lists `usr/share/doc/redline/THIRD-PARTY-LICENSES`,
       `usr/share/redline/install-dependency` and the polkit action.
-- [ ] `dpkg-deb -f <file>.deb Depends` lists `curl` as a package of its own: a longer name such as
-      `libcurl4` does not count.
+- [ ] `dpkg-deb -f <file>.deb Depends` lists `curl` as a package of its own and not as a later
+      alternative: `libcurl4`, `python-curl` and `wget | curl` do not count.
 
 ### Clean virtual machine (Ubuntu LTS)
 

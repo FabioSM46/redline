@@ -77,9 +77,14 @@ assert expected == shipped | {f"/usr/share/applications/{identifier}.desktop"}, 
 for needle in ("dpkg -V redline", 'ldd "$BIN"', "/etc/dpkg/dpkg.cfg.d", "/.dockerenv", "ldconfig -p"):
     assert needle in script, f"the script lost {needle!r}"
 
-for needle in ('dpkg-deb -f "$DEB" Depends', "package_declares deb curl", "command -v curl"):
+# The helper is a sibling file: the scripts source it, and every image mounts the whole folder.
+helper = '. "$(dirname "${BASH_SOURCE[0]}")/package-dependency.sh"'
+assert "scripts:/check:ro" in job("distro"), "the distro job must mount the whole scripts folder"
+
+for needle in (helper, 'dpkg-deb -f "$DEB" Depends', "package_declares deb curl", "command -v curl"):
     assert needle in script, f"the script lost {needle!r}"
 for needle in (
+    helper,
     "pacman -Qi redline",
     "rpm -q --requires redline",
     'package_declares "$system" curl',
