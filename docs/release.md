@@ -39,7 +39,8 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       `redline.desktop`.
 - [ ] It also lists `usr/share/doc/redline/THIRD-PARTY-LICENSES`,
       `usr/share/redline/install-dependency` and the polkit action.
-- [ ] `dpkg-deb -I <file>.deb` has `curl` among the dependencies.
+- [ ] `dpkg-deb -f <file>.deb Depends` lists `curl` as a package of its own: a longer name such as
+      `libcurl4` does not count.
 
 ### Clean virtual machine (Ubuntu LTS)
 
@@ -180,7 +181,10 @@ draft. On each system it checks that:
 - `apt install ./<file>.deb` succeeds and pulls in the dependencies from that system's archive;
 - `dpkg -V redline` prints nothing;
 - the desktop file, the polkit action, the install helper and the licenses are in place;
-- `curl`, which the update check runs, is on the path;
+- `curl`, which the update check runs, is on the path, and the `Depends` field of the package lists
+  it by name: an image that already has `curl` would otherwise hide a dropped declaration, and
+  `libcurl4` or `python-curl` does not stand for it. `scripts/distro-clean-install.sh` does the same
+  for the Arch and Fedora packages, with `pacman -Qi` and `rpm -q --requires`;
 - `ldd` resolves every library of `/usr/bin/redline`. The binary has no `--version`: every launch
   starts the GUI. The tray library is loaded at run time, out of `ldd`'s sight, so the script looks
   for it in the linker cache.

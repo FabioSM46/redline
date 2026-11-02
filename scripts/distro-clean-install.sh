@@ -8,6 +8,9 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/package-dependency.sh
+. "$(dirname "${BASH_SOURCE[0]}")/package-dependency.sh"
+
 BIN=/usr/bin/redline
 TRAY_LIB=libayatana-appindicator3.so.1
 EXPECTED_FILES=(
@@ -32,10 +35,12 @@ case $system in
     pacman -Syu --noconfirm
     pacman -U --noconfirm "$package"
     pacman -Qkk redline
+    dependencies=$(LC_ALL=C pacman -Qi redline)
     ;;
   fedora)
     dnf install -y "$package" /usr/bin/ldconfig
     rpm -V redline
+    dependencies=$(rpm -q --requires redline)
     ;;
   *)
     echo "usage: $0 arch|fedora <package>" >&2
@@ -50,8 +55,10 @@ for file in "${EXPECTED_FILES[@]}"; do
   [ -e "$file" ] || fail "$file is missing"
 done
 
-# The update check runs it (D14).
+# The update check runs it (D14). Both checks stay: the first proves the dependency resolved, the
+# second that it was declared, which an image that already has curl would hide.
 command -v curl >/dev/null || fail "curl is not installed"
+package_declares "$system" curl <<<"$dependencies" || fail "the package does not declare curl"
 
 libraries=$(ldd "$BIN" 2>&1) || fail "ldd could not read $BIN"
 if grep -F 'not found' <<<"$libraries"; then
