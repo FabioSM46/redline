@@ -14,6 +14,9 @@
 
 set -euo pipefail
 
+# shellcheck source=scripts/package-dependency.sh
+. "$(dirname "${BASH_SOURCE[0]}")/package-dependency.sh"
+
 BIN=/usr/bin/redline
 TRAY_LIB=libayatana-appindicator3.so.1
 EXPECTED_FILES=(
@@ -66,8 +69,12 @@ for file in "${RETIRED_FILES[@]}"; do
 done
 [ -x /usr/share/redline/install-dependency ] || fail "the install helper is not executable"
 [ -x "$BIN" ] || fail "$BIN is not executable"
-# The update check runs it (D14), and only the package's Depends brings it in.
+# The update check runs it (D14), and only the package's Depends brings it in. Both checks stay:
+# the first proves the dependency resolved, the second that it was declared, which an image that
+# already has curl would hide.
 command -v curl >/dev/null || fail "curl is not installed"
+depends=$(dpkg-deb -f "$DEB" Depends) || fail "dpkg-deb could not read Depends"
+package_declares deb curl <<<"$depends" || fail "the Depends field does not list curl"
 
 ldd_status=0
 libs=$(ldd "$BIN" 2>&1) || ldd_status=$?

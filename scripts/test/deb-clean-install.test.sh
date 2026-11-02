@@ -11,6 +11,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT/scripts/deb-clean-install.sh"
 
 bash -n "$SCRIPT"
+bash -n "$ROOT/scripts/distro-clean-install.sh"
 
 python3 - "$ROOT" <<'PY'
 import json
@@ -21,6 +22,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 workflow = (root / ".github/workflows/release.yml").read_text()
 script = (root / "scripts/deb-clean-install.sh").read_text()
+distro = (root / "scripts/distro-clean-install.sh").read_text()
 
 
 def job(name):
@@ -75,8 +77,68 @@ assert expected == shipped | {f"/usr/share/applications/{identifier}.desktop"}, 
 for needle in ("dpkg -V redline", 'ldd "$BIN"', "/etc/dpkg/dpkg.cfg.d", "/.dockerenv", "ldconfig -p"):
     assert needle in script, f"the script lost {needle!r}"
 
+# The helper is a sibling file: the scripts source it, and every image mounts the whole folder.
+helper = '. "$(dirname "${BASH_SOURCE[0]}")/package-dependency.sh"'
+assert "scripts:/check:ro" in job("distro"), "the distro job must mount the whole scripts folder"
+
+for needle in (helper, 'dpkg-deb -f "$DEB" Depends', "package_declares deb curl", "command -v curl"):
+    assert needle in script, f"the script lost {needle!r}"
+for needle in (
+    helper,
+    "pacman -Qi redline",
+    "rpm -q --requires redline",
+    'package_declares "$system" curl',
+    "command -v curl",
+):
+    assert needle in distro, f"the distro script lost {needle!r}"
+
 print("deb clean install — workflow shape and expected files agree")
 PY
+
+# shellcheck source=scripts/package-dependency.sh
+. "$ROOT/scripts/package-dependency.sh"
+
+# declared <format> <name> <text>: the text must declare the name; undeclared: it must not.
+declared() {
+  package_declares "$1" "$2" <<<"$3" || { echo "FAIL: $1 should declare $2 in: $3"; exit 1; }
+}
+undeclared() {
+  if package_declares "$1" "$2" <<<"$3"; then
+    echo "FAIL: $1 should not declare $2 in: $3"
+    exit 1
+  fi
+}
+
+declared deb curl 'libc6 (>= 2.35), curl, libgtk-3-0'
+declared deb curl 'curl'
+declared deb curl 'libc6, curl (>= 7.0)'
+declared deb curl 'libc6, curl:any'
+declared deb curl 'curl | wget, libc6'
+declared deb curl $'libc6,\n curl,\n libgtk-3-0'
+undeclared deb curl 'libc6 (>= 2.35), libgtk-3-0'
+undeclared deb curl ''
+undeclared deb curl 'libcurl4, python-curl, curl-config'
+undeclared deb curl 'libcurl4 (>= 7.0), curl-doc (= curl)'
+undeclared deb curl 'wget | curl'
+
+declared fedora curl $'/bin/sh\ncurl\nlibgtk-3.so.0()(64bit)'
+declared fedora curl $'curl >= 7.0\nrpmlib(CompressedFileNames) <= 3.0.4-1'
+undeclared fedora curl $'/bin/sh\nlibcurl.so.4()(64bit)\nlibcurl\npython3-curl'
+undeclared fedora curl ''
+
+arch_info() { printf 'Name            : redline\nDepends On      : %s\nOptional Deps   : curl\n' "$1"; }
+declared arch curl "$(arch_info 'gtk3  curl  webkit2gtk-4.1')"
+declared arch curl "$(arch_info 'gtk3  curl>=7.0')"
+declared arch curl "$(printf 'Depends On      : gtk3\n                  curl\nProvides        : None\n')"
+undeclared arch curl "$(arch_info 'gtk3  libcurl-gnutls  python-curl')"
+undeclared arch curl "$(arch_info 'None')"
+undeclared arch curl ''
+
+status=0
+package_declares rpm curl <<<'curl' 2>/dev/null || status=$?
+[ "$status" -eq 2 ] || { echo "FAIL: an unknown format must be an error, got $status"; exit 1; }
+
+echo "deb clean install — the dependency check matches curl by name"
 
 # Only where the script is meant to stop: inside a container it would really install.
 if [ ! -f /.dockerenv ] && [ ! -f /run/.containerenv ]; then
