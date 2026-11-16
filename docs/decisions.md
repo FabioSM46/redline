@@ -48,8 +48,9 @@ package has to link the libraries its system ships. The apt repository and the A
 nothing is published anywhere else. The guided install takes LACT from the distribution on Arch
 and from LACT's official package, with a pinned checksum, on Fedora.
 
-Update (2026-11-16): why Redline is in no repository, asked again after the public launch. The
-answer is "not yet", not "never".
+Update (2026-11-16): why Redline is in no repository, asked again after the public launch. For the
+distribution repositories the answer is "not yet"; for Flathub it is "no", unless one of the two
+things named below changes.
 
 - **Official distribution repositories** are not the author's to enter: a distribution's
   maintainers choose and package what they trust, and a project a few weeks old is not picked up.
@@ -59,11 +60,17 @@ answer is "not yet", not "never".
   publish there, so they would not give the assurance people ask a repository for.
 - **Flathub** is not feasible today, for more than the sandbox. Its requirements for app authors,
   read on this date, exclude Redline as it is now on three counts:
-  - *Generative AI policy*: the Flathub manifest must contain no AI-generated or AI-assisted
-    content, AI agents must not open or automate a submission, generated code in the application
-    must be disclosed, and reviewers may reject on its extent. Redline is developed with the
-    agent pipeline described in `AGENTS.md`. A manifest and a submission would have to be written
-    by hand by the maintainer, and could still be refused.
+  - *Generative AI policy*. Two separate rules, quoted from
+    [Flathub's requirements](https://docs.flathub.org/docs/for-app-authors/requirements)
+    ("Generative AI policy"); the rest of this entry is our reading of them.
+    The packaging: "Flathub manifests must not contain AI-generated or AI-assisted content", and
+    AI tools or agents must not open or automate a submission. This one has an answer: the
+    maintainer writes the manifest and the submission by hand.
+    The application: generated code, documentation and packaging must be disclosed, "Disclosure
+    does not create a presumption of acceptance", and reviewers may reject on the extent or role
+    of the generated material. This one has no answer today: Redline is developed with the agent
+    pipeline described in `AGENTS.md`, so the disclosure would cover most of the application, and
+    a hand-written manifest does not change that.
   - *Host-dependent applications*: an application that relies on host components for its core
     function, or that is a thin wrapper around other tools, is not accepted, exceptions aside.
     Tuning, replay and the overlay all rest on `lactd`, GPU Screen Recorder and MangoHud
@@ -83,9 +90,12 @@ answer is "not yet", not "never".
 
 In their place: the source is public and MIT, Redline never runs as root, the packages are built
 by public CI from the tagged commit and installed on clean systems before a release, and every
-release since 0.4.0 has `SHA256SUMS` (integrity, not a signature). To look at again once the
-project has a history of releases and users; for Flathub the AI policy stays the obstacle whatever
-the project's age.
+release since 0.4.0 has `SHA256SUMS` (integrity, not a signature).
+
+What would change the answer: for the distribution repositories, a history of releases and users,
+which only time gives. For Flathub, age settles the maturity rule alone; the rule on generated
+application code stands until Flathub changes it or Redline's code is no longer written through
+the agent pipeline, and the host-dependency rule stands as long as D2 does.
 
 ## D5 — Global shortcuts (2026-10-29)
 
