@@ -41,7 +41,8 @@ const NOTICE: &str = "# Changed from Redline: edits made here are replaced at th
 const CONFIG_FOLDER: &str = "MangoHud";
 const CONFIG_FILE: &str = "MangoHud.conf";
 const LAUNCHER: &str = "mangohud";
-const LAYER_FOLDER: &str = "vulkan/implicit_layer.d";
+/// Where implicit Vulkan layers keep their manifest, inside a data folder.
+pub const LAYER_FOLDER: &str = "vulkan/implicit_layer.d";
 /// The value of `XDG_DATA_DIRS` when it is unset or empty, as the XDG specification says.
 const DEFAULT_DATA_DIRS: &str = "/usr/local/share:/usr/share";
 const BACKUP_EXISTS: &str = "Your MangoHud.conf was not changed: a MangoHud.conf.redline-backup \
@@ -87,6 +88,8 @@ pub struct OverlayStatus {
     pub unavailable_reason: Option<String>,
     pub config: ConfigState,
     pub settings: OverlaySettings,
+    /// The launch option of the overlay alone. `launch_options` composes the one with the
+    /// player's other choices (D15); this stays until the frontend uses that.
     pub launch_hint: &'static str,
 }
 
@@ -126,7 +129,8 @@ pub fn mangohud_present() -> bool {
     mangohud_installed(&search_path, &layer_dirs(data_dirs.as_deref()))
 }
 
-/// The folders that can hold MangoHud's layer manifest, from the value of `XDG_DATA_DIRS`.
+/// The folders that can hold an implicit Vulkan layer's manifest (MangoHud's, and the frame
+/// generation layer's for `launch_options`), from the value of `XDG_DATA_DIRS`.
 pub fn layer_dirs(xdg_data_dirs: Option<&OsStr>) -> Vec<PathBuf> {
     let listed = xdg_data_dirs
         .filter(|dirs| !dirs.is_empty())
@@ -148,19 +152,20 @@ pub fn layer_dirs(xdg_data_dirs: Option<&OsStr>) -> Vec<PathBuf> {
 /// Whether one of `layer_dirs` holds a `MangoHud*.json` manifest or `mangohud` is on
 /// `search_path`.
 pub fn mangohud_installed(search_path: &OsStr, layer_dirs: &[PathBuf]) -> bool {
-    layer_dirs.iter().any(|dir| has_manifest(dir)) || find_program(LAUNCHER, search_path).is_some()
+    let is_mangohud = |name: &str| name.starts_with("MangoHud") && name.ends_with(".json");
+    layer_dirs.iter().any(|dir| has_manifest(dir, is_mangohud))
+        || find_program(LAUNCHER, search_path).is_some()
 }
 
-/// A missing or unreadable folder holds no manifest.
-fn has_manifest(dir: &Path) -> bool {
+/// Whether `dir` holds a layer manifest: a regular file whose name `is_manifest` accepts. A
+/// missing or unreadable folder holds none, and a folder named like a manifest is not one.
+pub fn has_manifest(dir: &Path, is_manifest: impl Fn(&str) -> bool) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
     entries.flatten().any(|entry| {
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        name.starts_with("MangoHud")
-            && name.ends_with(".json")
+        is_manifest(&name.to_string_lossy())
             && fs::metadata(entry.path()).is_ok_and(|meta| meta.is_file())
     })
 }
