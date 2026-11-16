@@ -238,6 +238,10 @@ If the package is wrong, do not publish: fix it through `develop` and `main`, th
 the new commit. The workflow replaces the packages and `SHA256SUMS` of a draft, and refuses to
 touch a published release.
 
+The workflow replaces files by name and deletes nothing. If a package changed its name since the
+draft was created, the old file stays in the draft and the `draft` job fails, naming it under
+`only in the release`: delete that asset from the draft by hand, then re-run the job.
+
 ## 5. Publish
 
 - [ ] Publish the draft.

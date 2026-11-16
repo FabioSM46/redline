@@ -30,6 +30,8 @@ usage() {
 
 # The packages of <folder>: every entry except SHA256SUMS, sorted. Anything that is not a plain
 # file with a plain name is refused, so a name never needs the escaping `sha256sum` applies.
+# `~` is refused too: a release stores an asset under a rewritten name when its file name has
+# characters outside this set, and SHA256SUMS would then list a name nobody can download.
 packages() {
   local entry name
   for entry in "$1"/* "$1"/.[!.]*; do
@@ -37,7 +39,7 @@ packages() {
     name=${entry##*/}
     [ "$name" != "$SUMS" ] || continue
     [ -f "$entry" ] && [ ! -L "$entry" ] || die "$name is not a regular file"
-    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+~-]*$ ]] || die "unexpected package name: $name"
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || die "unexpected package name: $name"
     printf '%s\n' "$name"
   done | sort
 }
@@ -47,7 +49,7 @@ packages() {
 listed() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
-    [[ "$line" =~ ^[0-9a-f]{64}\ \ ([A-Za-z0-9][A-Za-z0-9._+~-]*)$ ]] \
+    [[ "$line" =~ ^[0-9a-f]{64}\ \ ([A-Za-z0-9][A-Za-z0-9._+-]*)$ ]] \
       || die "$SUMS has a line that is not '<sha256>  <name>'"
     printf '%s\n' "${BASH_REMATCH[1]}"
   done <"$1/$SUMS"
@@ -99,7 +101,8 @@ assets() {
   [ -f "$dir/$SUMS" ] || die "$dir/$SUMS is missing"
   expected=$({ listed "$dir"; echo "$SUMS"; } | sort)
   same_names "the release" "$published" "$SUMS and the packages it lists" "$expected" \
-    || die "the release assets are not exactly $SUMS and the packages it lists"
+    || die "the release assets are not exactly $SUMS and the packages it lists;" \
+      "delete from the draft what is only in the release, then run the job again"
   echo "the release holds exactly $SUMS and the packages it lists"
 }
 

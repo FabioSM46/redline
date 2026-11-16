@@ -156,6 +156,12 @@ printf 'x\n' >"$DIR/redline 0.1.0.deb"
 run write "$DIR"
 assert_eq "a name with a space fails" "1" "$RC"
 
+DIR=$(packages tilde)
+printf 'x\n' >"$DIR/redline_0.2.0~beta1_amd64.deb"
+run write "$DIR"
+assert_eq "a name with a tilde, which a release would store under another name, fails" "1" "$RC"
+assert_contains "and is named" "$OUT" "unexpected package name: redline_0.2.0~beta1_amd64.deb"
+
 DIR=$(packages hidden)
 printf 'x\n' >"$DIR/.hidden"
 run write "$DIR"
@@ -177,6 +183,7 @@ assert_eq "the packages and SHA256SUMS, in any order, pass" "0" "$RC"
 run assets "$DIR" "$(printf '%s\n' "$RPM" SHA256SUMS "$DEB" "$ARCH" redline-0.1.0-1.fc43.x86_64.rpm)"
 assert_eq "an asset left from an earlier run fails" "1" "$RC"
 assert_contains "and is named" "$OUT" "only in the release: redline-0.1.0-1.fc43.x86_64.rpm"
+assert_contains "and says how to recover" "$OUT" "delete from the draft"
 
 run assets "$DIR" "$(printf '%s\n' SHA256SUMS "$DEB" "$ARCH")"
 assert_eq "a package that was not uploaded fails" "1" "$RC"
