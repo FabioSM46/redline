@@ -48,6 +48,45 @@ package has to link the libraries its system ships. The apt repository and the A
 nothing is published anywhere else. The guided install takes LACT from the distribution on Arch
 and from LACT's official package, with a pinned checksum, on Fedora.
 
+Update (2026-11-16): why Redline is in no repository, asked again after the public launch. The
+answer is "not yet", not "never".
+
+- **Official distribution repositories** are not the author's to enter: a distribution's
+  maintainers choose and package what they trust, and a project a few weeks old is not picked up.
+  Adoption by a maintainer is the realistic way in.
+- **The AUR, COPR, a PPA or an apt repository of our own** stay dropped. Each is a second place
+  to keep in sync and to check, kept by one person, and none of them is a review: anyone can
+  publish there, so they would not give the assurance people ask a repository for.
+- **Flathub** is not feasible today, for more than the sandbox. Its requirements for app authors,
+  read on this date, exclude Redline as it is now on three counts:
+  - *Generative AI policy*: the Flathub manifest must contain no AI-generated or AI-assisted
+    content, AI agents must not open or automate a submission, generated code in the application
+    must be disclosed, and reviewers may reject on its extent. Redline is developed with the
+    agent pipeline described in `AGENTS.md`. A manifest and a submission would have to be written
+    by hand by the maintainer, and could still be refused.
+  - *Host-dependent applications*: an application that relies on host components for its core
+    function, or that is a thin wrapper around other tools, is not accepted, exceptions aside.
+    Tuning, replay and the overlay all rest on `lactd`, GPU Screen Recorder and MangoHud
+    installed outside the package (D2).
+  - *Maturity*: a meaningful history of development and evidence of real-world use are required,
+    and an application that has existed only for a very short time is generally not accepted.
+- **What "the sandbox gets in the way" means.** A Flatpak sees its own files and the few services
+  it was granted, not the host's programs or sockets, and Redline does almost only things that
+  are outside: it talks to `/run/lactd.sock`, starts GPU Screen Recorder as a host process, reads
+  and writes MangoHud's configuration and looks for its layer in the system folders, and asks for
+  a password with `pkexec` to install a missing tool. Each can be granted one by one, as LACT's
+  own Flathub package shows (the `lactd` socket, systemd, and `org.freedesktop.Flatpak`, which
+  runs commands outside the sandbox). Added up, the package asks to leave its sandbox: more work,
+  the guided install lost (`pkexec` does not work from inside), and an isolation that exists only
+  on paper. Not verified: whether sysfs is readable from the sandbox without an extra permission,
+  and whether the tray icon works for a Tauri application in a Flatpak.
+
+In their place: the source is public and MIT, Redline never runs as root, the packages are built
+by public CI from the tagged commit and installed on clean systems before a release, and every
+release since 0.4.0 has `SHA256SUMS` (integrity, not a signature). To look at again once the
+project has a history of releases and users; for Flathub the AI policy stays the obstacle whatever
+the project's age.
+
 ## D5 — Global shortcuts (2026-10-29)
 
 Under Wayland global shortcuts go through the GlobalShortcuts portal. GNOME implements it from
