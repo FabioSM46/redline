@@ -47,6 +47,17 @@ sudo pacman -U ./redline-<version>-1-x86_64.pkg.tar.zst   # Arch, CachyOS
 sudo dnf install ./redline-<version>-1.fc44.x86_64.rpm    # Fedora
 ```
 
+To check the download first, save `SHA256SUMS` from the same release into that folder and run:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+It prints `OK` next to the package when the file is the one on the release page, and `FAILED`
+when it is not: download it again and do not install it. The packages and `SHA256SUMS` are not
+signed, so the checksum proves that the download is intact and matches the release page, which the
+public CI wrote; it does not prove who built the package.
+
 Open Redline and go to **Settings →
 Dependencies**: it shows whether LACT, GPU Screen Recorder, ffmpeg and MangoHud are installed and
 offers to install what is missing, with one password prompt (`pkexec`). A missing tool only

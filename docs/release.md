@@ -221,8 +221,13 @@ git push origin v0.1.0
 ## 4. Review the draft release
 
 - [ ] The `Release` run is green and the draft `Redline v0.1.0` exists on GitHub Releases.
-- [ ] Download `redline_0.1.0_amd64.deb` from the draft and repeat the `dpkg-deb -c` checks of
-      "The package".
+- [ ] The draft holds `SHA256SUMS` and the three packages, and nothing else. The `draft` job
+      writes the file with `scripts/release-checksums.sh` and fails if it does not list exactly
+      the packages uploaded.
+- [ ] Download the three packages and `SHA256SUMS` from the draft into one folder:
+      `sha256sum -c SHA256SUMS` prints `OK` for each package and names no missing file.
+- [ ] Repeat the `dpkg-deb -c` checks of "The package" on the downloaded
+      `redline_0.1.0_amd64.deb`.
 - [ ] Install it on the clean virtual machine; it starts from the menu.
 - [ ] Choose the release date: today, as `YYYY-MM-DD`. This is the only step that chooses it, and
       it stands even if publishing happens on a later day.
@@ -230,8 +235,12 @@ git push origin v0.1.0
       date.
 
 If the package is wrong, do not publish: fix it through `develop` and `main`, then move the tag to
-the new commit. The workflow replaces the package of a draft, and refuses to touch a published
-release.
+the new commit. The workflow replaces the packages and `SHA256SUMS` of a draft, and refuses to
+touch a published release.
+
+The workflow replaces files by name and deletes nothing. If a package changed its name since the
+draft was created, the old file stays in the draft and the `draft` job fails, naming it under
+`only in the release`: delete that asset from the draft by hand, then re-run the job.
 
 ## 5. Publish
 
