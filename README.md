@@ -84,8 +84,8 @@ signed.
 | Fedora 44 | Package and guided install of all four tools |
 | Windows, macOS | Not supported: Redline is Linux only |
 
-**Redline itself is not available as a Flatpak**: the sandbox gets in the way of sysfs and of the
-`lactd` socket. GPU Screen Recorder is a separate program: its guided install takes the Flatpak
+**Redline itself is not available as a Flatpak** or in any repository: the reasons are in D4 of
+[docs/decisions.md](docs/decisions.md). GPU Screen Recorder is a separate program: its guided install takes the Flatpak
 from Flathub, and first installs Flatpak and adds the Flathub remote if they are missing.
 
 ### Requirements
