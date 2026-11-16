@@ -412,8 +412,9 @@ The code arrives with #153 to #156; until then the only launch option Redline sh
 
 Rejected / not possible:
 
-- **Upscaling through Gamescope.** It would be a fifth external tool, one that the reference
-  distribution does not reliably package; the overlay must then be started differently
+- **Upscaling through Gamescope.** It would be a fifth external tool, after LACT, GPU Screen
+  Recorder, ffmpeg and MangoHud, and one that the reference distribution does not reliably
+  package; the overlay must then be started differently
   (`--mangoapp` instead of the `mangohud` wrapper); and what it offers is a spatial upscaler,
   below what games already ship. Deferred, not refused for ever.
 - **An anti-lag switch.** `VK_AMD_anti_lag` is a Vulkan extension the game itself must call:

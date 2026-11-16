@@ -4,7 +4,7 @@ Redline is for people who play on Linux with an **AMD GPU** and want one control
 several separate tools: one app to watch temperatures, clocks and power draw, tune fans and power
 limits, and save a replay of the last minute of gameplay with a shortcut. If you already run LACT,
 MangoHud and GPU Screen Recorder side by side and are happy with them, you do not need Redline:
-it coordinates those same tools and adds no capability of its own.
+it coordinates those same tools and adds no capability beyond what they already provide.
 
 The inspiration is the software AMD ships only for Windows; Redline keeps the features people
 actually use and leaves the rest out.
