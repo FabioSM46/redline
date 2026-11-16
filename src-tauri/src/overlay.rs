@@ -389,6 +389,10 @@ pub fn overlay_status(
 
 /// Saves the settings and writes them to `MangoHud.conf`. A file that is the user's own stays as
 /// it is: the status says `user_config`, and the settings reach it on a take-over.
+///
+/// `settings` replaces the saved overlay settings as a whole: unlike `set_settings`, nothing is
+/// merged with what was saved. So a missing `fps_limit` is `null` and clears the limit; the page
+/// sends back the object it received, and it ships in the same binary as this command.
 #[tauri::command]
 pub fn set_overlay(
     overlay: State<'_, Overlay>,

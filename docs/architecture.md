@@ -224,6 +224,8 @@ renames the new file into place. A `toggle_key` is key names joined by `+`: only
 checked, MangoHud ignores a name it does not know. An `fps_limit` outside 1 to 1000 is refused
 with a sentence (`settings::OVERLAY_FPS_LIMIT`: MangoHud reads `0` as no limit, which is `null`
 here, and the upper bound is Redline's); a stored one that is invalid loads as no limit.
+`set_overlay` replaces the saved overlay settings as a whole (no merge, unlike `set_settings`): a
+payload without `fps_limit` clears the limit.
 
 The file: `legacy_layout=0`, `position`, `toggle_hud`, `fps_limit=<n>` only when a limit is set,
 `no_display` for `off`, then one line per
@@ -233,7 +235,9 @@ and core clock and CPU temperature; `full` adds VRAM and RAM; `off` starts hidde
 the `minimal` figures. MangoHud always draws the GPU load with a GPU figure and the CPU load with
 the CPU temperature, and frametime needs the FPS line. The limit is MangoHud's own limiter: the
 file is global, so it applies to every game started with MangoHud, with every preset, also `off`
-while the overlay is hidden, and to no game started without it. Per-game files
+while the overlay is hidden, and to no game started without it (read in both versions' source:
+the limiter runs in the present hooks, and `no_display` only skips the drawing; not measured in a
+game). Per-game files
 (`MangoHud/<app>.conf`) and `MANGOHUD_CONFIG` take precedence over this file, and are not touched.
 
 **Saved clips**: every `file-saved` also sends a desktop notification over D-Bus with the file
