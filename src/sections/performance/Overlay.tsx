@@ -4,8 +4,6 @@ import {
   BACKUP_FILE,
   chosenMetrics,
   DEFAULT_FPS_LIMIT,
-  FPS_LIMIT_MAX,
-  FPS_LIMIT_MIN,
   FPS_LIMIT_REFUSED,
   hasOwnFigures,
   isLastMetric,
@@ -150,9 +148,9 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
   }
 
   /** A change to anything but the key: a key that was refused goes back to the saved one. */
-  function saveChoice(change: (current: OverlaySettings) => OverlaySettings) {
+  function saveChoice(change: (current: OverlaySettings) => OverlaySettings, refused?: () => void) {
     setDraftKey(null);
-    saveSettings(change);
+    saveSettings(change, refused);
   }
 
   function saveKey() {
@@ -182,9 +180,8 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
       setNote(null);
       setSave({ status: "error", message: FPS_LIMIT_REFUSED });
     } else {
-      setDraftKey(null);
       // A limit switched off while this waited in the queue stays off.
-      saveSettings((current) => {
+      saveChoice((current) => {
         const next = current.fps_limit === null ? current : withFpsLimit(current, typed);
         if (next === current) settle();
         return next;
@@ -344,16 +341,14 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
         description="Caps the frame rate of games started with MangoHud, also while the overlay is hidden."
         save={IDLE}
       >
-        <form className="overlay-limit" onSubmit={onLimitSubmit}>
+        <form className="overlay-limit" noValidate onSubmit={onLimitSubmit}>
           {settings.fps_limit !== null && (
             <label className="overlay-limit-value">
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 className="setting-input overlay-limit-number"
                 aria-label="FPS limit in frames per second"
-                min={FPS_LIMIT_MIN}
-                max={FPS_LIMIT_MAX}
-                step={1}
                 value={limit}
                 onChange={(event) => setDraftLimit(event.target.value)}
                 onBlur={saveLimit}
