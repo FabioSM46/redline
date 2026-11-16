@@ -510,38 +510,36 @@ body {
   margin-left: auto;
 }
 
-/* Muted like the status bar's other controls: an update is information, not an alarm. It gives way
- * first when the bar runs out of room, so the GPU readings keep their place. */
-.statusbar-update {
+/* The installed version, last on the right. Muted like the status bar's other controls, also as a
+ * button: a newer release is information, not an alarm. It gives way first when the bar runs out
+ * of room, so the GPU readings keep their place. */
+.statusbar-version {
   display: inline-flex;
   flex: 0 1000 auto;
   align-items: center;
-  gap: var(--space-sm);
+  gap: var(--space);
   min-width: 0;
   margin-left: auto;
 }
 
-.statusbar-update + .statusbar-recorder {
+.statusbar-recorder + .statusbar-version {
   margin-left: 0;
 }
 
-.statusbar-update-open {
+.statusbar-version-open,
+.statusbar-version-text {
   overflow: hidden;
   min-width: 0;
   white-space: nowrap;
   text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
-.statusbar-update-dismiss {
+.statusbar-version .statusbar-error {
   flex-shrink: 0;
 }
 
-.statusbar-update .statusbar-error {
-  flex-shrink: 0;
-}
-
-.statusbar-update-open,
-.statusbar-update-dismiss,
+.statusbar-version-open,
 .statusbar-replay {
   padding: 0;
   border: 0;
@@ -552,8 +550,7 @@ body {
   cursor: pointer;
 }
 
-.statusbar-update-open:hover,
-.statusbar-update-dismiss:hover,
+.statusbar-version-open:hover,
 .statusbar-replay:hover,
 .statusbar-replay[data-state="starting"] {
   color: var(--fg);
@@ -569,15 +566,13 @@ body {
   font-weight: 600;
 }
 
-.statusbar-update-open[aria-disabled="true"],
-.statusbar-update-dismiss[aria-disabled="true"],
+.statusbar-version-open[aria-disabled="true"],
 .statusbar-replay[aria-disabled="true"] {
   cursor: default;
   opacity: 0.6;
 }
 
-.statusbar-update-open:focus-visible,
-.statusbar-update-dismiss:focus-visible,
+.statusbar-version-open:focus-visible,
 .statusbar-replay:focus-visible,
 .link-button:focus-visible {
   outline: var(--indicator) solid var(--accent);
@@ -1286,6 +1281,28 @@ body {
   width: calc(var(--space) * 12);
 }
 
+.overlay-limit,
+.overlay-limit-value {
+  display: inline-flex;
+  align-items: center;
+}
+
+.overlay-limit {
+  gap: var(--space);
+}
+
+.overlay-limit-value {
+  gap: calc(var(--space-sm) / 2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.overlay-limit-number {
+  flex: none;
+  width: calc(var(--space) * 5);
+  font-variant-numeric: tabular-nums;
+}
+
 .overlay-message {
   margin: 0;
 }
@@ -1303,4 +1320,17 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
+}
+
+/* "Turn it on in a game": one row per switch, its text on the left, above the command. */
+.launch-options {
+  display: grid;
+  justify-self: stretch;
+  gap: var(--space-sm);
+}
+
+.launch-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
 }

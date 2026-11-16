@@ -5,6 +5,7 @@ mod desktop;
 mod gallery;
 mod global_shortcuts;
 mod installer;
+mod launch_options;
 mod overlay;
 mod recorder;
 mod sampler;
@@ -116,6 +117,8 @@ pub fn run() {
             overlay::overlay_status,
             overlay::set_overlay,
             overlay::take_over_overlay_config,
+            launch_options::launch_options_status,
+            launch_options::set_launch_options,
             updates::update_status,
             updates::dismiss_update,
             updates::open_latest_release,

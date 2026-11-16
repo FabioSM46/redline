@@ -27,11 +27,17 @@
 //! `dismissed_update` is the version the user set aside: like `overlay`, `set_settings` never
 //! changes it, only [`save_dismissed_update`] does.
 //!
+//! `launch_options` holds what the player chose for the game launch option (`launch_options`,
+//! D15). They are four switches, saved only by [`save_launch_options`]; a file written before
+//! they existed loads with the overlay on and the rest off, which composes the launch option
+//! Redline showed until then.
+//!
 //! Starting with the system is not a setting stored here: the operating system owns it (see
 //! `autostart`).
 
 use std::fs;
 use std::io::{self, Write};
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -59,6 +65,11 @@ const DEFAULT_TOGGLE_KEY: &str = "Shift_R+F12";
 /// More keys than this cannot be a real shortcut.
 const MAX_TOGGLE_KEYS: usize = 4;
 const MAX_KEY_NAME: usize = 32;
+/// The frame rate limits Redline accepts. MangoHud reads `0` as "no limit", which is `null` here,
+/// so a limit starts at 1. The upper bound is ours: above any refresh rate a monitor offers today,
+/// and a whole number both verified MangoHud versions read exactly (0.6.9.1 as an integer, 0.8.4
+/// as a float).
+pub const OVERLAY_FPS_LIMIT: RangeInclusive<u32> = 1..=1000;
 
 /// The interface theme: `system` follows the desktop.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +117,7 @@ pub enum OverlayMetric {
     Ram,
 }
 
-/// What the in-game overlay shows, where, and the key that toggles it.
+/// What the in-game overlay shows, where, the key that toggles it, and the frame rate limit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OverlaySettings {
     pub preset: OverlayPreset,
@@ -115,6 +126,9 @@ pub struct OverlaySettings {
     pub metrics: Vec<OverlayMetric>,
     /// MangoHud's `toggle_hud`: X key names joined by `+`, such as `Shift_R+F12`.
     pub toggle_key: String,
+    /// MangoHud's `fps_limit`, in frames per second, for every game started with MangoHud, also
+    /// while the overlay is hidden. `None`: no limit.
+    pub fps_limit: Option<u32>,
 }
 
 impl Default for OverlaySettings {
@@ -124,6 +138,7 @@ impl Default for OverlaySettings {
             position: OverlayPosition::default(),
             metrics: Vec::new(),
             toggle_key: DEFAULT_TOGGLE_KEY.to_owned(),
+            fps_limit: None,
         }
     }
 }
@@ -131,10 +146,39 @@ impl Default for OverlaySettings {
 impl OverlaySettings {
     /// Every invalid field, worded for the user. Empty when the settings can be used.
     pub fn problems(&self) -> Vec<String> {
-        check_toggle_key(&self.toggle_key)
-            .err()
-            .into_iter()
-            .collect()
+        [
+            check_toggle_key(&self.toggle_key),
+            check_fps_limit(&self.fps_limit),
+        ]
+        .into_iter()
+        .filter_map(Result::err)
+        .collect()
+    }
+}
+
+/// What the player chose for the game launch option (D15). The choices are global: Redline keeps
+/// no per-game state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchChoices {
+    /// Start the game with the in-game overlay.
+    pub overlay: bool,
+    /// Turn frame generation on for the game.
+    pub frame_generation: bool,
+    /// Upgrade the game's upscaler to the version the Proton build provides.
+    pub upscaler_upgrade: bool,
+    /// Show the upscaler's watermark in the game.
+    pub upscaler_indicator: bool,
+}
+
+impl Default for LaunchChoices {
+    /// The overlay alone: the launch option Redline showed before there were choices.
+    fn default() -> Self {
+        Self {
+            overlay: true,
+            frame_generation: false,
+            upscaler_upgrade: false,
+            upscaler_indicator: false,
+        }
     }
 }
 
@@ -376,6 +420,7 @@ pub struct Settings {
     pub start_minimised: bool,
     pub recording: RecordingSettings,
     pub overlay: OverlaySettings,
+    pub launch_options: LaunchChoices,
     /// Look for a newer release once a day (D14).
     pub check_for_updates: bool,
     /// The version whose update the user dismissed.
@@ -389,6 +434,7 @@ impl Settings {
             start_minimised: false,
             recording: RecordingSettings::defaults(video_dir),
             overlay: OverlaySettings::default(),
+            launch_options: LaunchChoices::default(),
             check_for_updates: true,
             dismissed_update: None,
         }
@@ -456,6 +502,23 @@ pub fn save_overlay(
     let overlay = saved.overlay.clone();
     *current = saved;
     Ok(overlay)
+}
+
+/// Saves the launch option choices, leaving every other setting as it is. Returns them as read
+/// back from the file.
+pub fn save_launch_options(
+    state: &SettingsState,
+    choices: LaunchChoices,
+) -> Result<LaunchChoices, String> {
+    let mut current = state.current.lock().map_err(|_| UNAVAILABLE.to_owned())?;
+    let file = state
+        .file
+        .as_deref()
+        .ok_or_else(|| "Could not save the settings: no settings folder.".to_owned())?;
+    let saved = apply_launch_options(file, &state.video_dir, &current, choices)?;
+    let choices = saved.launch_options;
+    *current = saved;
+    Ok(choices)
 }
 
 /// Saves the dismissed version, leaving every other setting as it is.
@@ -583,6 +646,7 @@ fn apply(
             .recording
             .unwrap_or_else(|| current.recording.clone()),
         overlay: current.overlay.clone(),
+        launch_options: current.launch_options,
         check_for_updates: update
             .check_for_updates
             .unwrap_or(current.check_for_updates),
@@ -620,6 +684,21 @@ fn apply_overlay(
     }
     let wanted = Settings {
         overlay,
+        ..current.clone()
+    };
+    save(file, &wanted, video_dir)
+}
+
+/// Saves the launch option choices with the rest of `current`. Four switches: every value is
+/// valid.
+fn apply_launch_options(
+    file: &Path,
+    video_dir: &Path,
+    current: &Settings,
+    choices: LaunchChoices,
+) -> Result<Settings, String> {
+    let wanted = Settings {
+        launch_options: choices,
         ..current.clone()
     };
     save(file, &wanted, video_dir)
@@ -761,6 +840,33 @@ fn load_recording(
     recording
 }
 
+/// `null` (no limit) or a whole number inside [`OVERLAY_FPS_LIMIT`].
+fn fps_limit_allowed(value: &Option<u32>) -> bool {
+    value.is_none_or(|limit| OVERLAY_FPS_LIMIT.contains(&limit))
+}
+
+fn check_fps_limit(value: &Option<u32>) -> Result<(), String> {
+    fps_limit_allowed(value).then_some(()).ok_or_else(|| {
+        format!(
+            "The FPS limit must be between {} and {}, or off",
+            OVERLAY_FPS_LIMIT.start(),
+            OVERLAY_FPS_LIMIT.end()
+        )
+    })
+}
+
+/// [`check_fps_limit`] for the settings file, opening with the field's name as
+/// [`check_stored_toggle_key`] does.
+fn check_stored_fps_limit(value: &Option<u32>) -> Result<(), String> {
+    fps_limit_allowed(value).then_some(()).ok_or_else(|| {
+        format!(
+            "fps_limit must be null (no limit) or between {} and {}",
+            OVERLAY_FPS_LIMIT.start(),
+            OVERLAY_FPS_LIMIT.end()
+        )
+    })
+}
+
 /// The `overlay` object, field by field over the defaults.
 fn load_overlay(value: &Value, problems: &mut Vec<String>) -> OverlaySettings {
     let mut overlay = OverlaySettings::default();
@@ -783,7 +889,54 @@ fn load_overlay(value: &Value, problems: &mut Vec<String>) -> OverlaySettings {
         &mut o.toggle_key,
         problems,
     );
+    read_field(
+        fields,
+        p,
+        "fps_limit",
+        check_stored_fps_limit,
+        &mut o.fps_limit,
+        problems,
+    );
     overlay
+}
+
+/// The `launch_options` object, field by field over the defaults.
+fn load_launch_options(value: &Value, problems: &mut Vec<String>) -> LaunchChoices {
+    let mut choices = LaunchChoices::default();
+    let Value::Object(fields) = value else {
+        problems.push(format!(
+            "{SETTINGS_FILE}: launch_options is not an object, using the defaults"
+        ));
+        return choices;
+    };
+    let p = "launch_options.";
+    let c = &mut choices;
+    read_field(fields, p, "overlay", check_bool, &mut c.overlay, problems);
+    read_field(
+        fields,
+        p,
+        "frame_generation",
+        check_bool,
+        &mut c.frame_generation,
+        problems,
+    );
+    read_field(
+        fields,
+        p,
+        "upscaler_upgrade",
+        check_bool,
+        &mut c.upscaler_upgrade,
+        problems,
+    );
+    read_field(
+        fields,
+        p,
+        "upscaler_indicator",
+        check_bool,
+        &mut c.upscaler_indicator,
+        problems,
+    );
+    choices
 }
 
 /// Reads the settings file. Returns the settings to use and the problems found, already worded
@@ -836,6 +989,9 @@ fn load(file: &Path, video_dir: &Path) -> (Settings, Vec<String>) {
     }
     if let Some(value) = fields.get("overlay") {
         settings.overlay = load_overlay(value, &mut problems);
+    }
+    if let Some(value) = fields.get("launch_options") {
+        settings.launch_options = load_launch_options(value, &mut problems);
     }
     read_field(
         &fields,
@@ -1182,6 +1338,13 @@ mod tests {
                     "position": "top-left",
                     "metrics": [],
                     "toggle_key": "Shift_R+F12",
+                    "fps_limit": null,
+                },
+                "launch_options": {
+                    "overlay": true,
+                    "frame_generation": false,
+                    "upscaler_upgrade": false,
+                    "upscaler_indicator": false,
                 },
                 "check_for_updates": true,
                 "dismissed_update": null,
@@ -1338,6 +1501,99 @@ mod tests {
     }
 
     #[test]
+    fn the_fps_limit_is_off_or_inside_its_range() {
+        assert_eq!(OverlaySettings::default().fps_limit, None);
+        assert_eq!(
+            (*OVERLAY_FPS_LIMIT.start(), *OVERLAY_FPS_LIMIT.end()),
+            (1, 1000)
+        );
+        let with = |fps_limit| OverlaySettings {
+            fps_limit,
+            ..OverlaySettings::default()
+        };
+        for limit in [None, Some(1), Some(60), Some(1000)] {
+            assert_eq!(with(limit).problems(), Vec::<String>::new(), "{limit:?}");
+        }
+        for limit in [Some(0), Some(1001), Some(u32::MAX)] {
+            assert_eq!(
+                with(limit).problems(),
+                ["The FPS limit must be between 1 and 1000, or off"],
+                "{limit:?}"
+            );
+        }
+        // Every invalid field has its sentence.
+        let both = OverlaySettings {
+            toggle_key: String::new(),
+            fps_limit: Some(0),
+            ..OverlaySettings::default()
+        };
+        assert_eq!(both.problems().len(), 2);
+    }
+
+    #[test]
+    fn a_stored_fps_limit_is_read_and_an_invalid_one_means_no_limit() {
+        let dir = temp_dir("overlay-fps-limit");
+        let file = dir.join(SETTINGS_FILE);
+        let stored = |text: &str| {
+            fs::write(&file, text).unwrap();
+            let (settings, problems) = load(&file, videos());
+            (settings.overlay, problems)
+        };
+
+        let (overlay, problems) = stored(r#"{"overlay": {"preset": "full", "fps_limit": 120}}"#);
+        assert_eq!(overlay.fps_limit, Some(120));
+        assert_eq!(overlay.preset, OverlayPreset::Full);
+        assert!(problems.is_empty(), "{problems:?}");
+
+        // A file written before the limit existed, and an explicit `null`.
+        for text in [
+            r#"{"overlay": {"preset": "full", "toggle_key": "F10"}}"#,
+            r#"{"overlay": {"preset": "full", "toggle_key": "F10", "fps_limit": null}}"#,
+        ] {
+            let (overlay, problems) = stored(text);
+            assert_eq!(overlay.fps_limit, None, "{text}");
+            assert_eq!(overlay.toggle_key, "F10");
+            assert!(problems.is_empty(), "{problems:?}");
+        }
+
+        for value in ["0", "1001", "-60", "59.94", "\"60\"", "[60]", "true"] {
+            let text = format!(r#"{{"overlay": {{"preset": "full", "fps_limit": {value}}}}}"#);
+            let (overlay, problems) = stored(&text);
+            assert_eq!(overlay.fps_limit, None, "{value}");
+            // The fields next to it are kept.
+            assert_eq!(overlay.preset, OverlayPreset::Full, "{value}");
+            assert_eq!(problems.len(), 1, "{problems:?}");
+            assert!(problems[0].contains("overlay.fps_limit"), "{problems:?}");
+            assert!(
+                problems[0].contains("using the default for fps_limit"),
+                "{problems:?}"
+            );
+        }
+        let (_, problems) = stored(r#"{"overlay": {"fps_limit": 0}}"#);
+        assert!(
+            problems[0].contains("overlay.fps_limit must be null (no limit) or between 1 and 1000"),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn an_fps_limit_out_of_range_is_refused_and_saves_nothing() {
+        let dir = temp_dir("overlay-fps-limit-refused");
+        let file = dir.join(SETTINGS_FILE);
+        let overlay = OverlaySettings {
+            fps_limit: Some(0),
+            ..OverlaySettings::default()
+        };
+        let error = apply_overlay(&file, videos(), &defaults(), overlay).unwrap_err();
+        assert!(
+            error.contains("The FPS limit must be between 1 and 1000, or off"),
+            "{error}"
+        );
+        assert!(!error.contains("fps_limit"), "{error}");
+        assert!(!file.exists());
+    }
+
+    #[test]
     fn saving_the_overlay_keeps_every_other_setting() {
         let dir = temp_dir("overlay-save");
         let file = dir.join(SETTINGS_FILE);
@@ -1349,6 +1605,7 @@ mod tests {
             position: OverlayPosition::TopRight,
             metrics: vec![OverlayMetric::Fps, OverlayMetric::GpuCoreClock],
             toggle_key: "F10".into(),
+            fps_limit: Some(144),
         };
         let saved = apply_overlay(&file, videos(), &current, overlay.clone()).unwrap();
         assert_eq!(
@@ -1384,6 +1641,157 @@ mod tests {
         current.overlay.preset = OverlayPreset::Off;
         let saved = apply(&file, videos(), None, &current, update(&defaults())).unwrap();
         assert_eq!(saved.overlay.preset, OverlayPreset::Off);
+    }
+
+    #[test]
+    fn a_file_written_before_the_launch_choices_has_the_overlay_on_and_the_rest_off() {
+        let dir = temp_dir("launch-absent");
+        let file = dir.join(SETTINGS_FILE);
+        fs::write(
+            &file,
+            r#"{"theme": "dark", "overlay": {"preset": "full"}, "check_for_updates": true}"#,
+        )
+        .unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(
+            settings.launch_options,
+            LaunchChoices {
+                overlay: true,
+                frame_generation: false,
+                upscaler_upgrade: false,
+                upscaler_indicator: false,
+            }
+        );
+        assert_eq!(settings.launch_options, LaunchChoices::default());
+        assert_eq!(settings.theme, Theme::Dark);
+        assert_eq!(problems, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_file_written_with_three_launch_choices_has_the_upgrade_off() {
+        let dir = temp_dir("launch-three");
+        let file = dir.join(SETTINGS_FILE);
+        fs::write(
+            &file,
+            r#"{"launch_options": {"overlay": false, "frame_generation": true,
+                "upscaler_indicator": true}}"#,
+        )
+        .unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(
+            settings.launch_options,
+            LaunchChoices {
+                overlay: false,
+                frame_generation: true,
+                upscaler_upgrade: false,
+                upscaler_indicator: true,
+            }
+        );
+        assert_eq!(problems, Vec::<String>::new());
+
+        // Saved on, it is read back on; a value that is not a switch falls back to off.
+        fs::write(&file, r#"{"launch_options": {"upscaler_upgrade": true}}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert!(settings.launch_options.upscaler_upgrade);
+        assert_eq!(problems, Vec::<String>::new());
+        fs::write(&file, r#"{"launch_options": {"upscaler_upgrade": 1}}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert!(!settings.launch_options.upscaler_upgrade);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].contains("launch_options.upscaler_upgrade has the wrong type"),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_launch_choices_fall_back_one_by_one() {
+        let dir = temp_dir("launch-invalid");
+        let file = dir.join(SETTINGS_FILE);
+        fs::write(
+            &file,
+            r#"{"launch_options": {"overlay": false, "frame_generation": "yes",
+                "upscaler_indicator": true, "future_choice": true}}"#,
+        )
+        .unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(
+            settings.launch_options,
+            LaunchChoices {
+                overlay: false,
+                frame_generation: false,
+                upscaler_upgrade: false,
+                upscaler_indicator: true,
+            }
+        );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].contains("launch_options.frame_generation has the wrong type"),
+            "{problems:?}"
+        );
+
+        // A missing field keeps its default, silently.
+        fs::write(&file, r#"{"launch_options": {"frame_generation": true}}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(
+            settings.launch_options,
+            LaunchChoices {
+                overlay: true,
+                frame_generation: true,
+                upscaler_upgrade: false,
+                upscaler_indicator: false,
+            }
+        );
+        assert_eq!(problems, Vec::<String>::new());
+
+        for text in [
+            r#"{"launch_options": true}"#,
+            r#"{"launch_options": []}"#,
+            r#"{"launch_options": null}"#,
+        ] {
+            fs::write(&file, text).unwrap();
+            let (settings, problems) = load(&file, videos());
+            assert_eq!(settings.launch_options, LaunchChoices::default(), "{text}");
+            assert_eq!(problems.len(), 1, "{text}");
+            assert!(problems[0].contains("launch_options is not an object"));
+        }
+    }
+
+    #[test]
+    fn saving_the_launch_choices_keeps_every_other_setting() {
+        let dir = temp_dir("launch-save");
+        let file = dir.join(SETTINGS_FILE);
+        let mut current = defaults();
+        current.theme = Theme::Dark;
+        current.overlay.fps_limit = Some(120);
+        current.dismissed_update = Some("0.3.0".into());
+        let choices = LaunchChoices {
+            overlay: false,
+            frame_generation: true,
+            upscaler_upgrade: true,
+            upscaler_indicator: true,
+        };
+        let saved = apply_launch_options(&file, videos(), &current, choices).unwrap();
+        assert_eq!(
+            saved,
+            Settings {
+                launch_options: choices,
+                ..current.clone()
+            }
+        );
+        assert_eq!(load(&file, videos()), (saved, Vec::new()));
+    }
+
+    #[test]
+    fn set_settings_and_set_overlay_never_change_the_launch_choices() {
+        let dir = temp_dir("launch-kept");
+        let file = dir.join(SETTINGS_FILE);
+        let mut current = defaults();
+        current.launch_options.frame_generation = true;
+        let saved = apply(&file, videos(), None, &current, update(&defaults())).unwrap();
+        assert!(saved.launch_options.frame_generation);
+        let saved = apply_overlay(&file, videos(), &saved, OverlaySettings::default()).unwrap();
+        assert!(saved.launch_options.frame_generation);
     }
 
     #[test]

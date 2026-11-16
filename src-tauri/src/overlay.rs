@@ -41,7 +41,8 @@ const NOTICE: &str = "# Changed from Redline: edits made here are replaced at th
 const CONFIG_FOLDER: &str = "MangoHud";
 const CONFIG_FILE: &str = "MangoHud.conf";
 const LAUNCHER: &str = "mangohud";
-const LAYER_FOLDER: &str = "vulkan/implicit_layer.d";
+/// Where implicit Vulkan layers keep their manifest, inside a data folder.
+pub const LAYER_FOLDER: &str = "vulkan/implicit_layer.d";
 /// The value of `XDG_DATA_DIRS` when it is unset or empty, as the XDG specification says.
 const DEFAULT_DATA_DIRS: &str = "/usr/local/share:/usr/share";
 const BACKUP_EXISTS: &str = "Your MangoHud.conf was not changed: a MangoHud.conf.redline-backup \
@@ -87,6 +88,8 @@ pub struct OverlayStatus {
     pub unavailable_reason: Option<String>,
     pub config: ConfigState,
     pub settings: OverlaySettings,
+    /// The launch option of the overlay alone. `launch_options` composes the one with the
+    /// player's other choices (D15); this stays until the frontend uses that.
     pub launch_hint: &'static str,
 }
 
@@ -126,7 +129,8 @@ pub fn mangohud_present() -> bool {
     mangohud_installed(&search_path, &layer_dirs(data_dirs.as_deref()))
 }
 
-/// The folders that can hold MangoHud's layer manifest, from the value of `XDG_DATA_DIRS`.
+/// The folders that can hold an implicit Vulkan layer's manifest (MangoHud's, and the frame
+/// generation layer's for `launch_options`), from the value of `XDG_DATA_DIRS`.
 pub fn layer_dirs(xdg_data_dirs: Option<&OsStr>) -> Vec<PathBuf> {
     let listed = xdg_data_dirs
         .filter(|dirs| !dirs.is_empty())
@@ -148,19 +152,20 @@ pub fn layer_dirs(xdg_data_dirs: Option<&OsStr>) -> Vec<PathBuf> {
 /// Whether one of `layer_dirs` holds a `MangoHud*.json` manifest or `mangohud` is on
 /// `search_path`.
 pub fn mangohud_installed(search_path: &OsStr, layer_dirs: &[PathBuf]) -> bool {
-    layer_dirs.iter().any(|dir| has_manifest(dir)) || find_program(LAUNCHER, search_path).is_some()
+    let is_mangohud = |name: &str| name.starts_with("MangoHud") && name.ends_with(".json");
+    layer_dirs.iter().any(|dir| has_manifest(dir, is_mangohud))
+        || find_program(LAUNCHER, search_path).is_some()
 }
 
-/// A missing or unreadable folder holds no manifest.
-fn has_manifest(dir: &Path) -> bool {
+/// Whether `dir` holds a layer manifest: a regular file whose name `is_manifest` accepts. A
+/// missing or unreadable folder holds none, and a folder named like a manifest is not one.
+pub fn has_manifest(dir: &Path, is_manifest: impl Fn(&str) -> bool) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
     entries.flatten().any(|entry| {
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        name.starts_with("MangoHud")
-            && name.ends_with(".json")
+        is_manifest(&name.to_string_lossy())
             && fs::metadata(entry.path()).is_ok_and(|meta| meta.is_file())
     })
 }
@@ -195,6 +200,9 @@ fn chosen_metrics(settings: &OverlaySettings) -> &[Metric] {
 /// `cpu_stats` and `frametime` inside `fps`. So the parent line is written with them, and
 /// `frametime` (on by default) is turned off explicitly. The order is fixed, whatever the order
 /// of the list, and a figure listed twice is written once.
+///
+/// `fps_limit` is written only when a limit is set: one whole number, never a list (a list is
+/// several limits with a toggle key). Without the line MangoHud limits nothing.
 pub fn render(settings: &OverlaySettings) -> String {
     let chosen = chosen_metrics(settings);
     let has = |metric: Metric| chosen.contains(&metric);
@@ -205,6 +213,10 @@ pub fn render(settings: &OverlaySettings) -> String {
         format!("position={}", position_value(settings.position)),
         format!("toggle_hud={}", settings.toggle_key),
     ];
+    // An option, not an element: MangoHud limits the frame rate also while the overlay is hidden.
+    if let Some(limit) = settings.fps_limit {
+        lines.push(format!("fps_limit={limit}"));
+    }
     let mut add = |line: &str| lines.push(line.to_owned());
     if settings.preset == OverlayPreset::Off {
         add("no_display");
@@ -382,6 +394,10 @@ pub fn overlay_status(
 
 /// Saves the settings and writes them to `MangoHud.conf`. A file that is the user's own stays as
 /// it is: the status says `user_config`, and the settings reach it on a take-over.
+///
+/// `settings` replaces the saved overlay settings as a whole: unlike `set_settings`, nothing is
+/// merged with what was saved. So a missing `fps_limit` is `null` and clears the limit; the page
+/// sends back the object it received, and it ships in the same binary as this command.
 #[tauri::command]
 pub fn set_overlay(
     overlay: State<'_, Overlay>,
@@ -560,6 +576,49 @@ mod tests {
     }
 
     #[test]
+    fn a_limit_is_written_after_the_options_and_before_the_figures() {
+        let limited = OverlaySettings {
+            fps_limit: Some(144),
+            ..settings(OverlayPreset::Minimal)
+        };
+        assert_eq!(
+            body(&limited),
+            [
+                "legacy_layout=0",
+                "position=top-left",
+                "toggle_hud=Shift_R+F12",
+                "fps_limit=144",
+                "fps",
+                "frametime"
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_limit_no_fps_limit_line_is_written() {
+        for preset in [
+            OverlayPreset::Off,
+            OverlayPreset::Minimal,
+            OverlayPreset::Standard,
+            OverlayPreset::Full,
+        ] {
+            assert!(!render(&settings(preset)).contains("fps_limit"));
+        }
+    }
+
+    #[test]
+    fn the_limit_is_written_with_off_too() {
+        let limited = OverlaySettings {
+            fps_limit: Some(60),
+            ..settings(OverlayPreset::Off)
+        };
+        assert_eq!(
+            body(&limited)[3..],
+            ["fps_limit=60", "no_display", "fps", "frametime"]
+        );
+    }
+
+    #[test]
     fn the_advanced_list_replaces_the_figures_of_the_preset() {
         let settings = OverlaySettings {
             preset: OverlayPreset::Full,
@@ -614,6 +673,7 @@ mod tests {
             "legacy_layout",
             "position",
             "toggle_hud",
+            "fps_limit",
             "no_display",
             "gpu_stats",
             "gpu_temp",
@@ -626,11 +686,21 @@ mod tests {
             "fps",
             "frametime",
         ];
+        let mut written = Vec::new();
         for preset in [OverlayPreset::Off, OverlayPreset::Full] {
-            for line in body(&settings(preset)) {
-                let key = line.split('=').next().unwrap();
-                assert!(KNOWN.contains(&key), "{line}");
+            let limited = OverlaySettings {
+                fps_limit: Some(60),
+                ..settings(preset)
+            };
+            for line in body(&limited) {
+                let key = line.split('=').next().unwrap().to_owned();
+                assert!(KNOWN.contains(&key.as_str()), "{line}");
+                written.push(key);
             }
+        }
+        // Every known key is exercised, so a new one cannot be listed without being written.
+        for key in KNOWN {
+            assert!(written.iter().any(|w| w == key), "{key}");
         }
     }
 
@@ -897,10 +967,30 @@ mod tests {
                     "position": "top-left",
                     "metrics": [],
                     "toggle_key": "Shift_R+F12",
+                    "fps_limit": null,
                 },
                 "launch_hint": "mangohud %command%",
             })
         );
+        let limited = OverlaySettings {
+            fps_limit: Some(60),
+            ..OverlaySettings::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&limited).unwrap()["fps_limit"],
+            json!(60)
+        );
+        // What `set_overlay` receives: a number, `null`, or no field at all from an older caller.
+        for (sent, limit) in [(json!(60), Some(60)), (json!(null), None)] {
+            let mut value = serde_json::to_value(OverlaySettings::default()).unwrap();
+            value["fps_limit"] = sent;
+            let read: OverlaySettings = serde_json::from_value(value).unwrap();
+            assert_eq!(read.fps_limit, limit);
+        }
+        let mut older = serde_json::to_value(&limited).unwrap();
+        older.as_object_mut().unwrap().remove("fps_limit");
+        let read: OverlaySettings = serde_json::from_value(older).unwrap();
+        assert_eq!(read.fps_limit, None);
         for (state, value) in [
             (ConfigState::Absent, "absent"),
             (ConfigState::Managed, "managed"),

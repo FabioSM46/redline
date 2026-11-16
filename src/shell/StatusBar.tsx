@@ -3,11 +3,11 @@ import { statusBarItems } from "../gpu.ts";
 import { replayIndicator, replayIsOn, unavailableNotice } from "../recorder.ts";
 import { useRecorder } from "../RecorderContext.tsx";
 import { useUpdates } from "../UpdateContext.tsx";
-import { indicatorLabel, indicatorVersion } from "../updates.ts";
+import { versionIndicator } from "../updates.ts";
 
 /**
- * Always visible: GPU name, temperature and power of the selected GPU, an update if there is one,
- * then the replay (D8).
+ * Always visible: GPU name, temperature and power of the selected GPU, then the replay and, last on
+ * the right, the installed version (D8).
  */
 export function StatusBar() {
   const { gpu, reading } = useGpu();
@@ -25,45 +25,41 @@ export function StatusBar() {
           Sensors unreadable
         </span>
       )}
-      <UpdateIndicator />
       <RecorderIndicators />
+      <VersionIndicator />
     </footer>
   );
 }
 
 /**
- * A newer version: one click opens its release page, the other sets it aside. Information, not an
- * alarm, so it stays muted, and a failed check says nothing here: that is for Settings → General.
+ * The installed version, plain text until a newer release that is not dismissed exists: then it
+ * names both and one click opens the release page (D14). Information, not an alarm, so it stays
+ * muted, and a failed check says nothing here: that is for Settings → General, like dismissing.
+ * A failed action shows only while the button is there to try again.
  */
-function UpdateIndicator() {
-  const { update, busy, actionError, openRelease, dismiss } = useUpdates();
-  const version = indicatorVersion(update);
+function VersionIndicator() {
+  const { update, busy, actionError, openRelease } = useUpdates();
+  const version = versionIndicator(update);
   if (version === null) return null;
   return (
-    <span className="statusbar-update">
-      <button
-        type="button"
-        className="statusbar-update-open"
-        aria-disabled={busy}
-        title="Open the release page"
-        onClick={openRelease}
-      >
-        {indicatorLabel(version)}
-      </button>
-      <button
-        type="button"
-        className="statusbar-update-dismiss"
-        aria-disabled={busy}
-        aria-label={`Dismiss update ${version}`}
-        title="Dismiss this version"
-        onClick={dismiss}
-      >
-        ×
-      </button>
-      {actionError !== null && (
+    <span className="statusbar-version">
+      {version.clickable && actionError !== null && (
         <span className="statusbar-error" title={actionError}>
           Update action failed
         </span>
+      )}
+      {version.clickable ? (
+        <button
+          type="button"
+          className="statusbar-version-open"
+          aria-disabled={busy}
+          title={version.title ?? undefined}
+          onClick={openRelease}
+        >
+          {version.label}
+        </button>
+      ) : (
+        <span className="statusbar-version-text">{version.label}</span>
       )}
     </span>
   );

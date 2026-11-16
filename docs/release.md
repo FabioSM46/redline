@@ -39,7 +39,8 @@ Quit from the tray menu after each check: closing the window leaves the app runn
       `redline.desktop`.
 - [ ] It also lists `usr/share/doc/redline/THIRD-PARTY-LICENSES`,
       `usr/share/redline/install-dependency` and the polkit action.
-- [ ] `dpkg-deb -I <file>.deb` has `curl` among the dependencies.
+- [ ] `dpkg-deb -f <file>.deb Depends` lists `curl` as a package of its own and not as a later
+      alternative: `libcurl4`, `python-curl` and `wget | curl` do not count.
 
 ### Clean virtual machine (Ubuntu LTS)
 
@@ -60,10 +61,15 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 The check reads the latest release published on GitHub, not the candidate: test it with an
 installed package older than that release.
 
-- [ ] With an older version installed, the available version appears about 30 seconds after the
-      start, and the release page opens from the app.
-- [ ] Dismissing it hides it, also after a restart; the next release reports again.
-- [ ] With the check off, a restart makes no request; turning it on checks at once.
+- [ ] The status bar always ends, at the right, with the installed version (`v<installed>`) as
+      plain text.
+- [ ] With an older version installed, about 30 seconds after the start that item becomes a
+      button that names both versions (`v<installed> → <latest>`), and one click opens the release
+      page.
+- [ ] Dismissing the version in Settings → General turns the item back into plain text, also
+      after a restart; the next release reports again.
+- [ ] With the check off, the item is plain text and a restart makes no request; turning it on
+      checks at once.
 - [ ] Offline, the app starts normally and says the check did not get an answer.
 
 ### Tray, autostart and themes
@@ -168,8 +174,23 @@ published `0.1.0` package unless a line says otherwise. All passed:
 Not run: a clean virtual machine, Ubuntu 26.04, Debian 13, the shortcuts on GNOME 48 or KDE, and
 the recovery routes of D13.
 
-For `0.3.0` (2026-11-01) no manual check was run: the update notice and the overdrive stop across a
+For `0.3.0` (2026-11-02) no manual check was run: the update notice and the overdrive stop across a
 restart are covered by automated tests only, and the notice has not been seen in a running app.
+
+For `0.4.0`, reported by the maintainer on 2026-11-16 on the machine of the earlier reports
+(Ubuntu, GNOME on Wayland, an RDNA4 GPU), from a `develop` build taken before the version-bump
+commit. The tagged commit and its packages were not checked by hand again. All of these passed:
+
+- the FPS limit in a game;
+- the composed launch option pasted into a game;
+- frame generation with its layer installed (release 1.3.1, user-level install);
+- the upscaler watermark;
+- the installed version shown at the right end of the status bar, on that same build.
+
+Not run: the "Upscaler upgrade" switch, added after these checks; the "Update check" items that
+need an installed package older than the latest release (the item turning into a button,
+dismissing, the check turned off, offline); and every other item of "Manual checks before
+tagging". `SHA256SUMS` is written for the first time by the tag of this version.
 
 ## What CI checks on a tag
 
@@ -180,7 +201,10 @@ draft. On each system it checks that:
 - `apt install ./<file>.deb` succeeds and pulls in the dependencies from that system's archive;
 - `dpkg -V redline` prints nothing;
 - the desktop file, the polkit action, the install helper and the licenses are in place;
-- `curl`, which the update check runs, is on the path;
+- `curl`, which the update check runs, is on the path, and the `Depends` field of the package lists
+  it by name: an image that already has `curl` would otherwise hide a dropped declaration, and
+  `libcurl4` or `python-curl` does not stand for it. `scripts/distro-clean-install.sh` does the same
+  for the Arch and Fedora packages, with `pacman -Qi` and `rpm -q --requires`;
 - `ldd` resolves every library of `/usr/bin/redline`. The binary has no `--version`: every launch
   starts the GUI. The tray library is loaded at run time, out of `ldd`'s sight, so the script looks
   for it in the linker cache.
@@ -217,8 +241,13 @@ git push origin v0.1.0
 ## 4. Review the draft release
 
 - [ ] The `Release` run is green and the draft `Redline v0.1.0` exists on GitHub Releases.
-- [ ] Download `redline_0.1.0_amd64.deb` from the draft and repeat the `dpkg-deb -c` checks of
-      "The package".
+- [ ] The draft holds `SHA256SUMS` and the three packages, and nothing else. The `draft` job
+      writes the file with `scripts/release-checksums.sh` and fails if it does not list exactly
+      the packages uploaded.
+- [ ] Download the three packages and `SHA256SUMS` from the draft into one folder:
+      `sha256sum -c SHA256SUMS` prints `OK` for each package and names no missing file.
+- [ ] Repeat the `dpkg-deb -c` checks of "The package" on the downloaded
+      `redline_0.1.0_amd64.deb`.
 - [ ] Install it on the clean virtual machine; it starts from the menu.
 - [ ] Choose the release date: today, as `YYYY-MM-DD`. This is the only step that chooses it, and
       it stands even if publishing happens on a later day.
@@ -226,8 +255,12 @@ git push origin v0.1.0
       date.
 
 If the package is wrong, do not publish: fix it through `develop` and `main`, then move the tag to
-the new commit. The workflow replaces the package of a draft, and refuses to touch a published
-release.
+the new commit. The workflow replaces the packages and `SHA256SUMS` of a draft, and refuses to
+touch a published release.
+
+The workflow replaces files by name and deletes nothing. If a package changed its name since the
+draft was created, the old file stays in the draft and the `draft` job fails, naming it under
+`only in the release`: delete that asset from the draft by hand, then re-run the job.
 
 ## 5. Publish
 

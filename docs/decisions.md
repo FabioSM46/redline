@@ -79,7 +79,7 @@ way at once.
 │   (section content)                                                │
 │                                                                    │
 ├────────────────────────────────────────────────────────────────────┤
-│ <GPU name> · 41 °C · 32 W · 772 MHz            ⏺ Replay 60 s · ON  │
+│ <GPU name> · 41 °C · 32 W · 772 MHz    ⏺ Replay 60 s · ON  v0.3.0  │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -100,8 +100,17 @@ way at once.
   - **About**.
 - **Status bar**: GPU temperature and power, plus the replay indicator, which is also a
   switch. It is the single place that shows the replay state (Home's replay switch controls the
-  same state), so nobody has to open Home to know whether the replay is recording. The tab bar
-  and the status bar are fixed; only the section content between them scrolls.
+  same state), so nobody has to open Home to know whether the replay is recording. The last item
+  on the right is the installed version (`v0.3.0`), muted and in tabular figures: plain text, not
+  focusable, and absent while the update status is loading or unreadable. When a newer release
+  that is not dismissed exists (D14) the same place becomes a button that names both versions
+  (`v0.3.0 → 0.4.0`) and opens the release page; there is no separate update notice and no
+  dismiss control in the bar. The tab bar and the status bar are fixed; only the section content
+  between them scrolls.
+
+  Update (2026-11-16): the version item replaces the "Update … available" button and its `×`,
+  which appeared only when an update existed. The installed version is now always in view, and
+  dismissing a version is done in Settings → General only.
 - **Several GPUs**: a selector in the top bar, shown only when there is more than one.
 
 **Tray and lifetime.** Redline has a tray icon. Closing the window hides it to the tray: the app
@@ -363,7 +372,8 @@ would run an unverified download as root.
   twice on a day with a retry: `unreachable` means no usable answer reached Redline, not that
   nothing reached GitHub, and a timeout or a broken connection can come after the request left.
   `check_for_updates` (on by default) turns it off: no request is made, no retry waits, and what
-  the checks found is forgotten, so no notice outlives the opt-out. A check still running at that
+  the checks found is forgotten, so the status bar goes back to the plain installed version and
+  nothing about an update outlives the opt-out. A check still running at that
   moment is dropped. The README says so.
 - **Only a strictly newer stable `major.minor.patch` is an update.** An equal or older version, a
   build newer than the release or an unreadable tag or answer reports nothing.
@@ -378,8 +388,68 @@ would run an unverified download as root.
   rounds do not move. `refused`, `bad_response` and `curl_missing` are never retried early: a rate
   limit must be left alone, and the others will not change in five minutes.
 - **A dismissal holds one version**: a later version reports again.
+- **Where it shows** (changed 2026-11-16): the status bar's version item (D8) becomes a button
+  that names the installed and the newer version and opens the release page; a dismissed version
+  leaves it as plain text. Settings → General has the row with the outcome of the last check and
+  the only control that dismisses a version. A failed check shows in General alone.
 
 Rejected: the Tauri updater plugin and any in-app install (see above); a crate for HTTP or for the
 comparison (`reqwest` and its TLS stack, `semver` for three numbers); following prereleases or a
 channel selector; notifying from the tray or the desktop; backoff, several retries or waiting on
 a network-online signal.
+
+## D15 — Game launch options: Redline composes, the player pastes (2026-11-16)
+
+Redline does one thing for a game: it composes a launch option and shows it. Starting the game
+with it stays the player's act, in the launcher.
+
+- **One string, composed from the player's choices.** The choices are the overlay (D12), frame
+  generation, the upscaler upgrade and the upscaler watermark. Redline turns them into a single
+  launch option (variables first, then the `mangohud` wrapper, then `%command%`) and shows it
+  with a Copy button, to be pasted into the launcher. With only the overlay chosen it is the
+  `mangohud %command%` of D12.
+- **Redline never edits the launcher's configuration and never sets a variable globally.** No
+  write to Steam's or Lutris's files, no `environment.d`, no `/etc/environment`. The reasoning is
+  D12's: a global variable reaches every application of the session, and a value the player set
+  would be overridden without warning. A pasted line is visible where it acts and is removed the
+  same way.
+- **The choices are global; Redline keeps no per-game state.** There is no list of games, no
+  per-game profile and no detection of the running game. A game that needs a different line gets
+  it from the player: change the choices, copy, paste.
+- **The FPS limit is not part of the string.** It is a MangoHud key (`fps_limit`) in the global
+  `MangoHud.conf` that Redline manages (D12), so it applies to every game started with MangoHud
+  and to none started without it.
+- **A missing tool is a disabled choice, not an error**: a choice whose tool is not installed
+  composes nothing and says what to install.
+
+- **The upscaler upgrade is a fourth choice (#170).** The watermark alone shows nothing unless
+  Proton's upscaler upgrade is on, and until this choice existed the player had to add that
+  variable by hand. The switch is off by default and, like the other three, only composes text
+  the player pastes: `PROTON_FSR4_UPGRADE=1`, written before the watermark's variable. It changes
+  how a game renders, so it stays a choice of its own instead of following the watermark.
+  Redline still keeps no per-game state and sets nothing globally, does not detect whether a
+  game or a GPU supports the upgrade, and pins no upscaler version. Which Proton builds read the
+  variable is in `docs/architecture.md` ("Launch options").
+
+The code shipped with version 0.4.0 (#153 to #156, and #170 for the upscaler upgrade).
+
+Rejected / not possible:
+
+- **Upscaling through Gamescope.** It would be a fifth external tool, after LACT, GPU Screen
+  Recorder, ffmpeg and MangoHud, and one that the reference distribution does not reliably
+  package; the overlay must then be started differently
+  (`--mangoapp` instead of the `mangohud` wrapper); and what it offers is a spatial upscaler,
+  below what games already ship. Deferred, not refused for ever.
+- **An anti-lag switch.** `VK_AMD_anti_lag` is a Vulkan extension the game itself must call:
+  there is no global switch to offer. Up to Mesa 26.2 it comes from an implicit Mesa layer
+  (`VK_LAYER_MESA_anti_lag`); from Mesa 26.3 RADV implements it natively and the layer is gone
+  (checked on 2026-11-16 against Mesa 26.2.6 and 26.3).
+- **A status-bar badge for the running game's upscaler.** Reading the memory maps of the
+  player's own processes only proves that a library is loaded, not that the upscaler is active.
+  Proton's own watermark answers the question reliably, which is why the watermark is a choice.
+- **The upscaler version in the overlay.** MangoHud's `fsr` key works only inside Gamescope and
+  reports Gamescope's own upscaler, not the game's.
+- **Detecting a game's frame generation.** Nothing exposes it: no sysfs file, no driver
+  statistic, no overlay key.
+- **HDR colour accuracy and saturation.** Display colour belongs to the Wayland compositor, as
+  display settings belong to the desktop (`docs/context.md`).

@@ -25,6 +25,8 @@ export type OverlaySettings = {
   /** "Advanced": when not empty, these figures replace the ones of the preset. */
   metrics: OverlayMetric[];
   toggle_key: string;
+  /** Frames per second for every game started with MangoHud; `null`: no limit. */
+  fps_limit: number | null;
 };
 
 /** `ConfigState` in src-tauri/src/overlay.rs: who owns `MangoHud.conf`. */
@@ -87,6 +89,40 @@ export const PRESET_METRICS: Record<OverlayPreset, readonly OverlayMetric[]> = {
   standard: STANDARD,
   full: FULL,
 };
+
+/** `OVERLAY_FPS_LIMIT` in src-tauri/src/settings.rs: the whole numbers the backend accepts as a limit. */
+export const FPS_LIMIT_MIN = 1;
+export const FPS_LIMIT_MAX = 1000;
+
+/** The limit saved when "FPS limit" is switched on, until the user types their own. */
+export const DEFAULT_FPS_LIMIT = 60;
+
+/**
+ * The backend's sentence for a limit outside its range (`check_fps_limit` in settings.rs), for
+ * text that cannot be sent at all: `set_overlay` takes a whole number or `null`, nothing else.
+ */
+export const FPS_LIMIT_REFUSED = `The FPS limit must be between ${FPS_LIMIT_MIN} and ${FPS_LIMIT_MAX}, or off`;
+
+/** More digits than this is not a number the command's argument can hold. */
+const MAX_LIMIT_DIGITS = 9;
+
+/**
+ * What the text of the limit field asks for: `null` when it is empty (nothing typed, the saved
+ * limit stays), a whole number to send, or `"refused"` for text `set_overlay` cannot receive
+ * (a sign, a fraction, an exponent, letters). The range is not judged here: a whole number
+ * outside it is sent, and the backend answers with its sentence.
+ */
+export function readFpsLimit(text: string): number | "refused" | null {
+  const typed = text.trim();
+  if (typed === "") return null;
+  if (!/^\d+$/.test(typed) || typed.length > MAX_LIMIT_DIGITS) return "refused";
+  return Number(typed);
+}
+
+/** `settings` with this limit (`null`: none); the same object when nothing changes. */
+export function withFpsLimit(settings: OverlaySettings, limit: number | null): OverlaySettings {
+  return settings.fps_limit === limit ? settings : { ...settings, fps_limit: limit };
+}
 
 /** The Advanced list replaces the preset's figures. */
 export function hasOwnFigures(settings: OverlaySettings): boolean {

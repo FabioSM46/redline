@@ -4,6 +4,10 @@ import { describe, it } from "node:test";
 import {
   BACKUP_FILE,
   chosenMetrics,
+  DEFAULT_FPS_LIMIT,
+  FPS_LIMIT_MAX,
+  FPS_LIMIT_MIN,
+  FPS_LIMIT_REFUSED,
   hasOwnFigures,
   isLastMetric,
   OVERLAY_METRICS,
@@ -14,9 +18,11 @@ import {
   type OverlayStatus,
   overlayDescription,
   PRESET_METRICS,
+  readFpsLimit,
   savedNote,
   shownFigures,
   toggleMetric,
+  withFpsLimit,
 } from "./overlay.ts";
 
 const settings = (overrides: Partial<OverlaySettings> = {}): OverlaySettings => ({
@@ -24,6 +30,7 @@ const settings = (overrides: Partial<OverlaySettings> = {}): OverlaySettings => 
   position: "top-left",
   metrics: [],
   toggle_key: "Shift_R+F12",
+  fps_limit: null,
   ...overrides,
 });
 
@@ -109,6 +116,46 @@ describe("toggleMetric", () => {
   });
 });
 
+describe("readFpsLimit", () => {
+  it("reads a whole number, with spaces around it", () => {
+    assert.equal(readFpsLimit("144"), 144);
+    assert.equal(readFpsLimit(" 60 "), 60);
+    assert.equal(readFpsLimit("060"), 60);
+  });
+
+  it("leaves the range to the backend: a whole number outside it is still sent", () => {
+    assert.equal(readFpsLimit("0"), 0);
+    assert.equal(readFpsLimit("1001"), 1001);
+    assert.equal(readFpsLimit("999999999"), 999999999);
+  });
+
+  it("reads empty text as nothing typed", () => {
+    assert.equal(readFpsLimit(""), null);
+    assert.equal(readFpsLimit("  "), null);
+  });
+
+  it("refuses what the command cannot receive", () => {
+    for (const text of ["-5", "+5", "59.94", "1e3", "0x40", "sixty", "60 fps", "1 000", "1000000000"]) {
+      assert.equal(readFpsLimit(text), "refused", text);
+    }
+  });
+});
+
+describe("withFpsLimit", () => {
+  it("sets and clears the limit, and changes nothing else", () => {
+    const before = settings({ preset: "off", metrics: ["ram"] });
+    assert.deepEqual(withFpsLimit(before, 144), { ...before, fps_limit: 144 });
+    assert.deepEqual(withFpsLimit(settings({ fps_limit: 144 }), null), settings());
+  });
+
+  it("returns the same object when the limit is already that one, so nothing is saved", () => {
+    const limited = settings({ fps_limit: 60 });
+    assert.equal(withFpsLimit(limited, 60), limited);
+    const free = settings();
+    assert.equal(withFpsLimit(free, null), free);
+  });
+});
+
 describe("savedNote", () => {
   it("does not imply that a file of the user's changed", () => {
     assert.equal(savedNote("user_config").includes("not changed"), true);
@@ -170,9 +217,20 @@ describe("mirrors of the backend", () => {
 
   it("has the same fields", () => {
     const status: (keyof OverlayStatus)[] = ["available", "unavailable_reason", "config", "settings", "launch_hint"];
-    const form: (keyof OverlaySettings)[] = ["preset", "position", "metrics", "toggle_key"];
+    const form: (keyof OverlaySettings)[] = ["preset", "position", "metrics", "toggle_key", "fps_limit"];
     assert.deepEqual(fields(overlayRs, "OverlayStatus"), status);
     assert.deepEqual(fields(settingsRs, "OverlaySettings"), form);
+  });
+
+  it("has the same FPS limit range and refusal", () => {
+    assert.equal(
+      settingsRs.includes(`pub const OVERLAY_FPS_LIMIT: RangeInclusive<u32> = ${FPS_LIMIT_MIN}..=${FPS_LIMIT_MAX};`),
+      true,
+    );
+    const sentence = FPS_LIMIT_REFUSED.replace(String(FPS_LIMIT_MIN), "{}").replace(String(FPS_LIMIT_MAX), "{}");
+    assert.equal(settingsRs.includes(`"${sentence}"`), true);
+    assert.equal(DEFAULT_FPS_LIMIT >= FPS_LIMIT_MIN && DEFAULT_FPS_LIMIT <= FPS_LIMIT_MAX, true);
+    assert.equal(/fps_limit: None,/.test(settingsRs), true);
   });
 
   it("has the same preset figures", () => {
