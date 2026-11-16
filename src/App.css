@@ -1281,6 +1281,28 @@ body {
   width: calc(var(--space) * 12);
 }
 
+.overlay-limit,
+.overlay-limit-value {
+  display: inline-flex;
+  align-items: center;
+}
+
+.overlay-limit {
+  gap: var(--space);
+}
+
+.overlay-limit-value {
+  gap: calc(var(--space-sm) / 2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.overlay-limit-number {
+  flex: none;
+  width: calc(var(--space) * 5);
+  font-variant-numeric: tabular-nums;
+}
+
 .overlay-message {
   margin: 0;
 }

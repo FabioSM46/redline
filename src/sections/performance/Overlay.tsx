@@ -3,6 +3,10 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import {
   BACKUP_FILE,
   chosenMetrics,
+  DEFAULT_FPS_LIMIT,
+  FPS_LIMIT_MAX,
+  FPS_LIMIT_MIN,
+  FPS_LIMIT_REFUSED,
   hasOwnFigures,
   isLastMetric,
   OVERLAY_METRICS,
@@ -12,8 +16,10 @@ import {
   type OverlaySettings,
   type OverlayStatus,
   overlayDescription,
+  readFpsLimit,
   savedNote,
   toggleMetric,
+  withFpsLimit,
 } from "../../overlay.ts";
 import type { Navigate } from "../../tabs.ts";
 import { IDLE, type Loaded, type SaveState, Setting } from "../settings/Setting.tsx";
@@ -96,6 +102,9 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
   /** The toggle key being typed; `null` shows the saved one. */
   const [draftKey, setDraftKey] = useState<string | null>(null);
   const key = draftKey ?? settings.toggle_key;
+  /** The FPS limit being typed; `null` shows the saved one. */
+  const [draftLimit, setDraftLimit] = useState<string | null>(null);
+  const limit = draftLimit ?? (settings.fps_limit === null ? "" : String(settings.fps_limit));
 
   // Writes run one at a time, and each is built on the newest saved settings when its turn comes.
   // Nothing is dropped: leaving the key field for another control starts a save, and the click
@@ -117,7 +126,7 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
     onStatus(reply);
   }
 
-  function saveSettings(change: (current: OverlaySettings) => OverlaySettings) {
+  function saveSettings(change: (current: OverlaySettings) => OverlaySettings, refused?: () => void) {
     setSave(IDLE);
     enqueue(() => {
       const current = latest.current;
@@ -127,9 +136,15 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
         (reply) => {
           accept(reply);
           setDraftKey((draft) => (draft === reply.settings.toggle_key ? null : draft));
+          // With the limit off there is no field, so no text of it is left to show later.
+          const saved = reply.settings.fps_limit;
+          setDraftLimit((draft) => (saved === null || (draft !== null && readFpsLimit(draft) === saved) ? null : draft));
           setNote(savedNote(reply.config));
         },
-        (e) => setSave({ status: "error", message: String(e) }),
+        (e) => {
+          refused?.();
+          setSave({ status: "error", message: String(e) });
+        },
       );
     });
   }
@@ -148,6 +163,38 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
   function onKeySubmit(event: FormEvent) {
     event.preventDefault();
     saveKey();
+  }
+
+  /**
+   * The typed limit, saved when the field is left or Enter is pressed. The field keeps the text
+   * while it is saved, then shows the saved limit again: the new one, or the old one when the
+   * text cannot be sent or the backend refuses it.
+   */
+  function saveLimit() {
+    if (draftLimit === null) return;
+    const text = draftLimit;
+    const typed = readFpsLimit(text);
+    const settle = () => setDraftLimit((draft) => (draft === text ? null : draft));
+    if (typed === null || typed === settings.fps_limit) {
+      setDraftLimit(null);
+    } else if (typed === "refused") {
+      setDraftLimit(null);
+      setNote(null);
+      setSave({ status: "error", message: FPS_LIMIT_REFUSED });
+    } else {
+      setDraftKey(null);
+      // A limit switched off while this waited in the queue stays off.
+      saveSettings((current) => {
+        const next = current.fps_limit === null ? current : withFpsLimit(current, typed);
+        if (next === current) settle();
+        return next;
+      }, settle);
+    }
+  }
+
+  function onLimitSubmit(event: FormEvent) {
+    event.preventDefault();
+    saveLimit();
   }
 
   const takingOver = takeOver.status === "saving";
@@ -288,6 +335,44 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
             aria-invalid={save.status === "error" && draftKey !== null}
             onChange={(event) => setDraftKey(event.target.value)}
             onBlur={saveKey}
+          />
+        </form>
+      </Setting>
+
+      <Setting
+        title="FPS limit"
+        description="Caps the frame rate of games started with MangoHud, also while the overlay is hidden."
+        save={IDLE}
+      >
+        <form className="overlay-limit" onSubmit={onLimitSubmit}>
+          {settings.fps_limit !== null && (
+            <label className="overlay-limit-value">
+              <input
+                type="number"
+                className="setting-input overlay-limit-number"
+                aria-label="FPS limit in frames per second"
+                min={FPS_LIMIT_MIN}
+                max={FPS_LIMIT_MAX}
+                step={1}
+                value={limit}
+                onChange={(event) => setDraftLimit(event.target.value)}
+                onBlur={saveLimit}
+              />
+              <span>FPS</span>
+            </label>
+          )}
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch"
+            aria-label="FPS limit"
+            checked={settings.fps_limit !== null}
+            onChange={(event) => {
+              const on = event.target.checked;
+              saveChoice((current) =>
+                (current.fps_limit !== null) === on ? current : withFpsLimit(current, on ? DEFAULT_FPS_LIMIT : null),
+              );
+            }}
           />
         </form>
       </Setting>
