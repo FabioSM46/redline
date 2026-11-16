@@ -177,11 +177,20 @@ the recovery routes of D13.
 For `0.3.0` (2026-11-02) no manual check was run: the update notice and the overdrive stop across a
 restart are covered by automated tests only, and the notice has not been seen in a running app.
 
-For `0.4.0` the maintainer started a `develop` build on 2026-11-16 and reported no problem, without
-naming the checks, so no item of the list is recorded as run. In particular: the FPS limit in a
-game, the composed launch option in a game, frame generation with its layer installed, the
-upscaler watermark, and the version item of the status bar against an older installed package.
-`SHA256SUMS` is written for the first time by the tag of this version.
+For `0.4.0`, reported by the maintainer on 2026-11-16 on the machine of the earlier reports
+(Ubuntu, GNOME on Wayland, an RDNA4 GPU), from a `develop` build taken before the version-bump
+commit. The tagged commit and its packages were not checked by hand again. All of these passed:
+
+- the FPS limit in a game;
+- the composed launch option pasted into a game;
+- frame generation with its layer installed (release 1.3.1, user-level install);
+- the upscaler watermark;
+- the installed version shown at the right end of the status bar, on that same build.
+
+Not run: the "Upscaler upgrade" switch, added after these checks; the "Update check" items that
+need an installed package older than the latest release (the item turning into a button,
+dismissing, the check turned off, offline); and every other item of "Manual checks before
+tagging". `SHA256SUMS` is written for the first time by the tag of this version.
 
 ## What CI checks on a tag
 
