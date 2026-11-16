@@ -24,6 +24,7 @@ const settings = (overrides: Partial<OverlaySettings> = {}): OverlaySettings => 
   position: "top-left",
   metrics: [],
   toggle_key: "Shift_R+F12",
+  fps_limit: null,
   ...overrides,
 });
 
@@ -170,7 +171,7 @@ describe("mirrors of the backend", () => {
 
   it("has the same fields", () => {
     const status: (keyof OverlayStatus)[] = ["available", "unavailable_reason", "config", "settings", "launch_hint"];
-    const form: (keyof OverlaySettings)[] = ["preset", "position", "metrics", "toggle_key"];
+    const form: (keyof OverlaySettings)[] = ["preset", "position", "metrics", "toggle_key", "fps_limit"];
     assert.deepEqual(fields(overlayRs, "OverlayStatus"), status);
     assert.deepEqual(fields(settingsRs, "OverlaySettings"), form);
   });

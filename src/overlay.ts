@@ -25,6 +25,8 @@ export type OverlaySettings = {
   /** "Advanced": when not empty, these figures replace the ones of the preset. */
   metrics: OverlayMetric[];
   toggle_key: string;
+  /** Frames per second for every game started with MangoHud; `null`: no limit. */
+  fps_limit: number | null;
 };
 
 /** `ConfigState` in src-tauri/src/overlay.rs: who owns `MangoHud.conf`. */
