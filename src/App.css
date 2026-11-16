@@ -1321,3 +1321,16 @@ body {
   justify-content: space-between;
   gap: var(--space-sm);
 }
+
+/* "Turn it on in a game": one row per switch, its text on the left, above the command. */
+.launch-options {
+  display: grid;
+  justify-self: stretch;
+  gap: var(--space-sm);
+}
+
+.launch-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+}

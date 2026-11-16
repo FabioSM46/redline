@@ -177,8 +177,17 @@ function Commands() {
   );
 }
 
-/** A command to copy: the text, its Copy button and what happened. Also used by the overlay. */
+/** A row with a command to copy. */
 export function CommandRow({ title, description, command }: { title: string; description: string; command: string }) {
+  return (
+    <Setting title={title} description={description} save={IDLE} wide>
+      <CommandLine command={command} />
+    </Setting>
+  );
+}
+
+/** A command to copy: the text, its Copy button and what happened. Also used by the overlay. */
+export function CommandLine({ command }: { command: string }) {
   const [copy, setCopy] = useState<CopyState>({ status: "idle" });
 
   useEffect(() => {
@@ -195,7 +204,7 @@ export function CommandRow({ title, description, command }: { title: string; des
   }
 
   return (
-    <Setting title={title} description={description} save={IDLE} wide>
+    <>
       <div className="command">
         <code className="command-text">{command}</code>
         <button type="button" className="button" onClick={onCopy} aria-label={`Copy ${command}`}>
@@ -212,7 +221,7 @@ export function CommandRow({ title, description, command }: { title: string; des
           {copy.message}
         </span>
       )}
-    </Setting>
+    </>
   );
 }
 
