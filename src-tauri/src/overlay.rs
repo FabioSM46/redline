@@ -195,6 +195,9 @@ fn chosen_metrics(settings: &OverlaySettings) -> &[Metric] {
 /// `cpu_stats` and `frametime` inside `fps`. So the parent line is written with them, and
 /// `frametime` (on by default) is turned off explicitly. The order is fixed, whatever the order
 /// of the list, and a figure listed twice is written once.
+///
+/// `fps_limit` is written only when a limit is set: one whole number, never a list (a list is
+/// several limits with a toggle key). Without the line MangoHud limits nothing.
 pub fn render(settings: &OverlaySettings) -> String {
     let chosen = chosen_metrics(settings);
     let has = |metric: Metric| chosen.contains(&metric);
@@ -205,6 +208,10 @@ pub fn render(settings: &OverlaySettings) -> String {
         format!("position={}", position_value(settings.position)),
         format!("toggle_hud={}", settings.toggle_key),
     ];
+    // An option, not an element: MangoHud limits the frame rate also while the overlay is hidden.
+    if let Some(limit) = settings.fps_limit {
+        lines.push(format!("fps_limit={limit}"));
+    }
     let mut add = |line: &str| lines.push(line.to_owned());
     if settings.preset == OverlayPreset::Off {
         add("no_display");
@@ -560,6 +567,49 @@ mod tests {
     }
 
     #[test]
+    fn a_limit_is_written_after_the_options_and_before_the_figures() {
+        let limited = OverlaySettings {
+            fps_limit: Some(144),
+            ..settings(OverlayPreset::Minimal)
+        };
+        assert_eq!(
+            body(&limited),
+            [
+                "legacy_layout=0",
+                "position=top-left",
+                "toggle_hud=Shift_R+F12",
+                "fps_limit=144",
+                "fps",
+                "frametime"
+            ]
+        );
+    }
+
+    #[test]
+    fn without_a_limit_no_fps_limit_line_is_written() {
+        for preset in [
+            OverlayPreset::Off,
+            OverlayPreset::Minimal,
+            OverlayPreset::Standard,
+            OverlayPreset::Full,
+        ] {
+            assert!(!render(&settings(preset)).contains("fps_limit"));
+        }
+    }
+
+    #[test]
+    fn the_limit_is_written_with_off_too() {
+        let limited = OverlaySettings {
+            fps_limit: Some(60),
+            ..settings(OverlayPreset::Off)
+        };
+        assert_eq!(
+            body(&limited)[3..],
+            ["fps_limit=60", "no_display", "fps", "frametime"]
+        );
+    }
+
+    #[test]
     fn the_advanced_list_replaces_the_figures_of_the_preset() {
         let settings = OverlaySettings {
             preset: OverlayPreset::Full,
@@ -614,6 +664,7 @@ mod tests {
             "legacy_layout",
             "position",
             "toggle_hud",
+            "fps_limit",
             "no_display",
             "gpu_stats",
             "gpu_temp",
@@ -626,11 +677,21 @@ mod tests {
             "fps",
             "frametime",
         ];
+        let mut written = Vec::new();
         for preset in [OverlayPreset::Off, OverlayPreset::Full] {
-            for line in body(&settings(preset)) {
-                let key = line.split('=').next().unwrap();
-                assert!(KNOWN.contains(&key), "{line}");
+            let limited = OverlaySettings {
+                fps_limit: Some(60),
+                ..settings(preset)
+            };
+            for line in body(&limited) {
+                let key = line.split('=').next().unwrap().to_owned();
+                assert!(KNOWN.contains(&key.as_str()), "{line}");
+                written.push(key);
             }
+        }
+        // Every known key is exercised, so a new one cannot be listed without being written.
+        for key in KNOWN {
+            assert!(written.iter().any(|w| w == key), "{key}");
         }
     }
 
@@ -897,10 +958,30 @@ mod tests {
                     "position": "top-left",
                     "metrics": [],
                     "toggle_key": "Shift_R+F12",
+                    "fps_limit": null,
                 },
                 "launch_hint": "mangohud %command%",
             })
         );
+        let limited = OverlaySettings {
+            fps_limit: Some(60),
+            ..OverlaySettings::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&limited).unwrap()["fps_limit"],
+            json!(60)
+        );
+        // What `set_overlay` receives: a number, `null`, or no field at all from an older caller.
+        for (sent, limit) in [(json!(60), Some(60)), (json!(null), None)] {
+            let mut value = serde_json::to_value(OverlaySettings::default()).unwrap();
+            value["fps_limit"] = sent;
+            let read: OverlaySettings = serde_json::from_value(value).unwrap();
+            assert_eq!(read.fps_limit, limit);
+        }
+        let mut older = serde_json::to_value(&limited).unwrap();
+        older.as_object_mut().unwrap().remove("fps_limit");
+        let read: OverlaySettings = serde_json::from_value(older).unwrap();
+        assert_eq!(read.fps_limit, None);
         for (state, value) in [
             (ConfigState::Absent, "absent"),
             (ConfigState::Managed, "managed"),
