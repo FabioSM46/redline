@@ -68,9 +68,8 @@ things named below changes.
     maintainer writes the manifest and the submission by hand.
     The application: generated code, documentation and packaging must be disclosed, "Disclosure
     does not create a presumption of acceptance", and reviewers may reject on the extent or role
-    of the generated material. This one has no answer today: Redline is developed with the agent
-    pipeline described in `AGENTS.md`, so the disclosure would cover most of the application, and
-    a hand-written manifest does not change that.
+    of the generated material. This one has no answer today: Redline's code is written with AI
+    assistance, as `AGENTS.md` describes, and a hand-written manifest does not change that.
   - *Host-dependent applications*: an application that relies on host components for its core
     function, or that is a thin wrapper around other tools, is not accepted, exceptions aside.
     Tuning, replay and the overlay all rest on `lactd`, GPU Screen Recorder and MangoHud
@@ -94,8 +93,8 @@ release since 0.4.0 has `SHA256SUMS` (integrity, not a signature).
 
 What would change the answer: for the distribution repositories, a history of releases and users,
 which only time gives. For Flathub, age settles the maturity rule alone; the rule on generated
-application code stands until Flathub changes it or Redline's code is no longer written through
-the agent pipeline, and the host-dependency rule stands as long as D2 does.
+application code stands until Flathub changes it or Redline's code is no longer written with AI
+assistance, and the host-dependency rule stands as long as D2 does.
 
 ## D5 — Global shortcuts (2026-10-29)
 
