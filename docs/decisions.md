@@ -79,7 +79,7 @@ way at once.
 │   (section content)                                                │
 │                                                                    │
 ├────────────────────────────────────────────────────────────────────┤
-│ <GPU name> · 41 °C · 32 W · 772 MHz            ⏺ Replay 60 s · ON  │
+│ <GPU name> · 41 °C · 32 W · 772 MHz    ⏺ Replay 60 s · ON  v0.3.0  │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -100,8 +100,17 @@ way at once.
   - **About**.
 - **Status bar**: GPU temperature and power, plus the replay indicator, which is also a
   switch. It is the single place that shows the replay state (Home's replay switch controls the
-  same state), so nobody has to open Home to know whether the replay is recording. The tab bar
-  and the status bar are fixed; only the section content between them scrolls.
+  same state), so nobody has to open Home to know whether the replay is recording. The last item
+  on the right is the installed version (`v0.3.0`), muted and in tabular figures: plain text, not
+  focusable, and absent while the update status is loading or unreadable. When a newer release
+  that is not dismissed exists (D14) the same place becomes a button that names both versions
+  (`v0.3.0 → 0.4.0`) and opens the release page; there is no separate update notice and no
+  dismiss control in the bar. The tab bar and the status bar are fixed; only the section content
+  between them scrolls.
+
+  Update (2026-11-16): the version item replaces the "Update … available" button and its `×`,
+  which appeared only when an update existed. The installed version is now always in view, and
+  dismissing a version is done in Settings → General only.
 - **Several GPUs**: a selector in the top bar, shown only when there is more than one.
 
 **Tray and lifetime.** Redline has a tray icon. Closing the window hides it to the tray: the app
@@ -363,7 +372,8 @@ would run an unverified download as root.
   twice on a day with a retry: `unreachable` means no usable answer reached Redline, not that
   nothing reached GitHub, and a timeout or a broken connection can come after the request left.
   `check_for_updates` (on by default) turns it off: no request is made, no retry waits, and what
-  the checks found is forgotten, so no notice outlives the opt-out. A check still running at that
+  the checks found is forgotten, so the status bar goes back to the plain installed version and
+  nothing about an update outlives the opt-out. A check still running at that
   moment is dropped. The README says so.
 - **Only a strictly newer stable `major.minor.patch` is an update.** An equal or older version, a
   build newer than the release or an unreadable tag or answer reports nothing.
@@ -378,6 +388,10 @@ would run an unverified download as root.
   rounds do not move. `refused`, `bad_response` and `curl_missing` are never retried early: a rate
   limit must be left alone, and the others will not change in five minutes.
 - **A dismissal holds one version**: a later version reports again.
+- **Where it shows** (changed 2026-11-16): the status bar's version item (D8) becomes a button
+  that names the installed and the newer version and opens the release page; a dismissed version
+  leaves it as plain text. Settings → General has the row with the outcome of the last check and
+  the only control that dismisses a version. A failed check shows in General alone.
 
 Rejected: the Tauri updater plugin and any in-app install (see above); a crate for HTTP or for the
 comparison (`reqwest` and its TLS stack, `semver` for three numbers); following prereleases or a

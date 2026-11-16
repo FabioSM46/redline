@@ -61,10 +61,15 @@ Quit from the tray menu after each check: closing the window leaves the app runn
 The check reads the latest release published on GitHub, not the candidate: test it with an
 installed package older than that release.
 
-- [ ] With an older version installed, the available version appears about 30 seconds after the
-      start, and the release page opens from the app.
-- [ ] Dismissing it hides it, also after a restart; the next release reports again.
-- [ ] With the check off, a restart makes no request; turning it on checks at once.
+- [ ] The status bar always ends, at the right, with the installed version (`v<installed>`) as
+      plain text.
+- [ ] With an older version installed, about 30 seconds after the start that item becomes a
+      button that names both versions (`v<installed> → <latest>`), and one click opens the release
+      page.
+- [ ] Dismissing the version in Settings → General turns the item back into plain text, also
+      after a restart; the next release reports again.
+- [ ] With the check off, the item is plain text and a restart makes no request; turning it on
+      checks at once.
 - [ ] Offline, the app starts normally and says the check did not get an answer.
 
 ### Tray, autostart and themes
