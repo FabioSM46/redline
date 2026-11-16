@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type LaunchChoice, type LaunchOptionsStatus, launchSwitches, withChoice } from "../../launch.ts";
 import {
   BACKUP_FILE,
   chosenMetrics,
@@ -21,13 +22,14 @@ import {
 } from "../../overlay.ts";
 import type { Navigate } from "../../tabs.ts";
 import { IDLE, type Loaded, type SaveState, Setting } from "../settings/Setting.tsx";
-import { CommandRow } from "../settings/Shortcuts.tsx";
+import { CommandLine } from "../settings/Shortcuts.tsx";
 
 /**
  * The in-game overlay (D12): what MangoHud shows, where, its key and the launch option that turns
  * it on for a game. Every setting travels in one `set_overlay` call and the page shows the status
  * it answers with. A `MangoHud.conf` of the user's stays as it is until they agree to a take-over,
- * asked in the page.
+ * asked in the page. The launch option (D15) is a block of its own, also there without MangoHud:
+ * its other choices do not need it.
  */
 export function Overlay({ navigate }: { navigate: Navigate }) {
   const [status, setStatus] = useState<Loaded<OverlayStatus>>({ status: "loading" });
@@ -64,16 +66,30 @@ export function Overlay({ navigate }: { navigate: Navigate }) {
       )}
       {status.status === "ready" &&
         (status.value.available ? (
-          <OverlayControls status={status.value} onStatus={(value) => setStatus({ status: "ready", value })} />
+          <OverlayControls status={status.value} onStatus={(value) => setStatus({ status: "ready", value })}>
+            <LaunchOptions />
+          </OverlayControls>
         ) : (
-          <Missing status={status.value} navigate={navigate} reload={() => void load()} />
+          <Missing status={status.value} navigate={navigate} reload={() => void load()}>
+            <LaunchOptions />
+          </Missing>
         ))}
     </div>
   );
 }
 
-/** MangoHud is not here: what to do, and where the tools are installed. */
-function Missing({ status, navigate, reload }: { status: OverlayStatus; navigate: Navigate; reload: () => void }) {
+/** MangoHud is not here: what to do, and where the tools are installed. `children` is the launch option. */
+function Missing({
+  status,
+  navigate,
+  reload,
+  children,
+}: {
+  status: OverlayStatus;
+  navigate: Navigate;
+  reload: () => void;
+  children: ReactNode;
+}) {
   return (
     <div className="settings">
       <div className="settings-notice tuning-unavailable" role="status">
@@ -87,11 +103,21 @@ function Missing({ status, navigate, reload }: { status: OverlayStatus; navigate
           </button>
         </div>
       </div>
+      {children}
     </div>
   );
 }
 
-function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus: (status: OverlayStatus) => void }) {
+/** The overlay's settings, then `children`: the launch option. */
+function OverlayControls({
+  status,
+  onStatus,
+  children,
+}: {
+  status: OverlayStatus;
+  onStatus: (status: OverlayStatus) => void;
+  children: ReactNode;
+}) {
   const { settings } = status;
   const [save, setSave] = useState<SaveState>(IDLE);
   const [takeOver, setTakeOver] = useState<SaveState>(IDLE);
@@ -420,11 +446,97 @@ function OverlayControls({ status, onStatus }: { status: OverlayStatus; onStatus
         </p>
       )}
 
-      <CommandRow
-        title="Turn it on in a game"
-        description="In Steam, open the game's Properties and paste this into Launch options. In Lutris, open the game's Configure → System options and turn on FPS counter (MangoHud), or enter mangohud, without %command%, as the Command prefix, under Advanced; under Wine the overlay is reliable only on Vulkan, which normally means DXVK. The overlay appears only in games started with MangoHud from one of these launchers."
-        command={status.launch_hint}
-      />
+      {children}
     </div>
+  );
+}
+
+/**
+ * "Turn it on in a game" (D15): the three switches and the line they compose. The backend composes
+ * the line and says which tools are there; a change sends all three choices to
+ * `set_launch_options` and the block shows the status it answers with. On failure the switches
+ * keep the saved values and the backend's sentence stays until the next change.
+ */
+function LaunchOptions() {
+  const [status, setStatus] = useState<Loaded<LaunchOptionsStatus>>({ status: "loading" });
+  const [save, setSave] = useState<SaveState>(IDLE);
+
+  const load = useCallback(() => {
+    setStatus({ status: "loading" });
+    setSave(IDLE);
+    return invoke<LaunchOptionsStatus>("launch_options_status").then(
+      (value) => setStatus({ status: "ready", value }),
+      (e) => setStatus({ status: "error", message: String(e) }),
+    );
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const saving = save.status === "saving";
+
+  function choose(current: LaunchOptionsStatus, choice: LaunchChoice, on: boolean) {
+    if (saving) return;
+    setSave({ status: "saving" });
+    invoke<LaunchOptionsStatus>("set_launch_options", { choices: withChoice(current.choices, choice, on) }).then(
+      (value) => {
+        setStatus({ status: "ready", value });
+        setSave(IDLE);
+      },
+      (e) => setSave({ status: "error", message: String(e) }),
+    );
+  }
+
+  return (
+    <Setting
+      title="Turn it on in a game"
+      description="In Steam, open the game's Properties and paste this into Launch options. In Lutris, open the game's Configure → System options and turn on FPS counter (MangoHud), or enter mangohud, without %command%, as the Command prefix, under Advanced; under Wine the overlay is reliable only on Vulkan, which normally means DXVK. The overlay appears only in games started with MangoHud from one of these launchers."
+      save={IDLE}
+      wide
+    >
+      {status.status === "loading" && <span className="setting-description">Reading the launch option…</span>}
+      {status.status === "error" && (
+        <>
+          <span className="setting-error" role="alert">
+            Cannot read the launch option: {status.message}
+          </span>
+          <button type="button" className="button" onClick={() => void load()}>
+            Check again
+          </button>
+        </>
+      )}
+      {status.status === "ready" && (
+        <>
+          <div className="launch-options">
+            {launchSwitches(status.value).map((option) => (
+              <label className="launch-option" key={option.choice}>
+                <span className="setting-text">
+                  <span className="setting-title">{option.label}</span>
+                  <span className="setting-description">{option.description}</span>
+                  {option.note && <span className="setting-note">{option.note}</span>}
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="switch"
+                  aria-label={option.label}
+                  checked={option.checked}
+                  disabled={option.disabled}
+                  aria-disabled={saving}
+                  onChange={(event) => choose(status.value, option.choice, event.target.checked)}
+                />
+              </label>
+            ))}
+          </div>
+          {save.status === "error" && (
+            <span className="setting-error" role="alert">
+              Not saved: {save.message}
+            </span>
+          )}
+          <CommandLine command={status.value.command} />
+        </>
+      )}
+    </Setting>
   );
 }

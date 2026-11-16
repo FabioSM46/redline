@@ -249,8 +249,9 @@ composes nothing and its status carries the sentence that says what to install; 
 saved, so it comes back once the tool is there. That holds for the overlay too: without MangoHud
 the line has no `mangohud` wrapper, which would otherwise stop the game from starting. The
 choices are global and the line acts only where the player pastes it: Redline sets none of these
-variables, edits no launcher configuration and keeps no per-game state. `OverlayStatus.launch_hint`
-stays the constant `mangohud %command%` until the frontend uses `command`.
+variables, edits no launcher configuration and keeps no per-game state. The Overlay page
+shows `command` under its three switches (`src/launch.ts`); `OverlayStatus.launch_hint` stays the
+constant `mangohud %command%` and the frontend no longer reads it.
 
 Frame generation is the Vulkan implicit layer of the `serialexperimentslainnnn/afmf-linux`
 project (MIT), used only through its documented variable; none of its code is in Redline. Checked
