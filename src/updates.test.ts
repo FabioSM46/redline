@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Loaded } from "./RecorderContext.tsx";
-import { indicatorLabel, indicatorVersion, type LastCheck, type UpdateStatus, updateRow } from "./updates.ts";
+import { type LastCheck, type UpdateStatus, updateRow, versionIndicator } from "./updates.ts";
 
 const LOADING: Loaded<UpdateStatus> = { status: "loading" };
 const UNREADABLE: Loaded<UpdateStatus> = { status: "error", message: "no state" };
@@ -22,25 +22,45 @@ function ready(change: Partial<UpdateStatus> = {}): Loaded<UpdateStatus> {
 
 const available = { latest_version: "0.3.0", update_available: true };
 
-describe("status bar indicator", () => {
-  it("names the version of an undismissed update, whatever the last check did", () => {
-    for (const last_check of OUTCOMES) {
-      assert.equal(indicatorVersion(ready({ ...available, last_check })), "0.3.0", last_check);
-    }
-    assert.equal(indicatorLabel("0.3.0"), "Update 0.3.0 available");
+describe("status bar version", () => {
+  const plain = { label: "v0.2.1", clickable: false, title: null };
+
+  it("shows nothing while the status is loading or unreadable", () => {
+    assert.equal(versionIndicator(LOADING), null);
+    assert.equal(versionIndicator(UNREADABLE), null);
   });
 
-  it("shows nothing for a dismissed version", () => {
-    assert.equal(indicatorVersion(ready({ ...available, dismissed: true, last_check: "ok" })), null);
+  it("is the installed version as plain text when up to date, whatever the last check did", () => {
+    for (const last_check of OUTCOMES) {
+      assert.deepEqual(versionIndicator(ready({ last_check })), plain, last_check);
+    }
+    assert.deepEqual(versionIndicator(ready({ latest_version: "0.2.1", last_check: "ok" })), plain);
   });
 
-  it("stays silent without an update, while loading and on every failure", () => {
-    assert.equal(indicatorVersion(LOADING), null);
-    assert.equal(indicatorVersion(UNREADABLE), null);
+  it("names both versions and is clickable for an undismissed update, whatever the last check did", () => {
     for (const last_check of OUTCOMES) {
-      assert.equal(indicatorVersion(ready({ last_check })), null, last_check);
+      assert.deepEqual(
+        versionIndicator(ready({ ...available, last_check })),
+        {
+          label: "v0.2.1 → 0.3.0",
+          clickable: true,
+          title: "Version 0.3.0 is available: open the release page",
+        },
+        last_check,
+      );
     }
-    assert.equal(indicatorVersion(ready({ latest_version: "0.2.1", last_check: "ok" })), null);
+  });
+
+  it("is plain text again for a dismissed version", () => {
+    assert.deepEqual(versionIndicator(ready({ ...available, dismissed: true, last_check: "ok" })), plain);
+  });
+
+  it("is plain text with the check off, which the backend reports as no version and no check", () => {
+    assert.deepEqual(versionIndicator(ready({ latest_version: null, update_available: false })), plain);
+  });
+
+  it("is never clickable without a version to name", () => {
+    assert.deepEqual(versionIndicator(ready({ latest_version: null, update_available: true })), plain);
   });
 });
 

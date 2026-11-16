@@ -1,4 +1,4 @@
-// The update notice: whether the status bar shows it and what Settings → General says. The check
+// The update status on screen: the version item of the status bar and what Settings → General says. The check
 // itself, the comparison and the release page belong to the backend (D14); nothing here sees a
 // URL or the network.
 
@@ -28,19 +28,34 @@ export type UpdateRow = {
   message: string | null;
 };
 
-/**
- * The version the status bar names, or null to show nothing, whatever the last check did. It does
- * not read `check_for_updates`, unlike `updateRow`: turning the check off makes the backend forget
- * the version and send `update-status`, which clears this.
- */
-export function indicatorVersion(update: Loaded<UpdateStatus>): string | null {
-  if (update.status !== "ready") return null;
-  const { update_available, dismissed, latest_version } = update.value;
-  return update_available && !dismissed ? latest_version : null;
-}
+/** The status bar's last item: the installed version, and the way to a newer one. */
+export type VersionIndicator = {
+  /** `v0.3.0`, or `v0.3.0 → 0.4.0` when a newer release is published. */
+  label: string;
+  /** True only for a newer release that is not dismissed: one click opens its release page. */
+  clickable: boolean;
+  /** What the click does; null when the item is plain text. */
+  title: string | null;
+};
 
-export function indicatorLabel(version: string): string {
-  return `Update ${version} available`;
+/**
+ * The version the status bar shows, or null to show nothing while the status is loading or
+ * unreadable. The last check does not matter: a failed one says nothing here. It does not read
+ * `check_for_updates`, unlike `updateRow`: turning the check off makes the backend forget the
+ * newer version and send `update-status`, which turns this back into plain text.
+ */
+export function versionIndicator(update: Loaded<UpdateStatus>): VersionIndicator | null {
+  if (update.status !== "ready") return null;
+  const { current_version, update_available, dismissed, latest_version } = update.value;
+  const installed = `v${current_version}`;
+  if (!update_available || dismissed || latest_version === null) {
+    return { label: installed, clickable: false, title: null };
+  }
+  return {
+    label: `${installed} → ${latest_version}`,
+    clickable: true,
+    title: `Version ${latest_version} is available: open the release page`,
+  };
 }
 
 /** The next try is the next round: the checks repeat every 24 hours while the app runs. */
