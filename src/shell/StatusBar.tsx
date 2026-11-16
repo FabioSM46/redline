@@ -35,6 +35,7 @@ export function StatusBar() {
  * The installed version, plain text until a newer release that is not dismissed exists: then it
  * names both and one click opens the release page (D14). Information, not an alarm, so it stays
  * muted, and a failed check says nothing here: that is for Settings → General, like dismissing.
+ * A failed action shows only while the button is there to try again.
  */
 function VersionIndicator() {
   const { update, busy, actionError, openRelease } = useUpdates();
@@ -42,7 +43,7 @@ function VersionIndicator() {
   if (version === null) return null;
   return (
     <span className="statusbar-version">
-      {actionError !== null && (
+      {version.clickable && actionError !== null && (
         <span className="statusbar-error" title={actionError}>
           Update action failed
         </span>
