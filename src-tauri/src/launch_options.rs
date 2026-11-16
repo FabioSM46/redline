@@ -6,7 +6,7 @@
 //! - **Detection** ([`frame_generation_installed`]): the frame generation layer's manifest in a
 //!   `vulkan/implicit_layer.d` folder. Nothing is run, and missing it is a disabled choice with
 //!   [`frame_generation_missing`], not an error. The overlay is detected by `overlay`.
-//! - **The choices** are three switches stored by `settings` and saved through
+//! - **The choices** are four switches stored by `settings` and saved through
 //!   [`settings::save_launch_options`]. They are global: there is no per-game state.
 //!
 //! Redline sets none of these variables anywhere and edits no launcher configuration: the line
@@ -33,6 +33,10 @@ const FRAME_GENERATION_MANIFEST: &str = "afmf-linux.json";
 /// The layer's documented switch (`enable_environment` in its manifest): without it the layer
 /// stays out of the game.
 const FRAME_GENERATION_VARIABLE: &str = "AFMF_ENABLE=1";
+/// Read by the Proton builds named in [`UPSCALER_UPGRADE_NOTE`], ignored by the others. Written
+/// before the watermark's variable: the watermark has something to show only where the upgrade
+/// is on.
+const UPSCALER_UPGRADE_VARIABLE: &str = "PROTON_FSR4_UPGRADE=1";
 /// Read by the Proton builds named in [`UPSCALER_INDICATOR_NOTE`], ignored by the others.
 const UPSCALER_INDICATOR_VARIABLE: &str = "PROTON_FSR4_INDICATOR=1";
 /// MangoHud's launcher, which starts the game with the overlay (D12).
@@ -49,6 +53,12 @@ pub fn frame_generation_missing() -> String {
          names the project), then open this page again."
     )
 }
+
+/// Which games get the upgrade.
+pub const UPSCALER_UPGRADE_NOTE: &str = "The upgrade happens only in games run with a Proton \
+    build that supports it: GE-Proton 10-9 or later, or proton-cachyos 10.0-20250623 or later. \
+    Valve's Proton does not. From 11.0-20261001, proton-cachyos upgrades also with this switch \
+    off.";
 
 /// Which games show the watermark.
 pub const UPSCALER_INDICATOR_NOTE: &str = "The watermark appears only in games run with a Proton \
@@ -88,6 +98,8 @@ pub struct LaunchOptionsStatus {
     pub choices: LaunchChoices,
     pub overlay: Availability,
     pub frame_generation: Availability,
+    /// Which games get the upscaler upgrade.
+    pub upscaler_upgrade_note: &'static str,
     /// Which games show the upscaler watermark.
     pub upscaler_indicator_note: &'static str,
     /// The line to paste into the launcher.
@@ -99,12 +111,16 @@ pub struct LaunchOptionsStatus {
 /// Variables first, then the wrapper, then `%command%`: the launcher puts the game's command in
 /// place of the last word, and everything before a wrapper is the environment it starts in. A
 /// choice whose tool is missing composes nothing (D15): the line never names a program that is
-/// not there, and a stored "on" comes back by itself once the tool is installed. The watermark
-/// has no tool to detect: it is a variable that a Proton build reads or ignores.
+/// not there, and a stored "on" comes back by itself once the tool is installed. The upgrade and
+/// the watermark have no tool to detect: each is a variable that a Proton build reads or
+/// ignores.
 pub fn compose(choices: LaunchChoices, tools: Tools) -> String {
     let mut words: Vec<&str> = Vec::new();
     if choices.frame_generation && tools.frame_generation {
         words.push(FRAME_GENERATION_VARIABLE);
+    }
+    if choices.upscaler_upgrade {
+        words.push(UPSCALER_UPGRADE_VARIABLE);
     }
     if choices.upscaler_indicator {
         words.push(UPSCALER_INDICATOR_VARIABLE);
@@ -148,6 +164,7 @@ fn status_of(choices: LaunchChoices, tools: Tools) -> LaunchOptionsStatus {
         choices,
         overlay: Availability::of(tools.overlay, overlay::MISSING),
         frame_generation: Availability::of(tools.frame_generation, &frame_generation_missing()),
+        upscaler_upgrade_note: UPSCALER_UPGRADE_NOTE,
         upscaler_indicator_note: UPSCALER_INDICATOR_NOTE,
         command: compose(choices, tools),
     }
@@ -178,7 +195,7 @@ pub fn launch_options_status<R: Runtime>(
 /// Saves the choices and returns the new status. A choice whose tool is missing is saved as it
 /// is sent: it composes nothing until the tool is installed.
 ///
-/// `choices` replaces the saved ones as a whole, and all three are required.
+/// `choices` replaces the saved ones as a whole, and all four are required.
 #[tauri::command]
 pub fn set_launch_options<R: Runtime>(
     app: AppHandle<R>,
@@ -205,10 +222,16 @@ mod tests {
         frame_generation: false,
     };
 
-    fn choices(overlay: bool, frame_generation: bool, upscaler_indicator: bool) -> LaunchChoices {
+    fn choices(
+        overlay: bool,
+        frame_generation: bool,
+        upscaler_upgrade: bool,
+        upscaler_indicator: bool,
+    ) -> LaunchChoices {
         LaunchChoices {
             overlay,
             frame_generation,
+            upscaler_upgrade,
             upscaler_indicator,
         }
     }
@@ -224,28 +247,89 @@ mod tests {
     #[test]
     fn every_combination_composes_its_exact_line() {
         let cases = [
-            ((false, false, false), "%command%"),
-            ((true, false, false), "mangohud %command%"),
-            ((false, true, false), "AFMF_ENABLE=1 %command%"),
-            ((false, false, true), "PROTON_FSR4_INDICATOR=1 %command%"),
-            ((true, true, false), "AFMF_ENABLE=1 mangohud %command%"),
+            ((false, false, false, false), "%command%"),
+            ((true, false, false, false), "mangohud %command%"),
+            ((false, true, false, false), "AFMF_ENABLE=1 %command%"),
             (
-                (true, false, true),
+                (true, true, false, false),
+                "AFMF_ENABLE=1 mangohud %command%",
+            ),
+            (
+                (false, false, true, false),
+                "PROTON_FSR4_UPGRADE=1 %command%",
+            ),
+            (
+                (true, false, true, false),
+                "PROTON_FSR4_UPGRADE=1 mangohud %command%",
+            ),
+            (
+                (false, true, true, false),
+                "AFMF_ENABLE=1 PROTON_FSR4_UPGRADE=1 %command%",
+            ),
+            (
+                (true, true, true, false),
+                "AFMF_ENABLE=1 PROTON_FSR4_UPGRADE=1 mangohud %command%",
+            ),
+            (
+                (false, false, false, true),
+                "PROTON_FSR4_INDICATOR=1 %command%",
+            ),
+            (
+                (true, false, false, true),
                 "PROTON_FSR4_INDICATOR=1 mangohud %command%",
             ),
             (
-                (false, true, true),
+                (false, true, false, true),
                 "AFMF_ENABLE=1 PROTON_FSR4_INDICATOR=1 %command%",
             ),
             (
-                (true, true, true),
+                (true, true, false, true),
                 "AFMF_ENABLE=1 PROTON_FSR4_INDICATOR=1 mangohud %command%",
             ),
+            (
+                (false, false, true, true),
+                "PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 %command%",
+            ),
+            (
+                (true, false, true, true),
+                "PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 mangohud %command%",
+            ),
+            (
+                (false, true, true, true),
+                "AFMF_ENABLE=1 PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 %command%",
+            ),
+            (
+                (true, true, true, true),
+                "AFMF_ENABLE=1 PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 mangohud %command%",
+            ),
         ];
-        for ((overlay, frame_generation, upscaler_indicator), line) in cases {
-            let chosen = choices(overlay, frame_generation, upscaler_indicator);
+        for ((overlay, frame_generation, upscaler_upgrade, upscaler_indicator), line) in cases {
+            let chosen = choices(
+                overlay,
+                frame_generation,
+                upscaler_upgrade,
+                upscaler_indicator,
+            );
             assert_eq!(compose(chosen, ALL), line, "{chosen:?}");
         }
+    }
+
+    #[test]
+    fn the_upgrade_is_written_before_the_watermark() {
+        let line = compose(choices(false, false, true, true), NONE);
+        assert_eq!(
+            line,
+            "PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 %command%"
+        );
+        // Each is a choice of its own: neither turns the other on.
+        assert_eq!(
+            compose(choices(false, false, true, false), NONE),
+            "PROTON_FSR4_UPGRADE=1 %command%"
+        );
+        assert_eq!(
+            compose(choices(false, false, false, true), NONE),
+            "PROTON_FSR4_INDICATOR=1 %command%"
+        );
     }
 
     #[test]
@@ -255,7 +339,7 @@ mod tests {
 
     #[test]
     fn a_choice_whose_tool_is_missing_composes_nothing() {
-        let all = choices(true, true, true);
+        let all = choices(true, true, true, true);
         assert_eq!(
             compose(
                 all,
@@ -264,7 +348,7 @@ mod tests {
                     ..ALL
                 }
             ),
-            "PROTON_FSR4_INDICATOR=1 mangohud %command%"
+            "PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 mangohud %command%"
         );
         assert_eq!(
             compose(
@@ -274,17 +358,23 @@ mod tests {
                     ..ALL
                 }
             ),
-            "AFMF_ENABLE=1 PROTON_FSR4_INDICATOR=1 %command%"
+            "AFMF_ENABLE=1 PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 %command%"
         );
-        // The watermark needs no tool on this system.
-        assert_eq!(compose(all, NONE), "PROTON_FSR4_INDICATOR=1 %command%");
-        assert_eq!(compose(choices(true, true, false), NONE), "%command%");
+        // The upgrade and the watermark need no tool on this system.
+        assert_eq!(
+            compose(all, NONE),
+            "PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 %command%"
+        );
+        assert_eq!(
+            compose(choices(true, true, false, false), NONE),
+            "%command%"
+        );
     }
 
     #[test]
     fn the_line_always_ends_with_the_game_command_after_the_variables() {
-        for bits in 0..8u8 {
-            let chosen = choices(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0);
+        for bits in 0..16u8 {
+            let chosen = choices(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0);
             for tools in [ALL, NONE] {
                 let line = compose(chosen, tools);
                 let words: Vec<&str> = line.split(' ').collect();
@@ -358,7 +448,7 @@ mod tests {
 
     #[test]
     fn a_missing_layer_is_a_sentence_and_a_stored_on_composes_nothing() {
-        let stored = choices(true, true, false);
+        let stored = choices(true, true, false, false);
         let status = status_of(
             stored,
             Tools {
@@ -392,7 +482,11 @@ mod tests {
     #[test]
     fn the_sentences_say_frame_generation_and_never_the_name_of_the_layer() {
         let missing = frame_generation_missing();
-        for sentence in [missing.as_str(), UPSCALER_INDICATOR_NOTE] {
+        for sentence in [
+            missing.as_str(),
+            UPSCALER_UPGRADE_NOTE,
+            UPSCALER_INDICATOR_NOTE,
+        ] {
             let lower = sentence.to_lowercase();
             for word in ["afmf", "fsr", "amd", "radeon", "adrenalin"] {
                 assert!(!lower.contains(word), "{sentence}");
@@ -400,13 +494,14 @@ mod tests {
         }
         assert!(missing.contains("frame generation"));
         assert!(missing.contains("release 1.3.1 "));
+        assert!(UPSCALER_UPGRADE_NOTE.contains("Proton"));
         assert!(UPSCALER_INDICATOR_NOTE.contains("Proton"));
     }
 
     #[test]
     fn serializes_the_contract() {
         let status = status_of(
-            choices(true, true, true),
+            choices(true, true, true, true),
             Tools {
                 frame_generation: false,
                 ..ALL
@@ -418,6 +513,7 @@ mod tests {
                 "choices": {
                     "overlay": true,
                     "frame_generation": true,
+                    "upscaler_upgrade": true,
                     "upscaler_indicator": true,
                 },
                 "overlay": { "available": true, "unavailable_reason": null },
@@ -425,16 +521,25 @@ mod tests {
                     "available": false,
                     "unavailable_reason": frame_generation_missing(),
                 },
+                "upscaler_upgrade_note": UPSCALER_UPGRADE_NOTE,
                 "upscaler_indicator_note": UPSCALER_INDICATOR_NOTE,
-                "command": "PROTON_FSR4_INDICATOR=1 mangohud %command%",
+                "command": "PROTON_FSR4_UPGRADE=1 PROTON_FSR4_INDICATOR=1 mangohud %command%",
             })
         );
-        // What `set_launch_options` receives: the three switches, all of them.
-        let sent =
-            json!({ "overlay": false, "frame_generation": true, "upscaler_indicator": false });
+        // What `set_launch_options` receives: the four switches, all of them.
+        let sent = json!({
+            "overlay": false,
+            "frame_generation": true,
+            "upscaler_upgrade": true,
+            "upscaler_indicator": false,
+        });
         let read: LaunchChoices = serde_json::from_value(sent).unwrap();
-        assert_eq!(read, choices(false, true, false));
+        assert_eq!(read, choices(false, true, true, false));
         let partial = json!({ "overlay": false });
         assert!(serde_json::from_value::<LaunchChoices>(partial).is_err());
+        // The three switches an older frontend sent are no longer a whole set of choices.
+        let three =
+            json!({ "overlay": false, "frame_generation": true, "upscaler_indicator": false });
+        assert!(serde_json::from_value::<LaunchChoices>(three).is_err());
     }
 }
