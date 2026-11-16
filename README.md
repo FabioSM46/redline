@@ -30,6 +30,7 @@ comes next.
 | In-game overlay (FPS, frametime, temperatures) | [MangoHud](https://github.com/flightlessmango/MangoHud), configured by Redline |
 | Tuning: fans, power limit, profiles, clocks and undervolt | the [LACT](https://github.com/ilya-zlobintsev/LACT) daemon (`lactd`) through its socket |
 | Instant replay and recording, with audio on separate tracks | [GPU Screen Recorder](https://git.dec05eba.com/gpu-screen-recorder/about/) as an external process, with hardware encoding |
+| FPS limit and a composed launch option for games (overlay, frame generation, upscaler watermark) | MangoHud's limiter and one line you paste into the launcher; Redline changes no launcher setting |
 | Notice of a newer release | `curl` asks GitHub for the latest release about once a day; Redline links to it and installs nothing |
 
 Redline does not rewrite these tools: it coordinates them behind a single interface. The why is in
@@ -137,6 +138,13 @@ and turn on **FPS counter (MangoHud)**, or enter `mangohud`, without `%command%`
 prefix, under Advanced; under Wine the overlay is reliable only on Vulkan, which normally means
 DXVK. A `MangoHud.conf` of your own stays untouched until you agree, in the same page, to let
 Redline manage it.
+
+The same page has an **FPS limit**, which applies to every game started with MangoHud, and three
+switches that compose the launch option: the overlay, frame generation and the upscaler watermark.
+Frame generation is the [afmf-linux](https://github.com/serialexperimentslainnnn/afmf-linux) layer
+(checked with its release 1.3.1): install it from that project, and the switch turns on by itself.
+The watermark is `PROTON_FSR4_INDICATOR=1`, read by GE-Proton 10-26 or later and proton-cachyos
+10.0-20250905 or later, not by Valve's Proton. Redline only writes the line for you to paste.
 
 ## Stack
 
