@@ -1,7 +1,11 @@
 # Redline
 
-A control panel for **AMD GPUs on Linux**. One app to watch temperatures, clocks and power draw,
-tune fans and power limits, and save a replay of the last minute of gameplay with a shortcut.
+Redline is for people who play on Linux with an **AMD GPU** and want one control panel instead of
+several separate tools: one app to watch temperatures, clocks and power draw, tune fans and power
+limits, and save a replay of the last minute of gameplay with a shortcut. If you already run LACT,
+MangoHud and GPU Screen Recorder side by side and are happy with them, you do not need Redline:
+it coordinates those same tools and adds no capability beyond what they already provide.
+
 The inspiration is the software AMD ships only for Windows; Redline keeps the features people
 actually use and leaves the rest out.
 
@@ -42,6 +46,17 @@ sudo apt install ./redline_<version>_amd64.deb            # Ubuntu, Debian, Linu
 sudo pacman -U ./redline-<version>-1-x86_64.pkg.tar.zst   # Arch, CachyOS
 sudo dnf install ./redline-<version>-1.fc44.x86_64.rpm    # Fedora
 ```
+
+To check the download first, save `SHA256SUMS` from the same release into that folder and run:
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+It prints `OK` next to the package when the file is the one on the release page, and `FAILED`
+when it is not: download it again and do not install it. The packages and `SHA256SUMS` are not
+signed, so the checksum proves that the download is intact and matches the release page, which the
+public CI wrote; it does not prove who built the package.
 
 Open Redline and go to **Settings →
 Dependencies**: it shows whether LACT, GPU Screen Recorder, ffmpeg and MangoHud are installed and
@@ -229,6 +244,28 @@ and the pipeline details are in [AGENTS.md](AGENTS.md).
   the choice is remembered afterwards.
 - **Tuning**: every change must be confirmed, otherwise LACT reverts to the previous values
   after a few seconds. That is a safeguard, not a bug.
+
+## What Redline does not do
+
+The reasons in full are in D15 of [docs/decisions.md](docs/decisions.md).
+
+- **Edit your launcher or set anything for the whole session.** Redline shows a launch option and
+  you paste it into the game: a global variable would reach every application.
+- **Per-game profiles.** The choices are global and Redline keeps no list of games; the FPS limit
+  lives in MangoHud's configuration, so it applies to every game started with MangoHud.
+- **Upscaling through Gamescope.** It is one more tool to install, not reliably packaged on
+  Ubuntu, and a spatial upscaler below what games already ship. Deferred, not refused for ever.
+- **An anti-lag switch.** `VK_AMD_anti_lag` is an extension the game itself must call: there is
+  no global switch to offer.
+- **Show which upscaler, or which version of it, a running game uses.** A loaded library does not
+  prove the upscaler is active, and MangoHud's `fsr` key only reports Gamescope's own upscaler;
+  Proton's own watermark is the reliable answer.
+- **Detect a game's frame generation.** Nothing exposes it.
+- **HDR colour accuracy and saturation.** Display colour belongs to the Wayland compositor.
+- **Publish packages anywhere but [GitHub Releases](https://github.com/FabioSM46/redline/releases).**
+  No apt repository, no AUR, no Flatpak: one place to download from and to check.
+- **Run as root.** Redline never runs as root and never writes to sysfs: tuning goes through
+  the `lactd` daemon, and installing a missing tool asks for your password once (`pkexec`).
 
 ## Release
 
