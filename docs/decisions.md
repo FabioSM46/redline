@@ -431,7 +431,7 @@ with it stays the player's act, in the launcher.
   game or a GPU supports the upgrade, and pins no upscaler version. Which Proton builds read the
   variable is in `docs/architecture.md` ("Launch options").
 
-The code arrives with #153 to #156; until then the only launch option Redline shows is D12's.
+The code shipped with version 0.4.0 (#153 to #156, and #170 for the upscaler upgrade).
 
 Rejected / not possible:
 
