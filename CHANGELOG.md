@@ -10,12 +10,15 @@ What each published version of Redline contains. The plan is in the
 - An FPS limit in Performance → Metrics → Overlay, from 1 to 1000 FPS, off by default. It is
   MangoHud's limiter, so it applies to every game started with MangoHud, also while the overlay is
   hidden.
-- The launch option to paste into a game is now composed from three switches: the overlay, frame
-  generation and the upscaler watermark. Redline only composes the line: it edits no launcher
-  configuration and sets nothing globally.
+- The launch option to paste into a game is now composed from four switches: the overlay, frame
+  generation, the upscaler upgrade and the upscaler watermark. Redline only composes the line: it
+  edits no launcher configuration and sets nothing globally.
 - Frame generation needs the afmf-linux layer (checked with its release 1.3.1); without it the
-  switch is disabled. The watermark is shown only by Proton builds that support it (GE-Proton 10-26
-  or later, proton-cachyos 10.0-20250905 or later), not by Valve's Proton.
+  switch is disabled. The upscaler upgrade needs a game with FSR 3.1 or later and changes how the
+  game renders; it happens only with Proton builds that support it (GE-Proton 10-9 or later,
+  proton-cachyos 10.0-20250623 or later), not with Valve's Proton. The watermark shows something
+  only while the upgrade is active, and only with GE-Proton 10-26 or later or proton-cachyos
+  10.0-20250905 or later.
 
 ### Updates
 

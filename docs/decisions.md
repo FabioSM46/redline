@@ -404,9 +404,9 @@ Redline does one thing for a game: it composes a launch option and shows it. Sta
 with it stays the player's act, in the launcher.
 
 - **One string, composed from the player's choices.** The choices are the overlay (D12), frame
-  generation and the upscaler watermark. Redline turns them into a single launch option
-  (variables first, then the `mangohud` wrapper, then `%command%`) and shows it with a Copy
-  button, to be pasted into the launcher. With only the overlay chosen it is the
+  generation, the upscaler upgrade and the upscaler watermark. Redline turns them into a single
+  launch option (variables first, then the `mangohud` wrapper, then `%command%`) and shows it
+  with a Copy button, to be pasted into the launcher. With only the overlay chosen it is the
   `mangohud %command%` of D12.
 - **Redline never edits the launcher's configuration and never sets a variable globally.** No
   write to Steam's or Lutris's files, no `environment.d`, no `/etc/environment`. The reasoning is
@@ -421,6 +421,15 @@ with it stays the player's act, in the launcher.
   and to none started without it.
 - **A missing tool is a disabled choice, not an error**: a choice whose tool is not installed
   composes nothing and says what to install.
+
+- **The upscaler upgrade is a fourth choice (#170).** The watermark alone shows nothing unless
+  Proton's upscaler upgrade is on, and until this choice existed the player had to add that
+  variable by hand. The switch is off by default and, like the other three, only composes text
+  the player pastes: `PROTON_FSR4_UPGRADE=1`, written before the watermark's variable. It changes
+  how a game renders, so it stays a choice of its own instead of following the watermark.
+  Redline still keeps no per-game state and sets nothing globally, does not detect whether a
+  game or a GPU supports the upgrade, and pins no upscaler version. Which Proton builds read the
+  variable is in `docs/architecture.md` ("Launch options").
 
 The code arrives with #153 to #156; until then the only launch option Redline shows is D12's.
 

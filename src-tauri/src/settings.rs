@@ -28,7 +28,7 @@
 //! changes it, only [`save_dismissed_update`] does.
 //!
 //! `launch_options` holds what the player chose for the game launch option (`launch_options`,
-//! D15). They are three switches, saved only by [`save_launch_options`]; a file written before
+//! D15). They are four switches, saved only by [`save_launch_options`]; a file written before
 //! they existed loads with the overlay on and the rest off, which composes the launch option
 //! Redline showed until then.
 //!
@@ -164,6 +164,8 @@ pub struct LaunchChoices {
     pub overlay: bool,
     /// Turn frame generation on for the game.
     pub frame_generation: bool,
+    /// Upgrade the game's upscaler to the version the Proton build provides.
+    pub upscaler_upgrade: bool,
     /// Show the upscaler's watermark in the game.
     pub upscaler_indicator: bool,
 }
@@ -174,6 +176,7 @@ impl Default for LaunchChoices {
         Self {
             overlay: true,
             frame_generation: false,
+            upscaler_upgrade: false,
             upscaler_indicator: false,
         }
     }
@@ -686,7 +689,7 @@ fn apply_overlay(
     save(file, &wanted, video_dir)
 }
 
-/// Saves the launch option choices with the rest of `current`. Three switches: every value is
+/// Saves the launch option choices with the rest of `current`. Four switches: every value is
 /// valid.
 fn apply_launch_options(
     file: &Path,
@@ -915,6 +918,14 @@ fn load_launch_options(value: &Value, problems: &mut Vec<String>) -> LaunchChoic
         "frame_generation",
         check_bool,
         &mut c.frame_generation,
+        problems,
+    );
+    read_field(
+        fields,
+        p,
+        "upscaler_upgrade",
+        check_bool,
+        &mut c.upscaler_upgrade,
         problems,
     );
     read_field(
@@ -1332,6 +1343,7 @@ mod tests {
                 "launch_options": {
                     "overlay": true,
                     "frame_generation": false,
+                    "upscaler_upgrade": false,
                     "upscaler_indicator": false,
                 },
                 "check_for_updates": true,
@@ -1646,12 +1658,50 @@ mod tests {
             LaunchChoices {
                 overlay: true,
                 frame_generation: false,
+                upscaler_upgrade: false,
                 upscaler_indicator: false,
             }
         );
         assert_eq!(settings.launch_options, LaunchChoices::default());
         assert_eq!(settings.theme, Theme::Dark);
         assert_eq!(problems, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_file_written_with_three_launch_choices_has_the_upgrade_off() {
+        let dir = temp_dir("launch-three");
+        let file = dir.join(SETTINGS_FILE);
+        fs::write(
+            &file,
+            r#"{"launch_options": {"overlay": false, "frame_generation": true,
+                "upscaler_indicator": true}}"#,
+        )
+        .unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert_eq!(
+            settings.launch_options,
+            LaunchChoices {
+                overlay: false,
+                frame_generation: true,
+                upscaler_upgrade: false,
+                upscaler_indicator: true,
+            }
+        );
+        assert_eq!(problems, Vec::<String>::new());
+
+        // Saved on, it is read back on; a value that is not a switch falls back to off.
+        fs::write(&file, r#"{"launch_options": {"upscaler_upgrade": true}}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert!(settings.launch_options.upscaler_upgrade);
+        assert_eq!(problems, Vec::<String>::new());
+        fs::write(&file, r#"{"launch_options": {"upscaler_upgrade": 1}}"#).unwrap();
+        let (settings, problems) = load(&file, videos());
+        assert!(!settings.launch_options.upscaler_upgrade);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            problems[0].contains("launch_options.upscaler_upgrade has the wrong type"),
+            "{problems:?}"
+        );
     }
 
     #[test]
@@ -1670,6 +1720,7 @@ mod tests {
             LaunchChoices {
                 overlay: false,
                 frame_generation: false,
+                upscaler_upgrade: false,
                 upscaler_indicator: true,
             }
         );
@@ -1687,6 +1738,7 @@ mod tests {
             LaunchChoices {
                 overlay: true,
                 frame_generation: true,
+                upscaler_upgrade: false,
                 upscaler_indicator: false,
             }
         );
@@ -1716,6 +1768,7 @@ mod tests {
         let choices = LaunchChoices {
             overlay: false,
             frame_generation: true,
+            upscaler_upgrade: true,
             upscaler_indicator: true,
         };
         let saved = apply_launch_options(&file, videos(), &current, choices).unwrap();

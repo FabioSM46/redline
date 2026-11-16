@@ -13,11 +13,13 @@ import {
 
 const HERE: Availability = { available: true, unavailable_reason: null };
 const NOTE = "The watermark appears only with some builds.";
+const UPGRADE_NOTE = "The upgrade happens only with some builds.";
 
 const status = (overrides: Partial<LaunchOptionsStatus> = {}): LaunchOptionsStatus => ({
-  choices: { overlay: true, frame_generation: false, upscaler_indicator: false },
+  choices: { overlay: true, frame_generation: false, upscaler_upgrade: false, upscaler_indicator: false },
   overlay: HERE,
   frame_generation: HERE,
+  upscaler_upgrade_note: UPGRADE_NOTE,
   upscaler_indicator_note: NOTE,
   command: "mangohud %command%",
   ...overrides,
@@ -30,21 +32,24 @@ const row = (value: LaunchOptionsStatus, choice: keyof LaunchChoices): LaunchSwi
 };
 
 describe("launchSwitches", () => {
-  it("shows Overlay, Frame generation and Upscaler watermark, in that order", () => {
+  it("shows Overlay, Frame generation, Upscaler upgrade and Upscaler watermark, in that order", () => {
     assert.deepEqual(
       launchSwitches(status()).map((s) => s.label),
-      ["Overlay", "Frame generation", "Upscaler watermark"],
+      ["Overlay", "Frame generation", "Upscaler upgrade", "Upscaler watermark"],
     );
   });
 
   it("shows the saved choices when every tool is there", () => {
-    const all = status({ choices: { overlay: false, frame_generation: true, upscaler_indicator: true } });
+    const all = status({
+      choices: { overlay: false, frame_generation: true, upscaler_upgrade: true, upscaler_indicator: false },
+    });
     assert.deepEqual(
       launchSwitches(all).map((s) => [s.checked, s.disabled]),
       [
         [false, false],
         [true, false],
         [true, false],
+        [false, false],
       ],
     );
   });
@@ -52,7 +57,7 @@ describe("launchSwitches", () => {
   it("disables a switch whose tool is missing, off, with the backend's sentence", () => {
     const reason = "The frame generation layer is not installed. Install it.";
     const missing = status({
-      choices: { overlay: true, frame_generation: true, upscaler_indicator: false },
+      choices: { overlay: true, frame_generation: true, upscaler_upgrade: false, upscaler_indicator: false },
       frame_generation: { available: false, unavailable_reason: reason },
     });
     const frames = row(missing, "frame_generation");
@@ -81,23 +86,49 @@ describe("launchSwitches", () => {
     assert.equal(watermark.note, NOTE);
   });
 
-  it("says the watermark needs the game's upscaler to be active", () => {
-    assert.equal(row(status(), "upscaler_indicator").description.includes("only while the game's upscaler is active"), true);
+  it("never disables the upgrade, and shows the backend's note about the builds", () => {
+    const nothing: Availability = { available: false, unavailable_reason: "Missing." };
+    const upgrade = row(status({ overlay: nothing, frame_generation: nothing }), "upscaler_upgrade");
+    assert.equal(upgrade.disabled, false);
+    assert.equal(upgrade.note, UPGRADE_NOTE);
+  });
+
+  it("says what the upgrade needs from the game and that it changes how the game renders", () => {
+    const { description } = row(status(), "upscaler_upgrade");
+    assert.equal(description.includes("version 3.1 or later"), true);
+    assert.equal(description.includes("changes how the game renders"), true);
+  });
+
+  it("says the watermark shows something only while the upgrade is active", () => {
+    assert.equal(row(status(), "upscaler_indicator").description.includes("only while the upscaler upgrade is active"), true);
   });
 });
 
 describe("withChoice", () => {
-  const saved: LaunchChoices = { overlay: true, frame_generation: true, upscaler_indicator: false };
+  const saved: LaunchChoices = {
+    overlay: true,
+    frame_generation: true,
+    upscaler_upgrade: false,
+    upscaler_indicator: false,
+  };
 
-  it("replaces one choice and sends the other two as saved", () => {
+  it("replaces one choice and sends the other three as saved", () => {
+    assert.deepEqual(withChoice(saved, "upscaler_upgrade", true), {
+      overlay: true,
+      frame_generation: true,
+      upscaler_upgrade: true,
+      upscaler_indicator: false,
+    });
     assert.deepEqual(withChoice(saved, "upscaler_indicator", true), {
       overlay: true,
       frame_generation: true,
+      upscaler_upgrade: false,
       upscaler_indicator: true,
     });
     assert.deepEqual(withChoice(saved, "overlay", false), {
       overlay: false,
       frame_generation: true,
+      upscaler_upgrade: false,
       upscaler_indicator: false,
     });
   });

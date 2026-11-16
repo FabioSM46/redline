@@ -452,8 +452,8 @@ function OverlayControls({
 }
 
 /**
- * "Turn it on in a game" (D15): the three switches and the line they compose. The backend composes
- * the line and says which tools are there; a change sends all three choices to
+ * "Turn it on in a game" (D15): the four switches and the line they compose. The backend composes
+ * the line and says which tools are there; a change sends all four choices to
  * `set_launch_options` and the block shows the status it answers with. On failure the switches
  * keep the saved values and the backend's sentence stays until the next change.
  */
