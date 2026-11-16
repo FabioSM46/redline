@@ -27,7 +27,9 @@ instant replay, recording, shortcuts.
 It leaves out, because only a tiny minority uses them: the built-in browser and social features,
 built-in streaming, online game statistics, driver and game notifications, per-game graphics
 settings that on Linux belong to Mesa and Proton, and display settings that belong to the
-desktop.
+desktop. The one thing Redline does for a game is compose a launch option that the player pastes
+into the launcher; D15 in [decisions.md](decisions.md) says what goes into it and what was
+rejected, with the reasons.
 
 ## Who it is for
 

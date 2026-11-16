@@ -397,3 +397,50 @@ Rejected: the Tauri updater plugin and any in-app install (see above); a crate f
 comparison (`reqwest` and its TLS stack, `semver` for three numbers); following prereleases or a
 channel selector; notifying from the tray or the desktop; backoff, several retries or waiting on
 a network-online signal.
+
+## D15 — Game launch options: Redline composes, the player pastes (2026-11-16)
+
+Redline does one thing for a game: it composes a launch option and shows it. Starting the game
+with it stays the player's act, in the launcher.
+
+- **One string, composed from the player's choices.** The choices are the overlay (D12), frame
+  generation and the upscaler watermark. Redline turns them into a single launch option
+  (variables first, then the `mangohud` wrapper, then `%command%`) and shows it with a Copy
+  button, to be pasted into the launcher. With only the overlay chosen it is the
+  `mangohud %command%` of D12.
+- **Redline never edits the launcher's configuration and never sets a variable globally.** No
+  write to Steam's or Lutris's files, no `environment.d`, no `/etc/environment`. The reasoning is
+  D12's: a global variable reaches every application of the session, and a value the player set
+  would be overridden without warning. A pasted line is visible where it acts and is removed the
+  same way.
+- **The choices are global; Redline keeps no per-game state.** There is no list of games, no
+  per-game profile and no detection of the running game. A game that needs a different line gets
+  it from the player: change the choices, copy, paste.
+- **The FPS limit is not part of the string.** It is a MangoHud key (`fps_limit`) in the global
+  `MangoHud.conf` that Redline manages (D12), so it applies to every game started with MangoHud
+  and to none started without it.
+- **A missing tool is a disabled choice, not an error**: a choice whose tool is not installed
+  composes nothing and says what to install.
+
+The code arrives with #153 to #156; until then the only launch option Redline shows is D12's.
+
+Rejected / not possible:
+
+- **Upscaling through Gamescope.** It would be a fifth external tool, after LACT, GPU Screen
+  Recorder, ffmpeg and MangoHud, and one that the reference distribution does not reliably
+  package; the overlay must then be started differently
+  (`--mangoapp` instead of the `mangohud` wrapper); and what it offers is a spatial upscaler,
+  below what games already ship. Deferred, not refused for ever.
+- **An anti-lag switch.** `VK_AMD_anti_lag` is a Vulkan extension the game itself must call:
+  there is no global switch to offer. Up to Mesa 26.2 it comes from an implicit Mesa layer
+  (`VK_LAYER_MESA_anti_lag`); from Mesa 26.3 RADV implements it natively and the layer is gone
+  (checked on 2026-11-16 against Mesa 26.2.6 and 26.3).
+- **A status-bar badge for the running game's upscaler.** Reading the memory maps of the
+  player's own processes only proves that a library is loaded, not that the upscaler is active.
+  Proton's own watermark answers the question reliably, which is why the watermark is a choice.
+- **The upscaler version in the overlay.** MangoHud's `fsr` key works only inside Gamescope and
+  reports Gamescope's own upscaler, not the game's.
+- **Detecting a game's frame generation.** Nothing exposes it: no sysfs file, no driver
+  statistic, no overlay key.
+- **HDR colour accuracy and saturation.** Display colour belongs to the Wayland compositor, as
+  display settings belong to the desktop (`docs/context.md`).
