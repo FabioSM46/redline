@@ -169,12 +169,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      # For scripts/release-checksums.sh. Before the download: checkout empties the workspace.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       # No `name:`: every artifact of the run is downloaded and merged into packages/,
       # which `packages/*` below uploads whole.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: packages
           merge-multiple: true
+      # SHA256SUMS is written into packages/, so the upload below carries it with the packages.
+      - name: Write SHA256SUMS
+        run: bash scripts/release-checksums.sh write packages
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -182,8 +189,11 @@ jobs:
         run: |
           set -euo pipefail
           ls -l packages
+          # What is about to be uploaded: SHA256SUMS must list exactly these packages.
+          bash scripts/release-checksums.sh check packages
           # A re-run, or a tag moved and pushed again, finds the draft already there:
-          # replace its packages. A release that is already published is never touched.
+          # replace its packages and SHA256SUMS. A release that is already published is
+          # never touched.
           if is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
             if [ "$is_draft" != "true" ]; then
               echo "::error::Release $TAG is already published; refusing to replace its packages."
@@ -198,3 +208,7 @@ jobs:
               --title "Redline $TAG" \
               --notes "Packages for Ubuntu, Debian, Arch and Fedora. Draft to review before publishing."
           fi
+          # What the draft now holds: a package left from an earlier run under another name
+          # would be published without a checksum.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+            | bash scripts/release-checksums.sh assets packages
