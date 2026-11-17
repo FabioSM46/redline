@@ -491,7 +491,7 @@ function LaunchOptions() {
   return (
     <Setting
       title="Turn it on in a game"
-      description="In Steam, open the game's Properties and paste this into Launch options. In Lutris, open the game's Configure → System options and turn on FPS counter (MangoHud), or enter mangohud, without %command%, as the Command prefix, under Advanced; under Wine the overlay is reliable only on Vulkan, which normally means DXVK. The overlay appears only in games started with MangoHud from one of these launchers."
+      description="In Steam, open the game's Properties and paste this into Launch options. Lutris has no launch option line: open In Lutris below for where each part goes. The overlay appears only in games started with MangoHud from one of these launchers."
       save={IDLE}
       wide
     >
@@ -537,6 +537,32 @@ function LaunchOptions() {
           <CommandLine command={status.value.command} />
         </>
       )}
+      <LutrisSteps />
     </Setting>
+  );
+}
+
+/**
+ * Where each part of the composed line goes in Lutris, behind a disclosure: Lutris has no launch
+ * option line. Option names and places checked against Lutris 0.5.22 (`lutris/sysoptions.py`):
+ * Environment variables and FPS counter (MangoHud) are shown by default, Command prefix only with
+ * Advanced on.
+ */
+function LutrisSteps() {
+  return (
+    <details className="settings-advanced">
+      <summary>In Lutris</summary>
+      <ul className="launch-lutris">
+        <li>Open the game's Configure → System options.</li>
+        <li>
+          Add each NAME=1 pair of the line under Environment variables, with NAME as the key and 1 as the value.
+        </li>
+        <li>
+          For the overlay, turn on FPS counter (MangoHud), or turn on Advanced and enter mangohud as the Command prefix.
+          Under Wine the overlay is reliable only on Vulkan, which normally means DXVK.
+        </li>
+        <li>Leave out %command%: Lutris adds the game's command itself.</li>
+      </ul>
+    </details>
   );
 }

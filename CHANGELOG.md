@@ -3,7 +3,23 @@
 What each published version of Redline contains. The plan is in the
 [roadmap](docs/roadmap.md), the release steps in [docs/release.md](docs/release.md).
 
-## 0.4.0 — Unreleased
+## 0.4.1 — 2026-11-17
+
+### Games
+
+- MangoHud installed in your own data folder (its Vulkan layer under
+  `~/.local/share/vulkan/implicit_layer.d`) is now found: the overlay, Settings → Dependencies and
+  the launch option no longer report it as missing. Frame generation looks in the same folders.
+- The Overlay page explains where each part of the launch option goes in Lutris, under
+  **In Lutris**: the `NAME=1` pairs as environment variables and `mangohud` through the FPS
+  counter switch or the Command prefix, without `%command%`.
+
+### Documentation
+
+- D4 in `docs/decisions.md` records why Redline is in no repository: not yet in the
+  distributions' own, no repository of our own, and not on Flathub for now.
+
+## 0.4.0 — 2026-11-16
 
 ### Games
 

@@ -84,8 +84,8 @@ signed.
 | Fedora 44 | Package and guided install of all four tools |
 | Windows, macOS | Not supported: Redline is Linux only |
 
-**Redline itself is not available as a Flatpak**: the sandbox gets in the way of sysfs and of the
-`lactd` socket. GPU Screen Recorder is a separate program: its guided install takes the Flatpak
+**Redline itself is not available as a Flatpak** or in any repository: the reasons are in D4 of
+[docs/decisions.md](docs/decisions.md). GPU Screen Recorder is a separate program: its guided install takes the Flatpak
 from Flathub, and first installs Flatpak and adds the Flathub remote if they are missing.
 
 ### Requirements
@@ -150,6 +150,9 @@ how the game renders (proton-cachyos 11.0-20261001 or later upgrades by itself).
 `PROTON_FSR4_INDICATOR=1`, read by GE-Proton 10-26 or later and proton-cachyos 10.0-20250905 or
 later, and it shows something only while the upgrade is active. Redline only writes the line for
 you to paste.
+In Lutris the line goes in parts, under the game's Configure → System options: each `NAME=1` pair
+becomes an entry in Environment variables (key `NAME`, value `1`), `mangohud` is the overlay as
+above, and `%command%` is left out; the page shows the same steps under **In Lutris**.
 
 ## Stack
 
