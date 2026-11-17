@@ -198,6 +198,10 @@ need an installed package older than the latest release (the item turning into a
 dismissing, the check turned off, offline); and every other item of "Manual checks before
 tagging". `SHA256SUMS` is written for the first time by the tag of this version.
 
+For `0.4.1` (2026-11-17) no manual check was run: the detection of MangoHud in the user's data
+folder is covered by automated tests on fake folders, and the Lutris steps follow the source of
+Lutris 0.5.22 but have not been tried in a Lutris game.
+
 ## What CI checks on a tag
 
 The `install-check` job of `release.yml` runs `scripts/deb-clean-install.sh` on every tag, in clean
