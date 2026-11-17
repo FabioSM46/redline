@@ -198,9 +198,11 @@ need an installed package older than the latest release (the item turning into a
 dismissing, the check turned off, offline); and every other item of "Manual checks before
 tagging". `SHA256SUMS` is written for the first time by the tag of this version.
 
-For `0.4.1` (2026-11-17) no manual check was run: the detection of MangoHud in the user's data
-folder is covered by automated tests on fake folders, and the Lutris steps follow the source of
-Lutris 0.5.22 but have not been tried in a Lutris game.
+For `0.4.1`, the maintainer reported on 2026-11-17, after publishing, that the manual checks were
+run and all passed, without naming them, so no single item of the list is recorded as run. The new
+code of this version is the detection of MangoHud in the user's data folder, also covered by
+automated tests on fake folders, and the Lutris steps, written from the source of Lutris 0.5.22.
+gitleaks 8.30.1 read the whole history on the same day and found nothing.
 
 ## What CI checks on a tag
 
