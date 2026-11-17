@@ -101,6 +101,12 @@ installed package older than that release.
 - [ ] A game started from Lutris shows the overlay with Configure → System options →
       **FPS counter (MangoHud)** on, and again with that off and `mangohud` as the Command prefix
       (under Advanced). Under Wine, use a game running on Vulkan, normally through DXVK.
+- [ ] A variable of the composed line works in Lutris as the page's **In Lutris** describes: turn
+      on frame generation, enter its `NAME=1` pair under Configure → System options → Environment
+      variables (key `NAME`, value `1`) with the overlay on as well, and check that the game shows
+      generated frames.
+- [ ] The same for the upscaler upgrade and its watermark together: enter both `NAME=1` pairs, run
+      the game on a Proton build that reads both, and check that the watermark appears.
 - [ ] The rendered config works in the game: each preset (Off, Minimal, Standard, Full) shows what
       the page describes, and position and toggle key take effect.
 - [ ] Take-over: with a `MangoHud.conf` of your own, **Let Redline manage it** keeps the file as
