@@ -28,7 +28,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::installer::Installer;
 use crate::overlay;
@@ -346,8 +346,8 @@ fn process_path() -> OsString {
 /// LACT, GPU Screen Recorder, ffmpeg and MangoHud, in that order. Never an error for a missing
 /// tool: that is `installed: false` with a hint.
 #[tauri::command]
-pub async fn dependency_status<R: Runtime>(
-    app: AppHandle<R>,
+pub async fn dependency_status(
+    app: AppHandle,
     tuning: State<'_, Tuning>,
     installer: State<'_, Installer>,
 ) -> Result<Vec<Dependency>, String> {
