@@ -202,7 +202,10 @@ For `0.4.1`, the maintainer reported on 2026-11-17, after publishing, that the m
 run and all passed, without naming them, so no single item of the list is recorded as run. The new
 code of this version is the detection of MangoHud in the user's data folder, also covered by
 automated tests on fake folders, and the Lutris steps, written from the source of Lutris 0.5.22.
-Whether the Lutris steps were tried in a game is not recorded.
+Later the same day the maintainer reported that both Lutris checks of "Overlay (AMD GPU, a real
+game)" passed in a game started from Lutris, with the variables entered as the page's
+**In Lutris** describes: frame generation showed generated frames, and the upscaler upgrade showed
+its watermark.
 gitleaks 8.30.1 read the whole history on the same day and found nothing.
 
 ## What CI checks on a tag
