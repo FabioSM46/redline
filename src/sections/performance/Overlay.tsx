@@ -491,7 +491,7 @@ function LaunchOptions() {
   return (
     <Setting
       title="Turn it on in a game"
-      description="In Steam, open the game's Properties and paste this into Launch options. Lutris has no such field: In Lutris, below, says where each part goes. The overlay appears only in games started with MangoHud from one of these launchers."
+      description="In Steam, open the game's Properties and paste this into Launch options. Lutris has no launch option line: open In Lutris below for where each part goes. The overlay appears only in games started with MangoHud from one of these launchers."
       save={IDLE}
       wide
     >
