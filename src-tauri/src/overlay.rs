@@ -97,6 +97,9 @@ pub struct OverlayStatus {
 pub struct Overlay {
     /// `None` when Tauri could not resolve the config folder: nothing can be written.
     file: Option<PathBuf>,
+    /// The user's data folder, searched first for MangoHud's layer manifest. `None` when Tauri
+    /// could not resolve it: only the system's folders are searched.
+    data_home: Option<PathBuf>,
     /// Held from reading who owns the file until it is written, by one command at a time.
     busy: Mutex<()>,
 }
@@ -110,8 +113,10 @@ pub fn init<R: Runtime>(app: &AppHandle<R>) {
             None
         }
     };
+    let data_home = app.path().data_dir().ok();
     app.manage(Overlay {
         file,
+        data_home,
         busy: Mutex::new(()),
     });
 }
@@ -121,22 +126,35 @@ fn config_file(config_dir: &Path) -> PathBuf {
     config_dir.join(CONFIG_FOLDER).join(CONFIG_FILE)
 }
 
-/// Whether MangoHud is on this system, for this process's PATH and `XDG_DATA_DIRS`. Reads only the
-/// file system, so it can be called anywhere.
-pub fn mangohud_present() -> bool {
+/// Whether MangoHud is on this system, for this process's PATH and `XDG_DATA_DIRS` and the user's
+/// data folder `data_home` (as Tauri resolves it). Reads only the file system, so it can be called
+/// anywhere.
+pub fn mangohud_present(data_home: Option<&Path>) -> bool {
     let search_path = std::env::var_os("PATH").unwrap_or_default();
-    let data_dirs: Option<OsString> = std::env::var_os("XDG_DATA_DIRS");
-    mangohud_installed(&search_path, &layer_dirs(data_dirs.as_deref()))
+    mangohud_installed(&search_path, &process_layer_dirs(data_home))
 }
 
-/// The folders that can hold an implicit Vulkan layer's manifest (MangoHud's, and the frame
-/// generation layer's for `launch_options`), from the value of `XDG_DATA_DIRS`.
-pub fn layer_dirs(xdg_data_dirs: Option<&OsStr>) -> Vec<PathBuf> {
+/// [`layer_dirs`] for the user's data folder `data_home` and this process's `XDG_DATA_DIRS`.
+pub fn process_layer_dirs(data_home: Option<&Path>) -> Vec<PathBuf> {
+    let data_dirs: Option<OsString> = std::env::var_os("XDG_DATA_DIRS");
+    layer_dirs(data_home, data_dirs.as_deref())
+}
+
+/// The folders that can hold an implicit Vulkan layer's manifest, in the order they are searched:
+/// the user's data folder `data_home` (where a layer installed in the home folder puts it), then
+/// the folders of `XDG_DATA_DIRS`, then `/usr/share` and `/etc`. The one list for every layer
+/// Redline looks for: MangoHud's here and the frame generation layer's in `launch_options`.
+///
+/// A missing or relative `data_home` is skipped, as are relative entries of `XDG_DATA_DIRS`.
+pub fn layer_dirs(data_home: Option<&Path>, xdg_data_dirs: Option<&OsStr>) -> Vec<PathBuf> {
     let listed = xdg_data_dirs
         .filter(|dirs| !dirs.is_empty())
         .unwrap_or(OsStr::new(DEFAULT_DATA_DIRS));
     let mut dirs: Vec<PathBuf> = Vec::new();
-    let roots = std::env::split_paths(listed)
+    let roots = data_home
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(std::env::split_paths(listed))
         // The XDG specification ignores relative entries.
         .filter(|dir| dir.is_absolute())
         .chain(["/usr/share", "/etc"].map(PathBuf::from));
@@ -368,12 +386,16 @@ impl Overlay {
             .file
             .as_deref()
             .map_or(ConfigState::Absent, config_state);
-        status_of(mangohud_present(), config, settings)
+        status_of(
+            mangohud_present(self.data_home.as_deref()),
+            config,
+            settings,
+        )
     }
 
     /// The file to write, once the feature is known to be available.
     fn writable_file(&self) -> Result<&Path, String> {
-        if !mangohud_present() {
+        if !mangohud_present(self.data_home.as_deref()) {
             return Err(MISSING.to_owned());
         }
         self.file
@@ -912,7 +934,10 @@ mod tests {
 
     #[test]
     fn the_layer_folders_follow_xdg_data_dirs_then_the_system() {
-        let dirs = layer_dirs(Some(OsStr::new("/data/one:relative/two::/usr/share/")));
+        let dirs = layer_dirs(
+            None,
+            Some(OsStr::new("/data/one:relative/two::/usr/share/")),
+        );
         assert_eq!(
             dirs,
             [
@@ -932,8 +957,68 @@ mod tests {
             "/etc/vulkan/implicit_layer.d",
         ]
         .map(PathBuf::from);
-        assert_eq!(layer_dirs(None), wanted);
-        assert_eq!(layer_dirs(Some(OsStr::new(""))), wanted);
+        assert_eq!(layer_dirs(None, None), wanted);
+        assert_eq!(layer_dirs(None, Some(OsStr::new(""))), wanted);
+    }
+
+    #[test]
+    fn the_users_data_folder_is_searched_first() {
+        let data_dirs = OsStr::new("/data/one:/usr/share");
+        assert_eq!(
+            layer_dirs(Some(Path::new("/user/data")), Some(data_dirs)),
+            [
+                "/user/data/vulkan/implicit_layer.d",
+                "/data/one/vulkan/implicit_layer.d",
+                "/usr/share/vulkan/implicit_layer.d",
+                "/etc/vulkan/implicit_layer.d",
+            ]
+            .map(PathBuf::from)
+        );
+        // Without a data folder the default folders still follow it.
+        assert_eq!(
+            layer_dirs(Some(Path::new("/user/data")), None)[0],
+            Path::new("/user/data/vulkan/implicit_layer.d")
+        );
+    }
+
+    #[test]
+    fn a_missing_relative_or_listed_data_folder_changes_nothing() {
+        let data_dirs = OsStr::new("/data/one:/usr/share");
+        let without = layer_dirs(None, Some(data_dirs));
+        assert_eq!(
+            without,
+            [
+                "/data/one/vulkan/implicit_layer.d",
+                "/usr/share/vulkan/implicit_layer.d",
+                "/etc/vulkan/implicit_layer.d",
+            ]
+            .map(PathBuf::from)
+        );
+        assert_eq!(
+            layer_dirs(Some(Path::new("relative")), Some(data_dirs)),
+            without
+        );
+        assert_eq!(layer_dirs(Some(Path::new("")), Some(data_dirs)), without);
+        // Already listed: searched once, first.
+        assert_eq!(
+            layer_dirs(Some(Path::new("/data/one")), Some(data_dirs)),
+            without
+        );
+    }
+
+    #[test]
+    fn a_manifest_only_in_the_users_data_folder_is_mangohud() {
+        let dir = temp_dir("data-home");
+        fake_manifest(&dir, "MangoHud.x86_64.json");
+        let data_home = dir.join("data");
+        // `XDG_DATA_DIRS` names only folders with no manifest in this test's tree.
+        let elsewhere = dir.join("elsewhere");
+        let dirs = layer_dirs(Some(&data_home), Some(elsewhere.as_os_str()));
+        assert_eq!(dirs[0], data_home.join(LAYER_FOLDER));
+        assert!(mangohud_installed(OsStr::new(""), &dirs[..1]));
+        // The same folders without the data folder (the system's own are left out, so the test
+        // never reads the machine's): nothing.
+        assert!(!mangohud_installed(OsStr::new(""), &dirs[1..2]));
     }
 
     #[test]

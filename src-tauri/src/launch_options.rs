@@ -5,7 +5,8 @@
 //!   `%command%`. A choice whose tool is missing composes nothing.
 //! - **Detection** ([`frame_generation_installed`]): the frame generation layer's manifest in a
 //!   `vulkan/implicit_layer.d` folder. Nothing is run, and missing it is a disabled choice with
-//!   [`frame_generation_missing`], not an error. The overlay is detected by `overlay`.
+//!   [`frame_generation_missing`], not an error. The overlay is detected by `overlay`, and both
+//!   layers are looked for in the same folders ([`overlay::layer_dirs`]).
 //! - **The choices** are four switches stored by `settings` and saved through
 //!   [`settings::save_launch_options`]. They are global: there is no per-game state.
 //!
@@ -15,8 +16,7 @@
 //! What was verified against the tools' source, and when, is in `docs/architecture.md`
 //! ("Launch options").
 
-use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, Runtime, State};
@@ -132,27 +132,8 @@ pub fn compose(choices: LaunchChoices, tools: Tools) -> String {
     words.join(" ")
 }
 
-/// The folders that can hold the frame generation layer's manifest: the user's data folder, where
-/// the layer's own installer puts it, then the folders searched for MangoHud's.
-pub fn frame_generation_dirs(
-    data_home: Option<&Path>,
-    xdg_data_dirs: Option<&OsStr>,
-) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = data_home
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(overlay::LAYER_FOLDER))
-        .into_iter()
-        .collect();
-    for dir in overlay::layer_dirs(xdg_data_dirs) {
-        if !dirs.contains(&dir) {
-            dirs.push(dir);
-        }
-    }
-    dirs
-}
-
-/// Whether one of `layer_dirs` holds the frame generation layer's manifest. Reads only the file
-/// system.
+/// Whether one of `layer_dirs` ([`overlay::layer_dirs`], the folders searched for MangoHud's too)
+/// holds the frame generation layer's manifest. Reads only the file system.
 pub fn frame_generation_installed(layer_dirs: &[PathBuf]) -> bool {
     layer_dirs
         .iter()
@@ -174,10 +155,10 @@ fn status_of(choices: LaunchChoices, tools: Tools) -> LaunchOptionsStatus {
 /// folder as Tauri resolves it.
 fn detect<R: Runtime>(app: &AppHandle<R>) -> Tools {
     let data_home = app.path().data_dir().ok();
-    let data_dirs: Option<OsString> = std::env::var_os("XDG_DATA_DIRS");
-    let layer_dirs = frame_generation_dirs(data_home.as_deref(), data_dirs.as_deref());
+    let layer_dirs = overlay::process_layer_dirs(data_home.as_deref());
+    let search_path = std::env::var_os("PATH").unwrap_or_default();
     Tools {
-        overlay: overlay::mangohud_present(),
+        overlay: overlay::mangohud_installed(&search_path, &layer_dirs),
         frame_generation: frame_generation_installed(&layer_dirs),
     }
 }
@@ -211,7 +192,9 @@ mod tests {
     use super::*;
     use crate::test_support::TempDir;
     use serde_json::json;
+    use std::ffi::OsStr;
     use std::fs;
+    use std::path::Path;
 
     const ALL: Tools = Tools {
         overlay: true,
@@ -421,29 +404,19 @@ mod tests {
     }
 
     #[test]
-    fn the_users_data_folder_is_searched_before_the_folders_of_the_overlay() {
-        let data_dirs = OsStr::new("/data/one:/usr/share");
-        assert_eq!(
-            frame_generation_dirs(Some(Path::new("/user/data")), Some(data_dirs)),
-            [
-                "/user/data/vulkan/implicit_layer.d",
-                "/data/one/vulkan/implicit_layer.d",
-                "/usr/share/vulkan/implicit_layer.d",
-                "/etc/vulkan/implicit_layer.d",
-            ]
-            .map(PathBuf::from)
-        );
-        // Without a data folder, a relative one, or one already listed: the overlay's folders.
-        let shared = overlay::layer_dirs(Some(data_dirs));
-        assert_eq!(frame_generation_dirs(None, Some(data_dirs)), shared);
-        assert_eq!(
-            frame_generation_dirs(Some(Path::new("relative")), Some(data_dirs)),
-            shared
-        );
-        assert_eq!(
-            frame_generation_dirs(Some(Path::new("/data/one")), Some(data_dirs)),
-            shared
-        );
+    fn both_layers_are_found_in_the_users_data_folder_by_the_same_list() {
+        let dir = TempDir::new("launch", "shared-dirs");
+        let layers = fake_manifest(&dir, FRAME_GENERATION_MANIFEST);
+        fs::write(layers.join("MangoHud.x86_64.json"), "{}").unwrap();
+        let elsewhere = dir.join("elsewhere");
+        let dirs = overlay::layer_dirs(Some(&dir.join("data")), Some(elsewhere.as_os_str()));
+        assert_eq!(dirs[0], layers);
+        // Only this test's folders, never the machine's.
+        let ours = &dirs[..2];
+        assert!(frame_generation_installed(ours));
+        assert!(overlay::mangohud_installed(OsStr::new(""), ours));
+        assert!(!frame_generation_installed(&ours[1..]));
+        assert!(!overlay::mangohud_installed(OsStr::new(""), &ours[1..]));
     }
 
     #[test]

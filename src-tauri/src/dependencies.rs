@@ -9,7 +9,8 @@
 //!   or the `Version:` line of `flatpak info`.
 //! - **ffmpeg** (previews of clips): on PATH, with the version from `ffmpeg -version`. Redline
 //!   verifies no ffmpeg version, so `verified_version` is `null`.
-//! - **MangoHud** (in-game overlay): detected the way the overlay does, by
+//! - **MangoHud** (in-game overlay): detected the way the overlay does, in the same folders
+//!   ([`overlay::layer_dirs`], the user's data folder first), by
 //!   [`overlay::mangohud_installed`], which runs nothing. MangoHud has no version flag, so
 //!   `version` and `verified_version` are always `null`.
 //!
@@ -27,7 +28,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::installer::Installer;
 use crate::overlay;
@@ -346,13 +347,16 @@ fn process_path() -> OsString {
 /// tool: that is `installed: false` with a hint.
 #[tauri::command]
 pub async fn dependency_status(
+    app: AppHandle,
     tuning: State<'_, Tuning>,
     installer: State<'_, Installer>,
 ) -> Result<Vec<Dependency>, String> {
+    // MangoHud installed in the home folder has its manifest under the user's data folder.
+    let data_home = app.path().data_dir().ok();
     let tuning = tuning.inner().clone();
     let can_install = installer.available();
     tauri::async_runtime::spawn_blocking(move || {
-        let layer_dirs = overlay::layer_dirs(std::env::var_os("XDG_DATA_DIRS").as_deref());
+        let layer_dirs = overlay::process_layer_dirs(data_home.as_deref());
         status(
             tuning.lact(),
             &process_path(),
