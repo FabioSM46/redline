@@ -1,4 +1,5 @@
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { REDLINE_LICENSE, THIRD_PARTY_LICENSES } from "../../dependencies.ts";
 import { copyError, copyText } from "../../shortcuts.ts";
@@ -11,10 +12,13 @@ type CopyState = { status: "idle" } | { status: "copied" } | { status: "error"; 
 /** How long "Copied" stays next to an address. */
 const COPIED_MS = 2000;
 
+/** `SupportPage` in src-tauri/src/support.rs: the backend owns the addresses. */
+type SupportPage = "github_sponsors" | "ko_fi";
+
 /**
- * Settings → About: Redline's version and license, and the licenses of the tools it works with. The
- * license addresses are shown with a Copy button: the app has no way to open a browser, and the
- * webview must not navigate away from Redline.
+ * Settings → About: Redline's version and license, a way to support it, and the licenses of the
+ * tools it works with. The license addresses are shown with a Copy button and the webview never
+ * navigates away from Redline; the support buttons name a page and the backend opens it.
  */
 export function About() {
   const [version, setVersion] = useState<Loaded<string>>({ status: "loading" });
@@ -36,6 +40,7 @@ export function About() {
       <Setting title="License" description="Redline is free software." save={IDLE}>
         <span className="about-value">{REDLINE_LICENSE}</span>
       </Setting>
+      <SupportRow />
 
       <p className="settings-notice">
         Redline works with these separate projects. They have their own licenses and are installed on their own.
@@ -44,6 +49,38 @@ export function About() {
         <LicenseRow key={tool.name} title={`${tool.name} — ${tool.license}`} description={tool.use} url={tool.url} />
       ))}
     </div>
+  );
+}
+
+/** Opens GitHub Sponsors or Ko-fi in the browser; nothing is asked for anywhere else in the app. */
+function SupportRow() {
+  const [error, setError] = useState<string | null>(null);
+
+  function open(page: SupportPage) {
+    setError(null);
+    invoke<void>("open_support_page", { page }).catch((e) => setError(`Cannot open the page: ${String(e)}`));
+  }
+
+  return (
+    <Setting
+      title="Support Redline"
+      description="Redline is free. If it is useful to you, you can support its development."
+      save={IDLE}
+    >
+      <div className="command">
+        <button type="button" className="button" onClick={() => open("github_sponsors")}>
+          GitHub Sponsors
+        </button>
+        <button type="button" className="button" onClick={() => open("ko_fi")}>
+          Ko-fi
+        </button>
+      </div>
+      {error !== null && (
+        <span className="setting-error" role="alert">
+          {error}
+        </span>
+      )}
+    </Setting>
   );
 }
 
