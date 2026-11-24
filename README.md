@@ -299,6 +299,12 @@ packages compiled into the app, in `/usr/share/doc/redline/` next to `copyright`
 - [Release checklist](docs/release.md)
 - [Changelog](CHANGELOG.md)
 
+## Support
+
+Redline is free and stays free. If it is useful to you, you can support its development through
+[GitHub Sponsors](https://github.com/sponsors/FabioSM46) or [Ko-fi](https://ko-fi.com/fabiosm46);
+the same links are in Settings → About.
+
 ## License
 
 [MIT](LICENSE). LACT, GPU Screen Recorder and MangoHud are separate projects with their own

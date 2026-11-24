@@ -11,6 +11,7 @@ mod recorder;
 mod sampler;
 mod settings;
 mod sources;
+mod support;
 #[cfg(test)]
 mod test_support;
 mod thumbnails;
@@ -122,6 +123,7 @@ pub fn run() {
             updates::update_status,
             updates::dismiss_update,
             updates::open_latest_release,
+            support::open_support_page,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
