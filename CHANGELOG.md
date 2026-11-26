@@ -3,6 +3,19 @@
 What each published version of Redline contains. The plan is in the
 [roadmap](docs/roadmap.md), the release steps in [docs/release.md](docs/release.md).
 
+## 0.4.2 — 2026-11-26
+
+### Settings
+
+- Settings → About has a **Support Redline** row with two buttons, GitHub Sponsors and Ko-fi.
+  Redline stays free: the row is the only place that mentions it, and nothing else in the app
+  asks.
+
+### Documentation
+
+- D15 in `docs/decisions.md` and the README now record upscaling through Gamescope as refused
+  instead of deferred, and why a status-bar badge for the running game's upscaler stays refused.
+
 ## 0.4.1 — 2026-11-17
 
 ### Games

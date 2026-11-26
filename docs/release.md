@@ -198,9 +198,18 @@ need an installed package older than the latest release (the item turning into a
 dismissing, the check turned off, offline); and every other item of "Manual checks before
 tagging". `SHA256SUMS` is written for the first time by the tag of this version.
 
-For `0.4.1` (2026-11-17) no manual check was run: the detection of MangoHud in the user's data
-folder is covered by automated tests on fake folders, and the Lutris steps follow the source of
-Lutris 0.5.22 but have not been tried in a Lutris game.
+For `0.4.1`, the maintainer reported on 2026-11-17, after publishing, that the manual checks were
+run and all passed, without naming them, so that first report records no single item of the list
+as run. The new code of this version is the detection of MangoHud in the user's data folder, also
+covered by automated tests on fake folders, and the Lutris steps, written from the source of
+Lutris 0.5.22. Later the same day the maintainer reported that both Lutris checks of "Overlay (AMD
+GPU, a real game)" passed in a game started from Lutris, with the variables entered as the page's
+**In Lutris** describes: frame generation showed generated frames, and the upscaler upgrade showed
+its watermark. gitleaks 8.30.1 read the whole history on the same day and found nothing.
+
+For `0.4.2` (2026-11-26) no manual check was run: the only new code is the **Support Redline** row
+of Settings → About. Its unit tests cover the page names the frontend sends and the two addresses
+fixed in the backend; neither button was clicked in a running app.
 
 ## What CI checks on a tag
 
