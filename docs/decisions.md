@@ -487,7 +487,8 @@ Rejected / not possible:
   Recorder, ffmpeg and MangoHud, and one that the reference distribution does not reliably
   package; the overlay must then be started differently
   (`--mangoapp` instead of the `mangohud` wrapper); and what it offers is a spatial upscaler,
-  below what games already ship. Deferred, not refused for ever.
+  below what games already ship. Deferred on 2026-11-16 and refused on 2026-11-26: nobody asked
+  for it again, and the upscaler upgrade (#170) already serves the games that ship an upscaler.
 - **An anti-lag switch.** `VK_AMD_anti_lag` is a Vulkan extension the game itself must call:
   there is no global switch to offer. Up to Mesa 26.2 it comes from an implicit Mesa layer
   (`VK_LAYER_MESA_anti_lag`); from Mesa 26.3 RADV implements it natively and the layer is gone
@@ -495,6 +496,8 @@ Rejected / not possible:
 - **A status-bar badge for the running game's upscaler.** Reading the memory maps of the
   player's own processes only proves that a library is loaded, not that the upscaler is active.
   Proton's own watermark answers the question reliably, which is why the watermark is a choice.
+  A probe spike was left open on 2026-11-16 and dropped on 2026-11-26: a badge that is always in
+  view would be read as "active", which is the one thing it cannot know.
 - **The upscaler version in the overlay.** MangoHud's `fsr` key works only inside Gamescope and
   reports Gamescope's own upscaler, not the game's.
 - **Detecting a game's frame generation.** Nothing exposes it: no sysfs file, no driver

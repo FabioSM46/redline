@@ -270,7 +270,8 @@ The reasons in full are in D15 of [docs/decisions.md](docs/decisions.md).
 - **Per-game profiles.** The choices are global and Redline keeps no list of games; the FPS limit
   lives in MangoHud's configuration, so it applies to every game started with MangoHud.
 - **Upscaling through Gamescope.** It is one more tool to install, not reliably packaged on
-  Ubuntu, and a spatial upscaler below what games already ship. Deferred, not refused for ever.
+  Ubuntu, and a spatial upscaler below what games already ship, while the upscaler upgrade above
+  already covers the games that ship one.
 - **An anti-lag switch.** `VK_AMD_anti_lag` is an extension the game itself must call: there is
   no global switch to offer.
 - **Show which upscaler, or which version of it, a running game uses.** A loaded library does not
