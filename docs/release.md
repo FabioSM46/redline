@@ -207,6 +207,10 @@ GPU, a real game)" passed in a game started from Lutris, with the variables ente
 **In Lutris** describes: frame generation showed generated frames, and the upscaler upgrade showed
 its watermark. gitleaks 8.30.1 read the whole history on the same day and found nothing.
 
+For `0.4.2` (2026-11-26) no manual check was run: the only new code is the **Support Redline** row
+of Settings → About, whose two buttons open addresses fixed in the backend, covered by its unit
+tests.
+
 ## What CI checks on a tag
 
 The `install-check` job of `release.yml` runs `scripts/deb-clean-install.sh` on every tag, in clean
